@@ -101,13 +101,43 @@ MINIMAX_MODEL=Qwen2.5-7B-Instruct
 
 ### 5. 启动
 
+**最省事的方式**——一条命令，迁移、灌数据、启动全包了：
+
 ```bash
-uvicorn app.main:app --reload
+python run.py                # Windows 也可以直接双击 start.bat
+```
+
+`run.py` 会依次完成：切到项目根目录 → 依赖自检 → 缺 `.env` 就从 `.env.example`
+生成一份 → `alembic upgrade head` → `scripts.seed` → 起 uvicorn，最后打印出可点击的地址。
+
+常用参数：
+
+```bash
+python run.py --no-seed        # 跳过灌演示数据
+python run.py --no-reload      # 关掉热重载，行为更接近生产
+python run.py --port 9000      # 换端口
+python run.py --open           # 启动成功后自动打开浏览器
+python run.py --help           # 全部参数
 ```
 
 - **功能验证台**：<http://127.0.0.1:8000/> ← 单文件页面，开箱即用
 - Swagger UI：<http://127.0.0.1:8000/docs>
 - 健康检查：<http://127.0.0.1:8000/api/health>
+
+> 💡 **为什么推荐用 `run.py` 而不是直接敲 uvicorn**：`app/config/settings.py` 里
+> `env_file=".env"` 是相对路径，`alembic.ini` 的 `script_location=alembic` 也是。
+> 从别的目录启动时 `.env` 会**静默读不到**——不报错，只是 `minimax_api_key` 变空，
+> 排查起来很费劲。`run.py` 强制 `chdir` 到项目根，从根上消除了这个坑，
+> 并且保证「先迁移后 seed」的顺序（顺序反了会留下"表已建但 alembic_version 为空"
+> 的半吊子状态，下次迁移才炸）。
+
+不用启动器时，手工四步等价：
+
+```bash
+alembic upgrade head
+python -m scripts.seed
+uvicorn app.main:app --reload
+```
 
 ---
 
@@ -310,13 +340,16 @@ python scripts/check_docstrings.py            # 全量
 python scripts/check_docstrings.py app/core   # 指定目录/文件/模块路径
 ```
 
-当前状态：**309 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
+当前状态：**320 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
+默认扫描范围含根目录的 `run.py`，新增根目录脚本记得加进 `DEFAULT_TARGETS`。
 
 ---
 
 ## 项目结构
 
 ```text
+run.py                     # 本地启动器：迁移 + 灌数据 + 起服务（见上文第 5 步）
+start.bat                  # Windows 双击启动（= python run.py --open）
 app/
 ├── main.py                 # FastAPI 工厂 + 生命周期 + 统一异常处理
 ├── api/
@@ -333,9 +366,9 @@ app/
 │   ├── crypto.py           # api_key 加解密
 │   └── ticket.py           # SSE ticket 签发与校验
 ├── models/  repo/  schemas/  config/  cache.py
-├── web/index.html           # 功能验证台（单文件，无依赖）
-├── scripts/seed.py          # 演示数据
-├── scripts/check_docstrings.py  # docstring 覆盖检查
+web/index.html           # 功能验证台（单文件，无依赖）
+scripts/seed.py          # 演示数据
+scripts/check_docstrings.py  # docstring 覆盖检查
 alembic/  tests/  docs/design.md
 ```
 
