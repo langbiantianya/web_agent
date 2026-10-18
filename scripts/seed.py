@@ -18,10 +18,11 @@ from __future__ import annotations
 import asyncio
 import sys
 
+from sqlalchemy import inspect as sa_inspect
+
 from app.config.db import SessionLocal, engine
 from app.config.settings import settings
 from app.core.crypto import encrypt
-from app.models import Base
 from app.repo.agent_repo import agent_repo
 from app.repo.workflow_repo import workflow_repo
 
@@ -90,20 +91,38 @@ WORKFLOW = {
 }
 
 
+async def _schema_ready() -> bool:
+    """探测数据库里是否已经存在业务表。
+
+    这里刻意**不**用 ``Base.metadata.create_all`` 建表。那样表是绕过 Alembic
+    凭空出现的，``alembic_version`` 仍然是空的；之后再跑 ``alembic upgrade head``
+    就会因 "table agent already exists" 直接失败，把人卡在建表这一步。
+    建表是 Alembic 的职责，seed 只负责灌演示数据。
+
+    以 ``agent`` 表为探针：它是最早建的表之一，存在即代表迁移已执行过。
+    """
+    async with engine.connect() as conn:
+        return await conn.run_sync(lambda sync_conn: sa_inspect(sync_conn).has_table("agent"))
+
+
 async def main() -> int:
     """初始化演示数据并返回退出码。
 
-    依次做三件事：按 ORM metadata 建表（缺表直接建全量）→ 写入 3 个演示
-    Agent（planner / researcher / writer，api_key 加密后落库）→ 写入 1 个
-    串起三者的线性 Workflow ``default_pipeline``。已存在的按 code 跳过，
-    因此可以重复执行。
+    依次做三件事：确认表结构已由迁移建好（没有就提示先跑 ``alembic upgrade head``，
+    而不是自己建表）→ 写入 3 个演示 Agent（planner / researcher / writer，api_key
+    加密后落库）→ 写入 1 个串起三者的线性 Workflow ``default_pipeline``。
+    已存在的按 code 跳过，因此可以重复执行。
 
     模型与端点来自环境变量（``MINIMAX_BASE_URL`` / ``MINIMAX_MODEL`` /
     ``MINIMAX_API_KEY``，默认见 .env），换任何 OpenAI 兼容服务都只改配置，
     不需要改这里的代码；缺 API Key 只告警不失败，方便接本地 vLLM。
+
+    返回码：0 成功；1 表结构不存在（需要先迁移）。
     """
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    if not await _schema_ready():
+        print("❌ 数据库里还没有业务表，请先建表：")
+        print("   python -m alembic upgrade head")
+        return 1
     print("✅ 表结构已就绪")
 
     if not DEMO_API_KEY:

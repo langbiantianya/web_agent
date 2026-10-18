@@ -13,6 +13,10 @@ from pathlib import Path
 
 SKIP_DIRS = {".venv", "__pycache__", ".pytest_cache", ".mypy_cache"}
 
+# 默认扫描范围。这里必须显式列出根目录下的模块（run.py）——只扫子目录的话，
+# 根目录新增的脚本会静默漏检，"0 缺失"就成了假象。
+DEFAULT_TARGETS = ["run.py", "app", "scripts", "alembic", "tests"]
+
 
 def _expand(target: str) -> list[Path]:
     """把命令行参数展开成文件列表。
@@ -57,7 +61,7 @@ def collect(targets: list[str]) -> tuple[int, list[tuple[str, int, str]]]:
 
 def main() -> int:
     """命令行入口。打印统计并列出缺失项；全部齐全返回 0，否则返回 1。"""
-    targets = sys.argv[1:] or ["app", "scripts", "alembic", "tests"]
+    targets = sys.argv[1:] or DEFAULT_TARGETS
     total, missing = collect(targets)
     print(f"函数总数: {total}    缺 docstring: {len(missing)}")
     if missing:
