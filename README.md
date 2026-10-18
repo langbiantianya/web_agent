@@ -1,0 +1,349 @@
+# 多 Agent 协作 Web 服务
+
+基于 **Python + FastAPI + MySQL** 的多 Agent 协作服务。Agent 与 Workflow 全部以数据形式存在 MySQL 里，**新增/调整 Agent 不需要改代码、不需要发版**；多个 Agent 按 Workflow 协作产出结果，前端通过 SSE 接收流式输出，**断线可续传**。
+
+完整设计见 [`docs/design.md`](docs/design.md)。
+
+---
+
+## 核心特性
+
+| 特性 | 说明 |
+| --- | --- |
+| 配置即数据 | Agent / Workflow 存 MySQL，运行期热加载，PUT 更新自动 `version+1` 让缓存失效 |
+| 生成与连接解耦 | `POST /messages` 立即返回 `runId`，生成在后台 `asyncio.Task` 中跑，**连接断开不影响生成** |
+| 断线续传 | 事件带单调递增 `seq` 并全量落库；重连用 `Last-Event-ID` 或 `last_seq` 回放，**不漏字、不重复、不乱序** |
+| 批量落库 | `run_event` 每 20 条或每 50ms 批量 INSERT，绝不每 token 一次写库 |
+| 心跳保活 | SSE 注释行 `: ping`，不占 `seq`、不落库、不污染回放序列 |
+| 统一协议 | 所有模型走 OpenAI 兼容 `/v1/chat/completions`，OpenAI / DeepSeek / Qwen / vLLM 通吃 |
+| 可扩展 | 进程内总线抽象为 `BusBackend` Protocol，V2 换 Redis Pub/Sub 即可多实例 |
+
+---
+
+## 快速开始
+
+### 1. 安装
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # macOS / Linux
+
+pip install -r requirements.txt
+```
+
+### 2. 配置
+
+```bash
+copy .env.example .env          # Windows
+# cp .env.example .env          # macOS / Linux
+```
+
+生产环境**务必**改掉 `SECRET_KEY`（它用于加密 Agent 的 api_key 和签发 SSE ticket）：
+
+```bash
+python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"
+```
+
+数据库二选一：
+
+```dotenv
+# 生产：MySQL（推荐 asyncmy，Cython 实现，大批量查询更快）
+DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/agentdb?charset=utf8mb4
+
+# 本地开发：SQLite，零依赖直接跑
+DATABASE_URL=sqlite+aiosqlite:///./web_agent.db
+
+# 演示数据用的模型（scripts/seed.py 读取）
+MINIMAX_BASE_URL=https://api.minimaxi.com/v1
+MINIMAX_MODEL=MiniMax-M2.7
+MINIMAX_API_KEY=sk-xxxxxxxx
+```
+
+### 3. 建表
+
+```bash
+alembic upgrade head
+```
+
+### 4. 灌入演示数据
+
+```bash
+python -m scripts.seed
+```
+
+会创建 `planner / researcher / writer` 三个 Agent 和 `default_pipeline` 三段式流水线，
+默认指向 MiniMax（`https://api.minimaxi.com/v1` 的 `MiniMax-M2.7`）。
+
+**换模型只改 `.env` 里的三个值，不用改任何代码**——所有 Agent 统一走 OpenAI 兼容
+`/v1/chat/completions`：
+
+```dotenv
+# DeepSeek
+MINIMAX_BASE_URL=https://api.deepseek.com/v1
+MINIMAX_MODEL=deepseek-chat
+
+# 通义千问
+MINIMAX_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+MINIMAX_MODEL=qwen-max
+
+# 本地 vLLM（无需鉴权时 key 可留空）
+MINIMAX_BASE_URL=http://127.0.0.1:8000/v1
+MINIMAX_MODEL=Qwen2.5-7B-Instruct
+```
+
+> ⚠️ **API Key 只放在 `.env` 里**（已在 `.gitignore` 中），不要写进代码或提交。
+> `SECRET_KEY` 同样是：它决定 `agent.api_key` 能否被解密。
+>
+> `MiniMax-M2.7` 默认把思维链以 `<think>…</think>` 内联在 `content` 里返回，
+> 因此前端会连思考过程一起显示。若供应商提供独立的 `reasoning_content`
+> 字段（DeepSeek / Qwen 等），服务会自动拆成 `reasoning` 事件单独下发。
+
+### 5. 启动
+
+```bash
+uvicorn app.main:app --reload
+```
+
+- **功能验证台**：<http://127.0.0.1:8000/> ← 单文件页面，开箱即用
+- Swagger UI：<http://127.0.0.1:8000/docs>
+- 健康检查：<http://127.0.0.1:8000/api/health>
+
+---
+
+## 功能验证台（`web/index.html`）
+
+启动服务后直接访问根路径即可。它不是演示动画，而是一个能**把每个环节都点一遍**的验证台：
+
+| 区块 | 能验证什么 |
+| --- | --- |
+| ① 会话 | 列出已启用的 Workflow、创建会话、**恢复进度**（会话级别恢复：拉历史 + 找 active-run + 重新订阅回放） |
+| ② 已配置 Agent | 展示 MySQL 里的 Agent 配置，证明「配置即数据」：改库即生效，无需发版 |
+| ③ 工作流 | 展示 definition 的节点链路 |
+| ④ 对话与流式输出 | 按节点分卡片实时吐字；发送 / 取消 / 断开并重连 |
+| ⑤ 事件日志 | 逐条列出 `event` / `id`(=seq) / `data` |
+
+页面上有两个实时指标专门用来验证续传：
+
+- **seq 连续性** —— 客户端每收到一个事件就自检 `seq` 是否单调且不重复，
+  显示 `✓ 无重复/乱序`。若服务端有洞或重复，这里会立刻变红。
+- **重连次数** —— 配合「自动断线测试」勾选框：吐到第 5 个字就**主动断开**，
+  1.5 秒后带 `last_seq` 重连，最终仍能拿到完整内容。
+
+> ⚠️ 验证台每次重连都会重新申请一张 ticket，而不是依赖浏览器自带的重连——
+> 因为 EventSource 自动重连会复用旧 URL，60 秒后 ticket 过期就会一直 401。
+> 这也是生产接入时容易踩的坑。
+
+页面默认每 500ms 轮询一次 `GET /api/runs/{id}` 来确认服务端**最终落库状态**
+（流里的 `done` 事件先于状态回写），所以控制台会比实际请求多一点。
+
+---
+
+## 跑通一次完整对话
+
+```bash
+BASE=http://127.0.0.1:8000
+
+# 1. 建会话
+CONV=$(curl -s -X POST $BASE/api/conversations \
+  -H 'Content-Type: application/json' \
+  -d '{"workflow_code":"default_pipeline","user_id":"u1"}' | jq -r .id)
+
+# 2. 发消息 → 立刻拿到 runId，生成在后台跑
+RUN=$(curl -s -X POST $BASE/api/conversations/$CONV/messages \
+  -H 'Content-Type: application/json' \
+  -d '{"content":"帮我规划一次技术分享"}' | jq -r .run_id)
+
+# 3. 换一张 60s 有效的 SSE ticket
+TICKET=$(curl -s -X POST $BASE/api/auth/sse-ticket \
+  -H 'Content-Type: application/json' -d '{"user_id":"u1"}' | jq -r .ticket)
+
+# 4. 订阅事件流
+curl -N "$BASE/api/runs/$RUN/stream?ticket=$TICKET&last_seq=0"
+```
+
+输出形如：
+
+```text
+id: 1
+event: node_start
+data: {"node":"planner","agentCode":"planner","model":"gpt-4o-mini"}
+
+id: 2
+event: token
+data: {"node":"planner","content":"好的"}
+
+: ping
+
+id: 3
+event: node_end
+data: {"node":"planner","outputKey":"plan","agentCode":"planner"}
+
+id: 9
+event: done
+data: {"status":"done","usage":{"prompt_tokens":120,"completion_tokens":340}}
+```
+
+### 断线续传
+
+前端记住收到的最后一个 `id`，重连时带上即可无缝接上：
+
+```bash
+curl -N "$BASE/api/runs/$RUN/stream?ticket=$TICKET&last_seq=3"   # 从 seq 4 继续
+curl -N -H "Last-Event-ID: 3" "$BASE/api/runs/$RUN/stream?ticket=$TICKET"  # 等价
+```
+
+---
+
+## 事件协议
+
+| 事件 | 含义 | 占 seq |
+| --- | --- | --- |
+| `node_start` | 节点开始 | 是 |
+| `token` | 文本增量 | 是 |
+| `reasoning` | 思维链增量（DeepSeek / Qwen） | 是 |
+| `tool_call` | 工具调用请求 | 是 |
+| `node_end` | 节点结束 | 是 |
+| `error` | 出错 | 是 |
+| `done` | 整个 run 结束，流关闭 | 是 |
+| `: ping` | SSE 注释行心跳 | **否** |
+
+> `id:` 字段就是 `seq`，也是续传锚点。心跳用注释行，因此不会污染序列。
+
+---
+
+## 恢复策略
+
+| 场景 | 行为 |
+| --- | --- |
+| 页面刷新 / 隔天回来 | `GET /conversations/{id}/messages` 拉历史 → `GET /conversations/{id}/active-run` 拿 runId → 带 `last_seq=0` 重连，服务端全量回放 |
+| 网络抖动 | 浏览器自动带 `Last-Event-ID` 重连，服务端从该 seq 续传 |
+| run 已结束 | 回放剩余事件；事件已归档则补一个合成 `done`，前端转去读最终消息 |
+| 事件已清理（>7 天） | 返回 **410**，响应里带 `messagesUrl`，前端据此拉最终内容 |
+| 进程重启 | 启动时扫描遗留 `running` run 标为 `error`，提示用户重发 |
+
+---
+
+## API 一览
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET/POST | `/api/agents` | 列出 / 创建 Agent |
+| GET/PUT/DELETE | `/api/agents/{code}` | 详情 / 更新（version+1）/ 删除 |
+| GET/POST | `/api/workflows` | 列出 / 创建 Workflow |
+| GET/PUT/DELETE | `/api/workflows/{code}` | 详情 / 更新 / 删除 |
+| GET/POST | `/api/conversations` | 列出 / 创建会话 |
+| GET | `/api/conversations/{id}/messages` | 会话历史 |
+| GET | `/api/conversations/{id}/active-run` | 进行中的 run，无则返回 `null` |
+| POST | `/api/conversations/{id}/messages` | 发消息，返回 `{runId, streamUrl}` |
+| GET | `/api/runs/{id}` | run 详情（含各节点执行记录） |
+| GET | `/api/runs/{id}/messages` | run 的最终消息 |
+| GET | `/api/runs/{id}/stream` | SSE 事件流 |
+| POST | `/api/runs/{id}/cancel` | 取消生成 |
+| POST | `/api/auth/sse-ticket` | 换取 60s 有效 SSE ticket |
+| GET | `/api/health` | 健康检查 |
+
+错误码：`400` 参数非法 · `401` ticket 无效/过期 · `404` 资源不存在 · `409` 该会话已有进行中的 run · `410` 事件已归档无法回放
+
+---
+
+## 前端接入
+
+```ts
+let lastSeq = Number(localStorage.getItem(`run:${runId}:seq`) || 0);
+
+function connect() {
+  const es = new EventSource(`/api/runs/${runId}/stream?last_seq=${lastSeq}&ticket=${ticket}`);
+
+  es.addEventListener('token', e => {
+    appendText(JSON.parse(e.data).content);
+    lastSeq = Number(e.lastEventId);
+    localStorage.setItem(`run:${runId}:seq`, String(lastSeq));
+  });
+
+  es.addEventListener('done', () => {
+    es.close();
+    localStorage.removeItem(`run:${runId}:seq`);
+  });
+
+  es.onerror = () => {
+    es.close();
+    setTimeout(connect, 1000);   // 带上 last_seq，服务端补齐
+  };
+}
+```
+
+**Nginx 需要关掉缓冲**，否则吐字会被攒住：
+
+```nginx
+location /api/ {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 3600s;
+}
+```
+
+---
+
+## 测试
+
+```bash
+pytest -q
+```
+
+72 个用例，覆盖设计文档里最容易写错的两处：
+
+- `run_event` 批量落库不丢事件、seq 严格递增唯一、并发 emit 不产生重复 seq
+- 「先订阅 → 冲刷 → 回放 → 按 seq 合并」在断线重连时不漏字、不重复、不乱序
+
+端到端用例会起一个**真实的 OpenAI 兼容 HTTP 服务**当假模型（`tests/fake_llm.py`），
+走完整网络栈验证 SSE 吐字、取消、重试、断线续传。
+
+> 测试库按进程号隔离（`%TEMP%\web_agent_test_<pid>.db`），所以**可以并行跑多份
+> pytest 而不会互相抢库**。早先固定文件名时，并行跑会出现毫无关联的用例随机失败。
+
+### docstring 覆盖检查
+
+```bash
+python scripts/check_docstrings.py            # 全量
+python scripts/check_docstrings.py app/core   # 指定目录/文件/模块路径
+```
+
+当前状态：**309 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
+
+---
+
+## 项目结构
+
+```text
+app/
+├── main.py                 # FastAPI 工厂 + 生命周期 + 统一异常处理
+├── api/
+│   ├── deps.py             # get_db / ticket 校验 / 断点解析
+│   └── routes/             # agent / workflow / conversation / run / auth / health
+├── core/
+│   ├── bus.py              # BusBackend Protocol + 进程内实现（Redis 扩展位）
+│   ├── run_hub.py          # seq 分配 + 事件广播 + 取消信号
+│   ├── event_writer.py     # run_event 批量落库
+│   ├── sse_writer.py       # 回放 + 实时合并去重（续传核心）
+│   ├── agent_runner.py     # 单 Agent 执行（AsyncOpenAI 流式）
+│   ├── orchestrator.py     # run 生命周期 + 节点调度 + 重试
+│   ├── workflow_def.py     # definition 解析与校验
+│   ├── crypto.py           # api_key 加解密
+│   └── ticket.py           # SSE ticket 签发与校验
+├── models/  repo/  schemas/  config/  cache.py
+├── web/index.html           # 功能验证台（单文件，无依赖）
+├── scripts/seed.py          # 演示数据
+├── scripts/check_docstrings.py  # docstring 覆盖检查
+alembic/  tests/  docs/design.md
+```
+
+---
+
+## 演进路线
+
+- **V1**（当前）：单实例、线性流水线、MySQL 持久化、SSE 续传
+- **V2**：Redis Pub/Sub 替换进程内总线支持多实例；`run_event` 走 Redis Stream
+- **V3**：Workflow 支持 DAG + 条件边 + 人工审批；Agent 支持 RAG / MCP 工具
+- **V4**：可观测性（OpenTelemetry 链路追踪、token 成本统计）

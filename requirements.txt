@@ -1,0 +1,25 @@
+# ---- Web 框架 ----
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-dotenv>=1.0
+
+# ---- 数据库 ----
+SQLAlchemy[asyncio]>=2.0
+asyncmy>=0.2.9          # MySQL 异步驱动（生产）
+aiomysql>=0.2           # MySQL 异步驱动（备选，纯 Python）
+aiosqlite>=0.20         # 本地开发 / 测试
+alembic>=1.13
+
+# ---- LLM SDK（OpenAI 兼容协议）----
+openai>=1.40
+
+# ---- SSE ----
+sse-starlette>=2.1
+
+# ---- 配置与安全 ----
+pydantic-settings>=2.4
+cryptography>=42.0
+
+# ---- 测试 ----
+pytest>=8.0
+pytest-asyncio>=0.24

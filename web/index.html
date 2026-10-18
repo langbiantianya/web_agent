@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>多 Agent 协作服务 · 功能验证台</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2128; --border: #30363d;
+    --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff; --green: #3fb950;
+    --yellow: #d29922; --red: #f85149; --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.off { background: var(--red); }
+  .dot.busy { background: var(--yellow); animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: .3 } }
+  .meta { margin-left: auto; color: var(--dim); font-size: 12px; display: flex; gap: 18px; }
+  .meta b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  main { display: grid; grid-template-columns: 300px 1fr; gap: 16px; padding: 16px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr } }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  .card > h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+  .card .body { padding: 14px; }
+
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 13px; font-family: inherit;
+    transition: .15s;
+  }
+  button:hover:not(:disabled) { background: #262c36; border-color: #484f58; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover:not(:disabled) { background: #2b7cf3; }
+  button.danger { border-color: #6e2b28; color: var(--red); }
+  button.sm { padding: 4px 8px; font-size: 12px; }
+
+  select, textarea, input[type=text] {
+    width: 100%; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+    font-family: inherit; font-size: 13px;
+  }
+  select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 64px; }
+
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .stack { display: flex; flex-direction: column; gap: 10px; }
+  .muted { color: var(--dim); font-size: 12px; }
+  code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 12px; color: var(--purple); }
+
+  .list { max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+  .list div { padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 12px; display: flex; justify-content: space-between; gap: 8px; }
+  .list div:last-child { border-bottom: none; }
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #21262d; color: var(--dim); }
+  .tag.ok { background: #1c3d24; color: var(--green); }
+  .tag.warn { background: #3d3319; color: var(--yellow); }
+
+  .chat { padding: 14px; max-height: 46vh; overflow-y: auto; }
+  .msg { margin-bottom: 12px; padding: 10px 12px; border-radius: 8px; background: var(--panel2); }
+  .msg.user { background: #12233d; border-left: 3px solid var(--accent); }
+  .msg .who { font-size: 11px; color: var(--dim); margin-bottom: 4px; display: flex; justify-content: space-between; }
+  .msg .txt { white-space: pre-wrap; word-break: break-word; }
+
+  .node { margin-bottom: 12px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .node > .hd {
+    display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+    background: var(--panel2); border-bottom: 1px solid var(--border); font-size: 12px;
+  }
+  .node > .hd .nm { font-weight: 600; }
+  .node > .bd { padding: 10px 12px; white-space: pre-wrap; word-break: break-word; max-height: 30vh; overflow-y: auto; }
+  .node.done > .hd { background: #16281a; }
+  .node.live > .hd { background: #2d2410; }
+  .caret::after { content: "▋"; color: var(--yellow); animation: blink .8s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0 } }
+
+  .stats { display: flex; gap: 20px; padding: 10px 14px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+  .stats div { font-size: 12px; color: var(--dim); }
+  .stats b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  .banner { padding: 8px 14px; font-size: 12px; border-top: 1px solid var(--border); display: none; }
+  .banner.show { display: block; }
+  .banner.warn { background: #3d3319; color: var(--yellow); }
+  .banner.ok { background: #16281a; color: var(--green); }
+
+  #log { height: 190px; overflow-y: auto; padding: 10px 14px; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; }
+  #log div { padding: 1px 0; border-bottom: 1px solid #21262d; display: flex; gap: 8px; }
+  #log .sq { color: var(--dim); min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+  #log .st { min-width: 82px; color: var(--accent); }
+  #log .sd { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #log .st.token { color: var(--green); }
+  #log .st.done { color: var(--accent); }
+  #log .st.error { color: var(--red); }
+  #log .st.node_start, #log .st.node_end { color: var(--purple); }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="dot" id="healthDot"></span>
+  <h1>多 Agent 协作服务 · 功能验证台</h1>
+  <div class="meta">
+    <span>会话 <b id="mConv">-</b></span>
+    <span>Run <b id="mRun">-</b></span>
+    <span>seq <b id="mSeq">0</b></span>
+    <span>事件 <b id="mCount">0</b></span>
+    <span>状态 <b id="mState">idle</b></span>
+  </div>
+</header>
+
+<main>
+  <!-- 左栏 -->
+  <div class="stack">
+    <div class="card">
+      <h2>① 会话</h2>
+      <div class="body stack">
+        <select id="wfSelect"><option value="">加载中…</option></select>
+        <div class="row">
+          <button class="primary" id="btnNewConv" disabled>新建会话</button>
+          <button class="sm" id="btnResume" disabled title="页面级恢复">恢复进度</button>
+        </div>
+        <div class="muted" id="convInfo">未创建会话</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>② 已配置 Agent</h2>
+      <div class="body">
+        <div class="list" id="agentList"></div>
+        <div class="muted" style="margin-top:8px">
+          Agent 全部存 MySQL，改配置无需改代码。
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>③ 工作流</h2>
+      <div class="body"><div class="list" id="wfList"></div></div>
+    </div>
+  </div>
+
+  <!-- 右栏 -->
+  <div class="stack">
+    <div class="card">
+      <h2>④ 对话与流式输出</h2>
+      <div class="chat" id="chat"><div class="muted">创建会话后发送一条消息，这里会按节点实时显示吐字。</div></div>
+
+      <div class="banner warn" id="banner"></div>
+
+      <div class="body stack" style="border-top:1px solid var(--border)">
+        <textarea id="input" placeholder="输入问题后回车发送…" disabled>请用三段话解释：什么是 SSE，以及断线续传为什么能做到不丢字。</textarea>
+        <div class="row">
+          <button class="primary" id="btnSend" disabled>发送</button>
+          <button class="danger" id="btnCancel" disabled>取消生成</button>
+          <button id="btnReconnect" disabled>断开并重连</button>
+          <label class="muted" style="display:flex;align-items:center;gap:6px;margin-left:auto">
+            <input type="checkbox" id="autoTest" checked style="width:auto">
+            自动断线测试（吐 5 字断开，1.5s 后带 last_seq 重连）
+          </label>
+        </div>
+        <div class="stats">
+          <div>已渲染 token <b id="sTokens">0</b></div>
+          <div>节点数 <b id="sNodes">0</b></div>
+          <div>重连次数 <b id="sReconn">0</b></div>
+          <div>seq 连续性 <b id="sSeqOk">-</b></div>
+          <div>心跳 <b id="sPing">0</b></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>⑤ 事件日志（id 即 seq，续传锚点）</h2>
+      <div id="log"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const API = location.origin;
+
+const S = {
+  convId: null, runId: null, es: null, ticket: null,
+  lastSeq: 0, count: 0, tokens: 0, nodes: 0, reconn: 0,
+  seqOk: true, pings: 0, streaming: false, testMode: false,
+  pendingText: 0, nodeEls: new Map(), lastSeqSeen: 0,
+};
+
+// ---------------------------------------------------------------- 工具
+function log(ev, seq, data) {
+  const box = $('log');
+  const row = document.createElement('div');
+  const d = JSON.stringify(data ?? {});
+  row.innerHTML = `<span class="sq">${seq ?? ''}</span><span class="st ${ev}">${ev}</span><span class="sd">${d.length > 120 ? d.slice(0, 120) + '…' : d}</span>`;
+  box.appendChild(row);
+  while (box.children.length > 400) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+
+function banner(text, kind = 'warn') {
+  const b = $('banner');
+  if (!text) { b.className = 'banner'; return; }
+  b.className = 'banner show ' + kind;
+  b.textContent = text;
+}
+
+function setState(t) { $('mState').textContent = t; }
+
+// 统一错误出口：不用 alert()——它会阻塞整个页面
+function fail(e) {
+  const msg = e && e.message ? e.message : String(e);
+  banner('操作失败：' + msg, 'warn');
+  console.error('[验证台]', msg);
+}
+
+function enableConv(on) {
+  $('btnSend').disabled = !on;
+  $('btnNewConv').disabled = !on;
+  $('btnResume').disabled = !on;
+  $('input').disabled = !on;
+  if (on) { $('btnCancel').disabled = true; $('btnReconnect').disabled = true; }
+}
+
+function enableRun(on) {
+  $('btnCancel').disabled = !on;
+  $('btnReconnect').disabled = !on;
+}
+
+function syncMeta() {
+  $('mSeq').textContent = S.lastSeq;
+  $('mCount').textContent = S.count;
+  $('sTokens').textContent = S.tokens;
+  $('sNodes').textContent = S.nodes;
+  $('sReconn').textContent = S.reconn;
+  $('sPing').textContent = S.pings;
+  $('sSeqOk').textContent = S.seqOk ? '✓ 无重复/乱序' : '✗ 异常';
+  $('sSeqOk').style.color = S.seqOk ? 'var(--green)' : 'var(--red)';
+}
+
+async function api(path, method = 'GET', body) {
+  const opt = { method, headers: {} };
+  if (body) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+  const r = await fetch(API + path, opt);
+  const txt = await r.text();
+  let data = null;
+  try { data = txt ? JSON.parse(txt) : null; } catch { data = txt; }
+  if (!r.ok) {
+    const msg = (data && (data.message || data.detail)) || ('HTTP ' + r.status);
+    throw new Error(msg);
+  }
+  return data;
+}
+
+// ---------------------------------------------------------------- 渲染
+function addMsg(who, text, cls = '') {
+  const chat = $('chat');
+  if (chat.querySelector('.muted')) chat.innerHTML = '';
+  const el = document.createElement('div');
+  el.className = 'msg ' + cls;
+  el.innerHTML = `<div class="who"><span>${who}</span></div><div class="txt"></div>`;
+  el.querySelector('.txt').textContent = text;
+  chat.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+  return el;
+}
+
+function openNode(node, agentCode, model) {
+  let el = S.nodeEls.get(node);
+  if (!el) {
+    const chat = $('chat');
+    if (chat.querySelector('.muted')) chat.innerHTML = '';
+    el = document.createElement('div');
+    el.className = 'node live';
+    el.innerHTML =
+      `<div class="hd"><span class="nm">${node}</span><span class="tag">${agentCode || ''}</span>` +
+      `<span class="tag">${model || ''}</span><span class="tag">进行中</span></div><div class="bd caret"></div>`;
+    chat.appendChild(el);
+    S.nodeEls.set(node, el);
+    S.nodes++;
+  }
+  chat.scrollTop = chat.scrollHeight;
+  return el.querySelector('.bd');
+}
+
+function appendToken(node, content) {
+  const bd = openNode(node);
+  bd.textContent += content;
+  S.tokens++;
+  $('chat').scrollTop = $('chat').scrollHeight;
+}
+
+function closeNode(node) {
+  const el = S.nodeEls.get(node);
+  if (!el) return;
+  el.className = 'node done';
+  el.classList.remove('caret');
+  const tags = el.querySelectorAll('.hd .tag');
+  if (tags.length) tags[tags.length - 1].textContent = '完成';
+}
+
+function handle(ev, seq, data) {
+  switch (ev) {
+    case 'node_start':
+      openNode(data.node, data.agentCode, data.model);
+      break;
+    case 'token':
+      appendToken(data.node, data.content || '');
+      break;
+    case 'reasoning':
+      appendToken(data.node, data.content || '');
+      break;
+    case 'node_end':
+      closeNode(data.node);
+      break;
+    case 'error':
+      banner('服务端错误：' + (data.message || JSON.stringify(data)), 'warn');
+      break;
+    case 'done':
+      break;
+  }
+}
+
+// ---------------------------------------------------------------- SSE
+function onEvent(ev, seq, data) {
+  // seq 连续性自检：续传不该出现重复或乱序
+  if (seq != null) {
+    if (seq <= S.lastSeqSeen) { S.seqOk = false; }
+    S.lastSeqSeen = seq;
+    if (seq > S.lastSeq) S.lastSeq = seq;
+  }
+  S.count++;
+  log(ev, seq, data);
+  handle(ev, seq, data);
+  syncMeta();
+
+  // done / error 表示流正常结束。此刻必须自己关掉 EventSource：服务端在发完
+  // done 后会关闭连接，浏览器会因此触发 onerror，若不置位就会陷入
+  // 「断了就重连 → 服务端已结束 → 又断开」的死循环。
+  if (ev === 'done' || ev === 'error') {
+    S.streaming = false;
+    S.finished = true;
+    enableRun(false);
+    if (S.es) { S.es.close(); S.es = null; }
+    setState(ev === 'done' ? 'done' : 'error');
+  }
+}
+
+async function connect() {
+  if (!S.runId) return;
+  await disconnect(false);
+
+  // EventSource 不能带请求头，所以每次重连都换一张 60s 有效的新 ticket
+  S.ticket = (await api('/api/auth/sse-ticket', 'POST', { user_id: 'demo' })).ticket;
+
+  const url = `/api/runs/${S.runId}/stream?ticket=${encodeURIComponent(S.ticket)}&last_seq=${S.lastSeq}`;
+  S.es = new EventSource(url);
+  setState('connecting');
+
+  for (const ev of ['node_start', 'node_end', 'token', 'reasoning', 'tool_call', 'error', 'done']) {
+    S.es.addEventListener(ev, e => {
+      let data = {};
+      try { data = JSON.parse(e.data); } catch {}
+      onEvent(ev, e.lastEventId ? Number(e.lastEventId) : null, data);
+    });
+  }
+
+  S.es.onopen = () => { setState('streaming'); banner('', 'ok'); };
+
+  S.es.onerror = async () => {
+    // ticket 过期 / 网络抖动 → 关掉自己重连（不能依赖浏览器自带重连，它会复用旧 ticket）
+    if (S.es) S.es.readyState = 2;
+    await disconnect(false);
+    if (S.streaming && !S.finished) {
+      setState('reconnecting');
+      banner('连接中断，正在用 last_seq=' + S.lastSeq + ' 重连…');
+      setTimeout(() => { if (S.streaming && !S.finished) connect(); }, 800);
+    }
+  };
+}
+
+function disconnect(markDone = true) {
+  if (S.es) { S.es.close(); S.es = null; }
+  if (markDone) { S.streaming = false; setState('idle'); }
+  return Promise.resolve();
+}
+
+// ---------------------------------------------------------------- 动作
+async function newConversation() {
+  const wfCode = $('wfSelect').value;
+  if (!wfCode) return fail('还没有可用 workflow，请先执行 python -m scripts.seed');
+  const conv = await api('/api/conversations', 'POST', { workflow_code: wfCode, user_id: 'demo' });
+  S.convId = conv.id;
+  $('mConv').textContent = conv.id;
+  $('convInfo').innerHTML = `session_id <code>${conv.session_id.slice(0, 12)}…</code><br>workflow_id ${conv.workflow_id}`;
+  $('chat').innerHTML = '<div class="muted">会话已就绪，发送一条消息开始。</div>';
+  S.nodeEls.clear();
+  banner('会话已创建 #' + conv.id, 'ok');
+}
+
+async function send() {
+  if (!S.convId) return fail('请先新建会话');
+  const text = $('input').value.trim();
+  if (!text) return fail('消息不能为空');
+
+  // 状态复位
+  S.lastSeq = 0; S.lastSeqSeen = 0; S.count = 0; S.tokens = 0; S.nodes = 0;
+  S.reconn = 0; S.seqOk = true; S.nodeEls.clear(); S.testMode = $('autoTest').checked;
+  S.finished = false; autoFired = false;
+  addMsg('我', text, 'user');
+  $('input').value = '';
+
+  const sent = await api(`/api/conversations/${S.convId}/messages`, 'POST', { content: text, user_id: 'demo' });
+  S.runId = sent.run_id;
+  $('mRun').textContent = sent.run_id;
+  localStorage.setItem(`run:${sent.run_id}:seq`, '0');
+  S.streaming = true;
+  setState('running');
+  enableRun(true);
+  banner('已创建 run #' + sent.run_id + '，正在订阅事件流…', 'warn');
+  await connect();
+
+  // 等生成结束后把 run 详情拉回来核对
+  pollRun();
+}
+
+async function pollRun() {
+  for (let i = 0; i < 600; i++) {
+    if (!S.runId) return;
+    let run;
+    try { run = await api(`/api/runs/${S.runId}`); } catch { return; }
+    if (['done', 'error', 'cancelled'].includes(run.status)) {
+      S.streaming = false;
+      setState(run.status);
+      enableRun(false);
+      if (run.status === 'done') {
+        const steps = run.steps.map(s => `${s.node_id}:${s.status}`).join('  ');
+        banner(`run #${run.id} 完成 · last_seq=${run.last_seq} · ${steps}`, 'ok');
+      } else {
+        banner(`run #${run.id} 状态：${run.status}${run.error_msg ? ' · ' + run.error_msg : ''}`, 'warn');
+      }
+      localStorage.removeItem(`run:${S.runId}:seq`);
+      return;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+}
+
+async function cancel() {
+  if (!S.runId) return fail('还没有 run');
+  const r = await api(`/api/runs/${S.runId}/cancel`, 'POST');
+  banner('取消请求已发送：' + JSON.stringify(r));
+  await disconnect();
+}
+
+async function reconnectNow() {
+  if (!S.runId) return fail('还没有 run');
+  S.reconn++;
+  banner(`手动断开，1 秒后用 last_seq=${S.lastSeq} 重连…`);
+  await disconnect();
+  await new Promise(r => setTimeout(r, 1000));
+  if (S.streaming) { await connect(); syncMeta(); }
+}
+
+async function restore() {
+  if (!S.convId) return fail('请先新建会话');
+  // 会话级别恢复：先看有没有进行中的 run
+  const active = await api(`/api/conversations/${S.convId}/active-run`);
+  const msgs = await api(`/api/conversations/${S.convId}/messages`);
+  $('chat').innerHTML = '';
+  for (const m of msgs) {
+    if (m.role === 'user') addMsg('我', m.content || '', 'user');
+    else if (m.role === 'assistant') {
+      const el = addMsg(m.agent_code || 'assistant', '');
+      el.querySelector('.txt').textContent = m.content || '';
+    }
+  }
+  if (active) {
+    S.runId = active.run_id;
+    $('mRun').textContent = active.run_id;
+    S.lastSeq = 0; S.lastSeqSeen = 0;
+    S.streaming = true;
+    S.finished = false;
+    enableRun(true);
+    setState('restoring');
+    banner(`发现进行中的 run #${active.run_id}（node=${active.current_node}），重新订阅并回放`, 'ok');
+    await connect();
+    pollRun();
+  } else {
+    banner('没有进行中的 run，会话历史已刷新', 'ok');
+    enableRun(false);
+    setState('idle');
+  }
+}
+
+// ---------------------------------------------------------------- 加载
+async function loadConfig() {
+  const [agents, wfs, health] = await Promise.all([
+    api('/api/agents'), api('/api/workflows'), api('/api/health'),
+  ]);
+  $('healthDot').className = 'dot on';
+  $('healthDot').title = `${health.app} ${health.version} · db ${health.db}`;
+
+  $('agentList').innerHTML = agents.map(a =>
+    `<div><span>${a.code}</span><span class="tag ${a.enabled ? 'ok' : ''}">${a.model} · v${a.version}</span></div>`
+  ).join('') || '<div class="muted">暂无</div>';
+
+  $('wfList').innerHTML = wfs.map(w => {
+    const ids = (w.definition.nodes || []).map(n => n.id).join(' → ');
+    return `<div><span>${w.code}</span><span class="tag">${ids}</span></div>`;
+  }).join('') || '<div class="muted">暂无</div>';
+
+  const enabled = wfs.filter(w => w.enabled);
+  $('wfSelect').innerHTML = enabled.map(w => `<option value="${w.code}">${w.name}（${w.code}）</option>`).join('')
+    || '<option value="">（没有已启用的 workflow，请先 python -m scripts.seed）</option>';
+
+  enableConv(enabled.length > 0);
+}
+
+$('btnNewConv').onclick = () => newConversation().catch(fail);
+$('btnSend').onclick = () => send().catch(fail);
+$('btnCancel').onclick = () => cancel().catch(fail);
+$('btnReconnect').onclick = () => reconnectNow().catch(fail);
+$('btnResume').onclick = () => restore().catch(fail);
+$('input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send().catch(fail); }
+});
+
+// 自动断线测试：吐够 5 个字就主动断开，稍后带 last_seq 重连
+let autoFired = false;
+const _onEvent = onEvent;
+onEvent = function (ev, seq, data) {
+  _onEvent(ev, seq, data);
+  if (S.testMode && S.streaming && !autoFired && ev === 'token' && S.tokens >= 5) {
+    autoFired = true;
+    S.reconn++;
+    banner(`自动断线测试：吐到第 ${S.tokens} 字时断开，稍后用 last_seq=${S.lastSeq} 重连…`);
+    disconnect(false).then(() => {
+      setState('reconnecting');
+      setTimeout(() => { if (S.streaming) connect(); }, 1500);
+    });
+  }
+};
+
+loadConfig().catch(e => {
+  $('healthDot').className = 'dot off';
+  enableConv(false);
+  banner('后端不可用：' + e.message + '（请先启动 uvicorn app.main:app --reload）', 'warn');
+});
+syncMeta();
+</script>
+</body>
+</html>
