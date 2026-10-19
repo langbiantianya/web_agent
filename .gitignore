@@ -20,3 +20,7 @@ alembic/versions/__pycache__/
 # ---- 排查脚本 ----
 probe_*.py
 dbg_*.py
+
+# ---- 编辑器 ----
+.vscode/
+.idea/

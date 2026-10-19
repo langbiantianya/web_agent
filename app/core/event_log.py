@@ -1,0 +1,245 @@
+"""事件回放源抽象：V1 用 MySQL，V2 用 Redis Stream（设计文档 §4.2 / §5.4）。
+
+**为什么要把回放源抽象出来**：V1 里「回放读的是 MySQL」这件事，直接导致
+``hub.flush()`` 成为续传正确性的前提——因为 EventWriter 是批量异步落库的，
+emit 完还没落库的那几个 token，既不在 DB 里、也不会再进新连接的队列。
+
+单进程时这不是问题（flush 就在同一个进程里）。但**多实例下做不到**：SSE 落在
+B 实例、EventWriter 在 A 实例，B 调 ``hub.flush()`` 是个空操作，尾部事件永远补不上——
+V1 修过的「尾部 token 丢失」会在多实例下原样复活。
+
+所以 V2 把回放源换成 Redis Stream：``emit()`` 时事件就**同步** ``XADD`` 进 Stream，
+任意实例的 SSE 都能 ``XRANGE`` 到它，``flush()`` 不再是正确性前提，只剩优化意义。
+
+两种实现满足同一个 :class:`EventLog` 契约，调用方（RunHub / sse_writer）不需要知道
+自己跑在 V1 还是 V2：
+
+- :class:`DbEventLog` —— ``append`` 是空操作（EventWriter 本来就在写 MySQL），
+  ``replay`` 走 ``run_event`` 表。这是 V1 行为，现有 72 个测试全部跑这条路径。
+- :class:`RedisEventLog` —— ``append`` 是 ``XADD``（Stream ID 固定为 ``<seq>-0``），
+  ``replay`` 走 ``XRANGE``，Stream 为空时回落 MySQL。
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:  # 仅供类型检查；运行时一律局部导入，避免与 core.run_hub 成环
+    from app.core.run_hub import RunEventDTO
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayResult:
+    """一次回放的产物。
+
+    ``first_seq`` 是**现存事件的最小 seq**，缺口检测靠它判断「客户端要的那段是不是
+    已经被裁掉了」。只在续传（``after_seq > 0``）时才有意义——首次连接不存在缺口，
+    多查一次纯浪费。
+    """
+
+    events: list["RunEventDTO"]
+    first_seq: int | None = None
+
+
+@runtime_checkable
+class EventLog(Protocol):
+    """事件回放源契约。"""
+
+    async def append(self, run_id: int, seq: int, event_type: str, payload: dict) -> None:
+        """把一个事件**持久化**下来（回放要能读到它）。
+
+        要求同步语义：方法返回时，该事件已可被任意实例回放。
+        """
+        ...
+
+    async def replay(self, run_id: int, after_seq: int) -> ReplayResult:
+        """回放 ``seq > after_seq`` 的历史事件，按 seq 升序。"""
+        ...
+
+    async def finalize(self, run_id: int) -> None:
+        """run 结束后的收尾（释放资源 / 设置过期）。"""
+        ...
+
+
+def _make_event_dto(run_id: int, seq: int, event_type: str, payload: dict) -> "RunEventDTO":
+    """构造 ``RunEventDTO``。
+
+    局部导入是为了打断 ``event_log → run_hub → event_log`` 的循环：RunHub 要用
+    EventLog 追加事件，而 EventLog 的回放产物又必须是 RunEventDTO。``run_event_repo``
+    里同样的局部导入是同一个原因、同一种解法。
+    """
+    from app.core.run_hub import RunEventDTO
+
+    return RunEventDTO(run_id=run_id, seq=seq, event_type=event_type, payload=payload)
+
+
+def _seq_of(entry_id: str) -> int:
+    """把 Stream 条目 ID ``"<seq>-0"`` 解析回整数 seq。"""
+    return int(entry_id.split("-", 1)[0])
+
+
+class DbEventLog:
+    """V1 实现：回放源是 MySQL ``run_event`` 表。"""
+
+    async def append(self, run_id: int, seq: int, event_type: str, payload: dict) -> None:
+        """空操作：落库由 :class:`app.core.event_writer.EventWriter` 负责。
+
+        这里再写一遍就是重复 INSERT——虽然 ``uk_run_seq`` 会兜住，但纯属浪费往返，
+        而且批量路径和单条路径混在一起会让 EventWriter 的重试语义变得难以推理。
+        """
+        return None
+
+    async def replay(self, run_id: int, after_seq: int) -> ReplayResult:
+        """从 ``run_event`` 表回放 ``seq > after_seq`` 的行。
+
+        ``first_seq`` 只在续传时才查：它是缺口检测的输入，首次连接不需要。
+        """
+        from app.config.db import SessionLocal
+        from app.repo.run_event_repo import run_event_repo
+
+        async with SessionLocal() as db:
+            events = await run_event_repo.list_after(db, run_id, after_seq)
+            first_seq = await run_event_repo.first_seq(db, run_id) if after_seq > 0 else None
+        return ReplayResult(events=events, first_seq=first_seq)
+
+    async def finalize(self, run_id: int) -> None:
+        """空操作：MySQL 里的事件由 ``RUN_EVENT_RETENTION_DAYS`` 定期清理。"""
+        return None
+
+
+class RedisEventLog:
+    """V2 实现：回放源是 Redis Stream，条目 ID 固定为 ``<seq>-0``。
+
+    显式指定 ID 是这套方案能成立的关键。Redis 要求新 ID 严格大于当前末位，而 seq
+    在单个 run 内单调递增，于是：
+
+    - 写入是 ``XADD key 42-0 ...``，断点续传就是 ``XRANGE key (42-0 +``，
+      不必按字段过滤，直接借 Redis 自己的有序结构；
+    - 万一两处同时给同一个 run 发号，Redis 会拒绝较小的 ID——这正好是一道
+      单写者约定的护栏，而不是悄悄写进一条乱序数据。
+    """
+
+    def __init__(self, client=None) -> None:
+        """绑定 Redis 客户端；``None`` 表示延迟到首次使用时取全局单例。"""
+        self._client = client
+
+    async def _redis(self):
+        """取 Redis 客户端，必要时绑定全局单例。
+
+        ``get_redis()`` 本身是协程（连接由 lifespan 建立），所以这里必须 await。
+        忘记 await 的症状很隐蔽：拿到的是一个 coroutine 对象，调用 ``.xadd`` 时
+        才报 "'coroutine' object has no attribute"，和真正的连接问题长得完全不像。
+        """
+        if self._client is None:
+            from app.core.redis_client import get_redis
+
+            self._client = await get_redis()
+        return self._client
+
+    async def append(self, run_id: int, seq: int, event_type: str, payload: dict) -> None:
+        """同步写入 Stream —— 这是「回放不依赖 flush」的全部前提。
+
+        用近似裁剪（``MAXLEN ~ n``）限制单个 run 的条目数；只砍最旧的，砍掉之后
+        续传会走缺口检测跳到实时流，不会静默漏字。
+
+        「ID 重复/过小」被单独捕获：它意味着同一个 run 上出现了第二个写入者，
+        属于严重 bug，但不该让吐字链路整个断掉。其余 Redis 错误照常抛出。
+        """
+        from redis.exceptions import ResponseError
+
+        from app.config.settings import settings
+        from app.core.redis_client import run_stream
+
+        key = run_stream(run_id)
+        try:
+            await (await self._redis()).xadd(
+                key,
+                {"type": event_type, "data": json.dumps(payload, ensure_ascii=False)},
+                id=f"{seq}-0",
+                maxlen=settings.redis_stream_maxlen,
+                approximate=True,
+            )
+        except ResponseError as exc:
+            if "equal or smaller" in str(exc):
+                logger.error(
+                    "run %s 的 seq=%s 重复写入 Stream，同一 run 疑似有第二个写入者",
+                    run_id,
+                    seq,
+                )
+            else:
+                raise
+
+    async def replay(self, run_id: int, after_seq: int) -> ReplayResult:
+        """``XRANGE`` 回放 ``seq > after_seq`` 的条目。
+
+        上限与 MySQL 路径对齐（``run_event_repo.REPLAY_LIMIT``），避免超长 run 在
+        一次 ``XRANGE`` 里把内存打满。
+
+        **Stream 里什么都没有时回落到 MySQL**。这不是可选兜底而是必需的：Stream
+        有 TTL、MySQL 保留 7 天，而启用 Redis 之前产生的 run 压根没有 Stream。
+        只读 Stream 会让这些 run 一被续传就读不到内容。
+        """
+        from app.repo.run_event_repo import REPLAY_LIMIT
+
+        from app.core.redis_client import run_stream
+
+        entries = await (await self._redis()).xrange(
+            run_stream(run_id), min=f"({after_seq}-0", max="+", count=REPLAY_LIMIT
+        )
+        if not entries:
+            return await DbEventLog().replay(run_id, after_seq)
+
+        events = [
+            _make_event_dto(
+                run_id,
+                _seq_of(entry_id),
+                fields.get("type", ""),
+                json.loads(fields.get("data") or "{}"),
+            )
+            for entry_id, fields in entries
+        ]
+        return ReplayResult(events=events, first_seq=_seq_of(entries[0][0]))
+
+    async def finalize(self, run_id: int) -> None:
+        """run 结束后给 Stream 设过期，避免 Redis 里无限堆积。
+
+        TTL 取 ``RUN_EVENT_RETENTION_DAYS``，让「Stream 还在」大致等价于
+        「MySQL 里还在」；真正的兜底是 ``replay`` 里那条 MySQL 回落路径。
+        """
+        from app.config.settings import settings
+        from app.core.redis_client import run_stream
+
+        ttl = max(1, settings.run_event_retention_days) * 86400
+        try:
+            await (await self._redis()).expire(run_stream(run_id), ttl)
+        except Exception:  # pragma: no cover - 收尾失败不该影响生成结果
+            logger.exception("run %s 的 Stream 设置过期失败", run_id)
+
+
+_log: EventLog | None = None
+
+
+def get_event_log() -> EventLog:
+    """全局单例回放源，按配置选择实现。
+
+    与 :func:`app.core.bus.get_bus` 是同一套「按配置选实现」的套路，两处必须
+    保持一致——否则会出现「事件写进 Redis、回放却去 MySQL 找」这种错配，
+    症状是续传大面积失败且极难定位。
+    """
+    global _log
+    if _log is None:
+        from app.core.redis_client import redis_is_enabled
+
+        _log = RedisEventLog() if redis_is_enabled() else DbEventLog()
+    return _log
+
+
+def reset_event_log() -> None:
+    """丢弃全局回放源单例（仅测试用，理由同 ``reset_bus``）。"""
+    global _log
+    _log = None

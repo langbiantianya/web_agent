@@ -35,6 +35,15 @@ os.environ["EVENT_BATCH_SIZE"] = "5"
 os.environ["EVENT_FLUSH_INTERVAL"] = "0.02"
 os.environ["NODE_RETRY_BASE_DELAY"] = "0.01"
 
+# **必须**强制关掉 Redis，而不只是"希望 .env 里没开"。
+#
+# settings 的 env_file=".env" 是相对路径，pytest 从项目根跑时正好命中开发者本地的
+# .env。开着的后果实测过：整个测试套件被切到 Redis 模式，事件写进真实 Redis，
+# 而不同用例的 run id 是从 1 开始的小整数，互相撞车，于是出现
+# "run 7 的 seq=2 重复写入 Stream" 这类日志，续传/取消/重试三个用例随即随机失败。
+# 需要 Redis 的用例（tests/test_redis.py）自己显式建连，不走这个全局开关。
+os.environ["REDIS_ENABLED"] = "false"
+
 from app.core.run_hub import get_hub  # noqa: E402
 from app.models import Base  # noqa: E402
 

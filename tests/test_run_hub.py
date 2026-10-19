@@ -123,7 +123,7 @@ async def test_duplicate_seq_is_rejected_by_unique_index(hub: RunHub, run_id: in
 async def test_subscribe_receives_events_in_seq_order(hub: RunHub, run_id: int):
     """订阅者收到的顺序必须与 seq 顺序一致——sse_writer 的去重合并依赖这个前提。"""
     hub.register(run_id, start_seq=0)
-    sub = hub.subscribe(run_id)
+    sub = await hub.subscribe(run_id)
 
     for i in range(10):
         await hub.emit(run_id, EventType.TOKEN, {"i": i})
@@ -140,7 +140,7 @@ async def test_subscribe_receives_events_in_seq_order(hub: RunHub, run_id: int):
 async def test_unsubscribe_stops_delivery(hub: RunHub, run_id: int):
     """客户端断开只应停止投递，不影响 run 继续生成（设计文档 §9）。"""
     hub.register(run_id, start_seq=0)
-    sub = hub.subscribe(run_id)
+    sub = await hub.subscribe(run_id)
     await hub.emit(run_id, EventType.TOKEN, {"i": 1})
     assert sub.queue.qsize() == 1
 

@@ -61,6 +61,29 @@ class Settings(BaseSettings):
     # ---- 事件归档 ----
     run_event_retention_days: int = 7  # 设计 §4.2 清理策略
 
+    # ---- Redis（V2 多实例）----
+    # 关：走进程内总线 + MySQL 回放（V1 单实例行为，现有测试全部依赖它）。
+    # 开：事件走 Redis Stream（回放源）与 Pub/Sub（实时），可多实例水平扩容。
+    #     开启后**没有降级路径**——Redis 不可用时服务直接启动失败。这是刻意的：
+    #     静默退回进程内总线会造成「看起来能跑、实际跨实例收不到事件」的分裂大脑，
+    #     比启动失败难查得多。单实例开发请显式关掉本项。
+    redis_enabled: bool = False
+    redis_url: str = "redis://192.168.1.5:6379/0"
+    # 所有键与频道的统一前缀。多套环境共享同一个 Redis 时用它做隔离。
+    redis_key_prefix: str = "webagent"
+    # 每个 run 的事件 Stream 保留条数上限（近似裁剪）。Stream 是**回放源**，
+    # 长期归档仍在 MySQL，所以只需保留够覆盖「断线重连 + 事件清理周期」的量。
+    redis_stream_maxlen: int = 20000
+    # run 活动标记的 TTL（秒）。生成方需周期性续期；TTL 到期即视为该 run 已无主，
+    # 启动恢复据此判断「能不能把这条 running run 标成 error」。
+    redis_activity_ttl: int = 120
+    # Redis 订阅的轮询间隔（秒）。刻意与 ``sse_idle_recheck`` 分开：后者是 SSE
+    # 「队列空了要不要回查 run 状态」的兜底周期，和订阅任务的收尾速度无关。
+    # 退订时只置停止标志、让订阅任务在下一个周期自行退出（直接 cancel 会打断
+    # 正在进行的 Redis 读，让连接锁状态不一致，后续关闭操作会永久挂起），
+    # 所以这个值直接决定退订的快慢，1 秒是个平衡点。
+    redis_poll_interval: float = 1.0
+
 
 @lru_cache
 def get_settings() -> Settings:

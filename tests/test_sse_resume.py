@@ -97,7 +97,7 @@ async def test_events_emitted_during_replay_are_not_lost(
 ):
     """核心竞态：回放期间产生的新事件，必须通过订阅队列补齐。
 
-    在 ``list_after`` 返回历史之后立刻注入 6/7/8 —— 这一刻订阅早已建立，
+    在 ``replay`` 返回历史之后立刻注入 7/8 —— 这一刻订阅早已建立，
     所以这些事件必须被收到，且顺序正确。
     """
     await _make_run(run_id, RunStatus.RUNNING.value, 0)
@@ -107,21 +107,21 @@ async def test_events_emitted_during_replay_are_not_lost(
     await hub.emit(run_id, EventType.NODE_END, {"node": "a"})
     await hub.finalize(run_id)  # 先把 1..6 冲刷进 DB
 
-    import app.core.sse_writer as sw
+    import app.core.event_log as el
 
-    original = sw.run_event_repo.list_after
+    original = el.DbEventLog.replay
 
-    async def inject(*args, **kwargs):
+    async def inject(self, *args, **kwargs):
         """在「历史已查出、回放尚未下发」的窗口里注入 7/8/done。"""
-        history = await original(*args, **kwargs)
+        result = await original(self, *args, **kwargs)
         # 回放窗口内：事件 7、8、done 产生
         hub.register(run_id, start_seq=6)
         await hub.emit(run_id, EventType.TOKEN, {"content": "7"})
         await hub.emit(run_id, EventType.TOKEN, {"content": "8"})
         await hub.emit(run_id, EventType.DONE, {"status": "done"})
-        return history
+        return result
 
-    monkeypatch.setattr(sw.run_event_repo, "list_after", inject)
+    monkeypatch.setattr(el.DbEventLog, "replay", inject)
 
     got = await _collect(SSEStream(hub), run_id, 0, 9)
 
@@ -145,25 +145,25 @@ async def test_duplicate_events_across_replay_and_live_are_deduped(
         await hub.emit(run_id, EventType.TOKEN, {"content": str(i)})
     await hub.finalize(run_id)  # 1..3 已落库
 
-    import app.core.sse_writer as sw
+    import app.core.event_log as el
 
-    original = sw.run_event_repo.list_after
+    original = el.DbEventLog.replay
     replayed: list = []
 
-    async def replay_then_redeliver(*args, **kwargs):
+    async def replay_then_redeliver(self, *args, **kwargs):
         """回放后把已下发过的 2、3 再往实时队列塞一遍（模拟重复投递）。"""
-        history = await original(*args, **kwargs)
-        replayed.extend(history)
+        result = await original(self, *args, **kwargs)
+        replayed.extend(result.events)
         # 订阅此时已建立，把刚回放过的 2、3 再实时推一遍（模拟重复投递）
-        for e in history[1:]:
+        for e in result.events[1:]:
             await hub._bus.publish(f"run:{run_id}", e.to_wire())  # noqa: SLF001
         # 随后产生新事件
         hub.register(run_id, start_seq=3)
         await hub.emit(run_id, EventType.TOKEN, {"content": "4"})
         await hub.emit(run_id, EventType.DONE, {"status": "done"})
-        return history
+        return result
 
-    monkeypatch.setattr(sw.run_event_repo, "list_after", replay_then_redeliver)
+    monkeypatch.setattr(el.DbEventLog, "replay", replay_then_redeliver)
 
     got = await _collect(SSEStream(hub), run_id, 0, 4)
     seqs = [e.seq for e in got]
@@ -270,13 +270,14 @@ async def test_reconnect_after_done_before_flush_closes_with_synthetic_done(
     """
     await _make_run(run_id, RunStatus.RUNNING.value, 0)  # 状态还没来得及回写
 
-    import app.core.sse_writer as sw
+    import app.core.event_log as el
 
-    async def empty_replay(*args, **kwargs):
+    async def empty_replay(self, *args, **kwargs):
         """让回放查不到任何行，模拟「事件还卡在内存批量队列里」。"""
-        return []  # 事件还在内存批量队列里，DB 里查不到
+        # 事件还在内存批量队列里，DB 里查不到
+        return el.ReplayResult(events=[])
 
-    monkeypatch.setattr(sw.run_event_repo, "list_after", empty_replay)
+    monkeypatch.setattr(el.DbEventLog, "replay", empty_replay)
 
     # 等一小会儿，让空闲回查生效；同时把 run 置为终态
     async def finish_later():

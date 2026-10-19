@@ -16,6 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from redis.exceptions import RedisError
 
 from app import __version__
 from app.api.router import api_router
@@ -23,6 +24,12 @@ from app.config.db import dispose_engine
 from app.config.settings import settings
 from app.core.errors import AppError
 from app.core.orchestrator import get_orchestrator, recover_stale_runs
+from app.core.redis_client import (
+    connect_redis,
+    disconnect_redis,
+    instance_id,
+    redis_is_enabled,
+)
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -35,19 +42,36 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """应用生命周期钩子（FastAPI lifespan）：启动善后 + 关闭收尾。
 
-    **启动**：调 :func:`recover_stale_runs` 把上次进程遗留的 running/pending run
-    统一标成 error。否则进程崩溃/被 kill 后，这些 run 会永远停在 running——它们
-    的 asyncio.Task 已经随进程消失了，前端却会一直以为「还在生成中」。
+    **启动**：启用 Redis 时先建立连接（连不上直接启动失败，不静默降级）
+    → 调 :func:`recover_stale_runs` 把上次进程遗留的 running/pending run
+    统一标成 error。
 
     **关闭**：先 ``orchestrator.shutdown()``（取消后台 run 任务并等待收尾、
-    冲刷内存里尚未落库的事件、关闭 LLM 客户端与 hub），再 ``dispose_engine()``
-    关连接池。顺序不能反：还在写的任务需要连接可用来落库。
+    冲刷内存里尚未落库的事件、关闭 LLM 客户端与 hub），再 ``disconnect_redis()``，
+    最后 ``dispose_engine()`` 关连接池。顺序不能反：还在写的任务需要连接可用
+    来落库，而 Redis 的 pump 任务需要 Redis 还活着才能干净退出。
 
     易踩的坑：启动阶段的恢复失败只记日志、不阻塞启动。数据库暂时不可用（例如
     迁移还没跑完）不应该让整个服务起不来，否则就是「恢复逻辑本身制造了新的启动
-    故障」。
+    故障」。**Redis 不可用则相反**——必须让启动失败，否则各实例会静默退回进程内
+    总线，症状是「服务能跑但跨实例收不到事件」，比启动失败难查得多。
     """
     logger.info("%s v%s 启动中…", settings.app_name, __version__)
+
+    # Redis 连接放在最前面：总线与回放源的单例在第一次使用前必须已就绪，
+    # 否则会在某个请求里才炸，错误现场和真正的病因隔得很远。
+    if redis_is_enabled():
+        try:
+            await connect_redis()
+        except RedisError as exc:
+            logger.error(
+                "Redis 连接失败（%s）：%s。单实例开发请设 REDIS_ENABLED=false。",
+                settings.redis_url,
+                exc,
+            )
+            raise
+        logger.info("已启用 Redis 后端，实例标识 %s", instance_id())
+
     try:
         n = await recover_stale_runs()
         if n:
@@ -57,6 +81,8 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("正在关闭…")
     await get_orchestrator().shutdown()
+    if redis_is_enabled():
+        await disconnect_redis()
     await dispose_engine()
     logger.info("已关闭")
 

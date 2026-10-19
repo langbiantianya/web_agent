@@ -73,10 +73,15 @@ class Orchestrator:
         return task
 
     async def cancel(self, run_id: int) -> bool:
-        """请求取消：置标志位，执行中的 LLM 流会在下一个 chunk 收尾。"""
-        if not self.hub.is_active(run_id):
+        """请求取消：本实例置标志 + 通知持有该 run 的实例。
+
+        V2 下 run 可能正跑在**别的**实例上，所以不能只看 ``hub.is_active``——
+        那样用户在 B 实例点「停止」会得到一个「无事发生」而后台照烧 token。
+        改成用跨实例口径的 ``is_active_anywhere``。
+        """
+        if not await self.hub.is_active_anywhere(run_id):
             return False
-        self.hub.request_cancel(run_id)
+        await self.hub.request_cancel(run_id)
         return True
 
     async def shutdown(self) -> None:
@@ -132,6 +137,10 @@ class Orchestrator:
 
             # seq 计数器从上次中断处续接（正常情况都是 0）
             self.hub.register(run_id, start_seq=plan["start_seq"])
+            # 先抢归属租约再开跑：租约是「别人不会误杀这个 run」的唯一凭据，
+            # 必须早于任何生成动作建立，否则别的实例在它之前启动过一次
+            # recover_stale_runs 就会把这条 run 标成 error。
+            await self.hub.claim(run_id)
             await run_repo_mark_running(run_id)
 
             async with SessionLocal() as db:
@@ -442,11 +451,33 @@ def get_orchestrator() -> Orchestrator:
 
 
 async def recover_stale_runs() -> int:
-    """进程启动时把上次遗留的 running/pending run 标记为 error（设计文档 §9）。"""
+    """进程启动时把**无主**的 running/pending run 标记为 error（设计文档 §9）。
+
+    V1 的做法是「扫到 running 就标 error」，单实例下正确。多实例下这是**硬伤**：
+    B 实例每次启动都会把 A 实例正在生成的 run 全部标成 error，用户眼睁睁看着
+    自己的回答在生成中途被判死刑——多活反而比单活更糟。
+
+    V2 用归属租约区分「真的没人管了」和「在别的实例上跑得好好的」：
+
+    - 租约键还在 → 有人管着，**跳过**；
+    - 租约键不存在或已过期 → 生成方已死（进程被 kill 之后没有人续期），
+      标记成 error 是正确且必要的，否则这些 run 会永远停在 running。
+
+    租约天然带 TTL，所以不需要额外的「心跳表」或「实例注册表」——实例被
+    kill -9 时不会有任何清理动作发生，键自己过期就够了。
+    """
+    from app.core.lease import get_lease
+
+    lease = get_lease()
     async with SessionLocal() as db:
         stale = await run_repo.find_stale_running(db)
         count = 0
+        skipped = 0
         for run in stale:
+            if await lease.is_owned(run.id):
+                logger.info("run %s 仍由其它实例生成，跳过恢复", run.id)
+                skipped += 1
+                continue
             await run_repo.finish(
                 db,
                 run.id,
@@ -457,6 +488,8 @@ async def recover_stale_runs() -> int:
             count += 1
         if count:
             logger.warning("已将 %s 个遗留 run 标记为 error", count)
+        if skipped:
+            logger.info("跳过 %s 个仍被其它实例持有的 run", skipped)
         return count
 
 

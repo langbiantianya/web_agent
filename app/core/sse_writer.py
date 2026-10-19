@@ -26,10 +26,10 @@ from dataclasses import dataclass
 
 from app.config.db import SessionLocal
 from app.config.settings import settings
-from app.core.errors import GoneError, NotFoundError
+from app.core.errors import NotFoundError
+from app.core.event_log import EventLog, get_event_log
 from app.core.run_hub import RunEventDTO, RunHub, get_hub
 from app.models.enums import EventType, RunStatus
-from app.repo.run_event_repo import run_event_repo
 from app.repo.run_repo import run_repo
 
 logger = logging.getLogger(__name__)
@@ -56,8 +56,13 @@ class RunSnapshot:
 
 class SSEStream:
     def __init__(self, hub: RunHub | None = None) -> None:
-        """绑定事件源。默认取全局 RunHub 单例，测试可注入假 hub 替代。"""
+        """绑定事件源。默认取全局 RunHub 单例与当前配置下的回放源，测试可注入假件。
+
+        两个源分别对应「实时」与「回放」，都从模块级单例取，保证同一条流里
+        不会混用两套实现（比如从 Redis 写、却去 MySQL 回放）。
+        """
         self.hub = hub or get_hub()
+        self._log: EventLog = get_event_log()
 
     async def stream(
         self, run_id: int, resume_from: int = 0
@@ -65,15 +70,20 @@ class SSEStream:
         """产出一条 SSE 事件流：DB 回放 + 实时合并去重。
 
         步骤顺序就是本函数全部复杂度的来源，**不要调整**：
-        1. 先同步订阅——此后产生的任何事件都进 ``sub.queue``；
+        1. 先订阅并**等它真正生效**——此后产生的任何事件都进 ``sub.queue``；
         2. 再 ``hub.flush()``——让 DB 追上内存，回放才读得到最新的尾部；
-        3. 再回放 DB——此时回放集与订阅集在「订阅后、flush 前」这段存在重叠；
+        3. 再回放（V1 读 DB，V2 读 Redis Stream）——此时回放集与订阅集在
+           「订阅后、flush 前」这段存在重叠；
         4. 输出一律按 ``seq > max_sent`` 去重——seq 单调递增且 run_event 上有
            ``uk_run_seq`` 唯一索引，合并天然幂等，于是「不漏字、不重复、不乱序」
            三件事同时成立。
 
         「先订阅后回放」之所以敢这么做，靠的是第 4 步；若换成先回放再订阅，
-        两步之间新产生的事件既不在 DB 也不会进队列，会永久丢失。
+        两步之间新产生的事件既不在回放源也不会进队列，会永久丢失。
+
+        第 1 步在 V2 下**必须 await**：Redis 的 SUBSCRIBE 要走一次网络往返才生效，
+        不等就可能出现「回放已读完、订阅还没生效」的窗口，窗口里的事件两头落空。
+        这不是理论担忧——实测真的漏过一个 token。论证见 :mod:`app.core.bus` 开头。
 
         Args:
             run_id: 要订阅的 run。
@@ -86,8 +96,11 @@ class SSEStream:
         Raises:
             NotFoundError: run 不存在。
         """
-        # ① 同步订阅：此刻之后产生的任何事件都会进入 sub.queue，不会遗漏
-        sub = self.hub.subscribe(run_id)
+        # ① 订阅，**等它真正生效**：此后产生的任何事件都会进入 sub.queue。
+        #    必须 await。若不等 Redis 确认 SUBSCRIBE，就可能出现「回放已经读完、
+        #    订阅还没生效」的窗口，那个窗口里产生的事件两头落空（既不在回放里
+        #    也不在实时队列里），实测会真的漏字。详见 app/core/bus.py 开头。
+        sub = await self.hub.subscribe(run_id)
         try:
             max_sent = resume_from
             yielded_terminal = False
@@ -175,32 +188,34 @@ class SSEStream:
             )
 
     async def _replay(self, run_id: int, resume_from: int):
-        """从 DB 回放 ``seq > resume_from`` 的历史事件，并顺带取回 run 终态快照。
+        """回放历史事件 + 取 run 终态快照。
+
+        两样东西来自**不同的源**，刻意不合并：
+
+        - 事件走 :mod:`app.core.event_log` 抽象。V1 是 MySQL 表，V2 是 Redis Stream
+          ——回放源换成 Stream 正是为了让「回放不依赖 flush」，于是跨实例续传不必
+          再去碰别的进程的内存；
+        - run 状态快照始终读 MySQL。它只在流里没见到终止事件时才用来收尾，且
+          需要的是**权威终态**，而 Redis 里只有事件、没有 run 行。
 
         Returns:
             ``(history, snapshot)``。run 不存在时 snapshot 为 None——抛不抛 404
             交给调用方决定，因为「run 不存在」和「run 存在但无事件」要区别对待。
 
-        ``first_seq`` 只在 ``resume_from > 0`` 时才查：它是缺口检测的输入，首次
-        连接（resume_from=0）无需多一次查询。
-
-        注意读的是 DB 而不是内存批次——因此 ``stream()`` 必须先 ``hub.flush()``，
-        否则刚 emit、还没落库的那几个 token 既不在回放里也不在实时流里。
+        注意事件源可能不是 DB，所以第 ② 步的 ``hub.flush()`` 依旧保留：V1 下它
+        是正确性前提，V2 下只是让归档更及时。
         """
         async with SessionLocal() as db:
             run = await run_repo.get_by_id(db, run_id)
             if run is None:
                 return [], None
-            history = await run_event_repo.list_after(db, run_id, resume_from)
-            first_seq = None
-            if resume_from > 0:
-                first_seq = await run_event_repo.first_seq(db, run_id)
-            return history, RunSnapshot(
-                status=run.status,
-                last_seq=run.last_seq or 0,
-                error_msg=run.error_msg,
-                first_seq=first_seq,
-            )
+        replayed = await self._log.replay(run_id, resume_from)
+        return replayed.events, RunSnapshot(
+            status=run.status,
+            last_seq=run.last_seq or 0,
+            error_msg=run.error_msg,
+            first_seq=replayed.first_seq,
+        )
 
     @staticmethod
     def _detect_gap(resume_from: int, history, snapshot: RunSnapshot) -> int | None:

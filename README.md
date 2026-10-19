@@ -14,9 +14,14 @@
 | 生成与连接解耦 | `POST /messages` 立即返回 `runId`，生成在后台 `asyncio.Task` 中跑，**连接断开不影响生成** |
 | 断线续传 | 事件带单调递增 `seq` 并全量落库；重连用 `Last-Event-ID` 或 `last_seq` 回放，**不漏字、不重复、不乱序** |
 | 批量落库 | `run_event` 每 20 条或每 50ms 批量 INSERT，绝不每 token 一次写库 |
+| **多实例（V2）** | 开启 `REDIS_ENABLED` 后事件走 Redis Stream（回放源）+ Pub/Sub（实时），**任意实例都能接任意 run 的流** |
+| **归属租约（V2）** | 生成方持带 TTL 的租约并续期；新实例启动只回收**无主**的 run，不会误杀别人正在跑的 |
+| **跨实例取消（V2）** | 取消信号走控制频道，在 B 实例点「停止」能真的停掉 A 实例上的生成 |
 | 心跳保活 | SSE 注释行 `: ping`，不占 `seq`、不落库、不污染回放序列 |
 | 统一协议 | 所有模型走 OpenAI 兼容 `/v1/chat/completions`，OpenAI / DeepSeek / Qwen / vLLM 通吃 |
-| 可扩展 | 进程内总线抽象为 `BusBackend` Protocol，V2 换 Redis Pub/Sub 即可多实例 |
+| 可扩展 | 进程内总线抽象为 `BusBackend` Protocol，V2 已落地 Redis Pub/Sub 实现 |
+
+> 多实例的完整设计（含一处被实测抓出来的漏字 bug）见 [`docs/design.md` §13](docs/design.md)。
 
 ---
 
@@ -137,6 +142,55 @@ python run.py --help           # 全部参数
 alembic upgrade head
 python -m scripts.seed
 uvicorn app.main:app --reload
+```
+
+### 6. 多实例（V2）
+
+默认是**单实例**。要跑多台，在 `.env` 里打开 Redis：
+
+```dotenv
+REDIS_ENABLED=true
+REDIS_URL=redis://192.168.1.5:6379/0
+REDIS_KEY_PREFIX=webagent    # 多套环境共用一个 Redis 时做隔离
+REDIS_STREAM_MAXLEN=20000    # 每个 run 的事件 Stream 保留条数上限
+REDIS_ACTIVITY_TTL=120       # 归属租约 TTL（秒），生成方按 TTL/3 续期
+REDIS_POLL_INTERVAL=1.0      # 订阅轮询间隔，决定退订收尾的快慢
+```
+
+然后把同一个服务起在多个端口 / 多台机器上：
+
+```bash
+python run.py --port 8000
+python run.py --port 8100      # 另一台终端
+```
+
+此时：
+
+- 在 **8000** 发消息，**8100** 上打开 <http://127.0.0.1:8100/> 也能收到完整流式输出；
+- 断线后连到**任意**一个实例继续收，带上 `last_seq` 即可续传；
+- 在任一实例点「取消」，生成方那个实例上会真的停下来；
+- **新起的实例不会误杀正在生成的 run**——归属租约按 TTL/3 续期，
+  启动恢复只回收「已经没人管」的 run。
+
+> ⚠️ **开启后没有降级路径**：Redis 连不上时服务**直接启动失败**，不会静默退回
+> 进程内总线。后者会造成「服务能跑、跨实例收不到事件」的分裂大脑，比启动失败
+> 难查得多。单实例开发请保持 `REDIS_ENABLED=false`。
+
+多个实例前面挂 Nginx 时仍然要关缓冲，并且 ticket 要每次重连重新签发：
+
+```nginx
+upstream web_agent {
+    least_conn;
+    server 127.0.0.1:8000;
+    server 127.0.0.1:8100;
+}
+location /api/ {
+    proxy_pass http://web_agent;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 3600s;
+    proxy_set_header Host $host;
+}
 ```
 
 ---
@@ -322,16 +376,25 @@ location /api/ {
 pytest -q
 ```
 
-72 个用例，覆盖设计文档里最容易写错的两处：
+**93 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
+Redis 连不上时这 19 个会自动 skip，其余照跑）。覆盖设计文档里最容易写错的两处：
 
 - `run_event` 批量落库不丢事件、seq 严格递增唯一、并发 emit 不产生重复 seq
 - 「先订阅 → 冲刷 → 回放 → 按 seq 合并」在断线重连时不漏字、不重复、不乱序
+- **跨实例续传**：A 实例生成、B 实例收流，B 侧 `hub.flush()` 是空操作也能收全
+- **跨实例取消**：B 实例点取消，A 实例上的生成收到信号并停止
+- **归属租约**：启动恢复只回收无主的 run，不误杀其它实例正在跑的
 
 端到端用例会起一个**真实的 OpenAI 兼容 HTTP 服务**当假模型（`tests/fake_llm.py`），
-走完整网络栈验证 SSE 吐字、取消、重试、断线续传。
+走完整网络栈验证 SSE 吐字、取消、重试、断线续传。另有双实例端到端（两个独立
+uvicorn 进程 + 真实 Redis）验证跨实例吐字与续传。
 
 > 测试库按进程号隔离（`%TEMP%\web_agent_test_<pid>.db`），所以**可以并行跑多份
 > pytest 而不会互相抢库**。早先固定文件名时，并行跑会出现毫无关联的用例随机失败。
+>
+> `conftest.py` 会强制 `REDIS_ENABLED=false`——`settings` 的 `env_file=".env"` 是
+> 相对路径，pytest 从项目根跑会命中开发者本地的 `.env`，开了 Redis 会让整个套件
+> 切到 Redis 模式、用例之间互相撞车。需要 Redis 的用例自己显式建连。
 
 ### docstring 覆盖检查
 
@@ -340,7 +403,7 @@ python scripts/check_docstrings.py            # 全量
 python scripts/check_docstrings.py app/core   # 指定目录/文件/模块路径
 ```
 
-当前状态：**320 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
+当前状态：**417 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
 默认扫描范围含根目录的 `run.py`，新增根目录脚本记得加进 `DEFAULT_TARGETS`。
 
 ---
@@ -356,9 +419,12 @@ app/
 │   ├── deps.py             # get_db / ticket 校验 / 断点解析
 │   └── routes/             # agent / workflow / conversation / run / auth / health
 ├── core/
-│   ├── bus.py              # BusBackend Protocol + 进程内实现（Redis 扩展位）
+│   ├── bus.py              # BusBackend Protocol + InMemory / Redis Pub-Sub 两种实现
+│   ├── event_log.py        # EventLog Protocol + Db / Redis Stream 两种回放源
+│   ├── lease.py            # RunLease Protocol + Noop / Redis 两种归属租约与取消频道
+│   ├── redis_client.py     # Redis 连接生命周期 + 实例标识 + 键布局（V2）
 │   ├── run_hub.py          # seq 分配 + 事件广播 + 取消信号
-│   ├── event_writer.py     # run_event 批量落库
+│   ├── event_writer.py     # run_event 批量落库（MySQL 长期归档）
 │   ├── sse_writer.py       # 回放 + 实时合并去重（续传核心）
 │   ├── agent_runner.py     # 单 Agent 执行（AsyncOpenAI 流式）
 │   ├── orchestrator.py     # run 生命周期 + 节点调度 + 重试
@@ -376,7 +442,7 @@ alembic/  tests/  docs/design.md
 
 ## 演进路线
 
-- **V1**（当前）：单实例、线性流水线、MySQL 持久化、SSE 续传
-- **V2**：Redis Pub/Sub 替换进程内总线支持多实例；`run_event` 走 Redis Stream
+- **V1**（已完成）：单实例、线性流水线、MySQL 持久化、SSE 续传
+- **V2**（已完成）：Redis Pub/Sub 替换进程内总线支持多实例；`run_event` 走 Redis Stream 作为回放源；归属租约让启动恢复不再误杀其它实例的 run
 - **V3**：Workflow 支持 DAG + 条件边 + 人工审批；Agent 支持 RAG / MCP 工具
 - **V4**：可观测性（OpenTelemetry 链路追踪、token 成本统计）

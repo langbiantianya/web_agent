@@ -16,6 +16,9 @@ openai>=1.40
 # ---- SSE ----
 sse-starlette>=2.1
 
+# ---- Redis（V2 多实例，REDIS_ENABLED=false 时用不到）----
+redis>=5.0
+
 # ---- 配置与安全 ----
 pydantic-settings>=2.4
 cryptography>=42.0

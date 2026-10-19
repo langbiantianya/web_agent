@@ -765,8 +765,8 @@ web_agent/
 
 ## 11. 演进路线
 
-- **V1**（本次实现）：单实例、线性流水线、MySQL 持久化、SSE 续传
-- **V2**：Redis Pub/Sub 替换进程内总线支持多实例；`run_event` 写入 Redis Stream 降低 MySQL 压力
+- **V1**：单实例、线性流水线、MySQL 持久化、SSE 续传（已完成，见 §12）
+- **V2**：Redis Pub/Sub 替换进程内总线支持多实例；`run_event` 走 Redis Stream 作为回放源（已完成，见 §13）
 - **V3**：Workflow 支持 DAG + 条件边 + 人工审批节点；Agent 支持 RAG / MCP 工具
 - **V4**：可观测性（OpenTelemetry 链路追踪、token 成本统计）
 
@@ -851,6 +851,161 @@ return list(reversed(result))  # ← 这一句会把顺序又翻回去
 
 实测结果：单元 + 集成 + 端到端共 72 个用例全绿；对真实 MiniMax 模型做断线续传冒烟，
 1210 个事件从 seq 7 续到 1210，流式文本与最终落库内容逐字一致（3939 字）。
+
+---
+
+## 13. V2：Redis 多实例
+
+V1 的目标形态是单实例。V2 要做的是让它能在**多个进程之间**正确工作——不是简单地把
+uvicorn 起两台，而是把「哪些状态不能留在进程内存里」这个问题系统性地解决掉。
+
+### 13.1 先定位：多实例下哪些状态会出问题
+
+逐条审查 V1 的六处进程内状态，结论如下。前两项是**硬伤**：
+
+| 状态 | V1 位置 | 多实例下的后果 | V2 方案 |
+| --- | --- | --- | --- |
+| 事件广播 | `InMemoryBackend` | B 实例收不到 A 实例吐的字 | Redis Pub/Sub |
+| **落库缓冲** | `EventWriter._batch` | **B 实例的 `hub.flush()` 是空操作 → 尾部 token 丢失**，§12.3 ① 修的 bug 原样复活 | 回放源换成 Redis Stream，`flush()` 不再是正确性前提 |
+| **启动恢复** | 扫全表把 running 标 error | **B 实例一启动就把 A 实例正在跑的 run 全杀掉** | 归属租约，只回收无主的 |
+| 取消标志 | `_RunState.cancel_requested` | B 实例点取消，A 实例收不到 | 控制频道 |
+| 活跃判断 | `_states` 里有键 | 跨实例判断不了 | 租约 TTL |
+| seq 计数器 | 本地计数 | 单 run 只由一个实例生成，不冲突 | 保留本地，Stream ID 冲突作护栏 |
+
+其中「启动恢复误杀」最严重：多活反而比单活更糟，用户眼看着自己的回答在生成中途被判死刑。
+
+### 13.2 回放源：为什么必须是 Redis Stream
+
+V1 里「回放读 MySQL」直接导致 `hub.flush()` 成为续传正确性的前提——因为
+`EventWriter` 批量异步落库。单进程时 flush 就在同一进程里，没问题；**多实例做不到**：
+SSE 在 B 实例、EventWriter 在 A 实例，B 调 `flush()` 是空操作。
+
+所以 V2 把回放源换成 Redis Stream。`emit()` 时事件就**同步** `XADD` 进 Stream，
+任意实例的 SSE 都能 `XRANGE` 到它——`flush()` 从此只是「让 MySQL 归档更及时」的优化。
+
+Stream 条目 ID 固定写成 `<seq>-0`。Redis 要求新 ID 严格大于末位，而 seq 在单个 run 内
+单调递增，于是断点续传直接就是 `XRANGE key (42-0 +`，不必按字段过滤。万一两处同时给
+同一个 run 发号，Redis 会拒绝较小的 ID——这是单写者约定的运行时护栏，而不是悄悄写进
+一条乱序数据。
+
+数据流：
+
+```text
+emit(seq=42)
+  ├─ XADD    P:run:<id>:ev   42-0 …     ← 持久化 + 回放源（同步，跨实例可见）
+  ├─ PUBLISH P:run:<id>      {...}      ← 实时推送（跨实例）
+  └─ 本地 EventWriter → MySQL           ← 长期归档（批量，保留 7 天）
+```
+
+**顺序不能换**：先落再播，保证订阅者收到的任何事件都必定已经可被回放。
+
+MySQL 仍保留为长期归档，因此 `RedisEventLog.replay` 在 Stream 为空时会**回落到 MySQL**——
+这不是可选兜底而是必需的：Stream 有 TTL，而启用 Redis 之前产生的 run 压根没有 Stream，
+只读 Stream 会让这些 run 一被续传就读不到内容。
+
+### 13.3 续传正确性的时序论证（以及它被打破过一次）
+
+设 `t1` = Redis 确认 SUBSCRIBE 的时刻，`t2` = 回放执行 XRANGE 的时刻。任意事件 E 满足
+`publish_time > append_time`，于是
+
+> E 不在回放里（`append_time > t2`）与 E 不在实时队列里（`publish_time < t1`）
+> **不可能同时成立**——前提是 `t1 < t2`。
+
+所以「回放 ∪ 实时队列」是完整的，`hub.flush()` 不再需要。
+
+**但这个前提曾经被打破，而且真的漏了字。** 初版实现里 `subscribe()` 只创建 pump 任务就
+返回，SUBSCRIBE 还在网络上飞。此时 `t2 < t1` 完全可能（XRANGE 与 SUBSCRIBE 是两条连接上
+的并发往返，没有先后保证），落在 `(t2, t1)` 窗口里的事件两头落空。
+
+双实例实测抓到了：一次「读 30 条就断开、重连接 415 条」的续传里，`seq=33` 没送达，
+拼接文本少 2 个字。查 Redis Stream 与 MySQL 都是完整的 445 条——**服务端没丢，是订阅
+窗口**。修法是恢复 V1 的不变量：`BusBackend.subscribe` 改为协程，**必须 await 到 Redis
+确认 SUBSCRIBE 才返回**，`sse_writer` 第 ① 步随之 await。
+
+> 这也是为什么 `subscribe` 不能图省事写成同步的：它必须是「返回即已生效」的语义，
+> InMemory 实现内部没有任何 await 所以零开销，Redis 实现则老实等一次网络往返。
+
+### 13.4 归属租约与取消信号
+
+「谁在管这个 run」变成 Redis 里一把带 TTL 的租约：
+
+| 键 | 值 | TTL | 用途 |
+| --- | --- | --- | --- |
+| `P:run:<id>:owner` | 实例标识（`主机名:PID:随机后缀`） | `REDIS_ACTIVITY_TTL`，按 TTL/3 续期 | 判断 run 是否还有主 |
+| `P:run:<id>:cancel` | `1` | 较大 | 兜住「取消早于订阅到达」的窗口 |
+| `P:run:<id>:ctl` | Pub/Sub | — | 取消等控制指令 |
+
+- **启动恢复**只回收**没有主**的 run。实例被 `kill -9` 时没人续期，键自然过期，
+  不需要任何额外的清理动作、心跳表或实例注册表。
+- **取消**走控制频道，同时写取消键、订阅方上线后主动补查。只做前者会漏取消，
+  只做后者会有延迟（用户点了停止却要等几秒才停）。
+- **`is_cancelled` 仍然只读进程内的布尔字段**——它每个 chunk 都要轮询一次，那里绝不能
+  出现 await 或 Redis 往返。跨实例的部分由控制频道在**收到信号的那一刻**解决掉。
+- **`is_active` 跨实例语义**单独提供 `is_active_anywhere()`；`is_active()` 保持只看本实例。
+
+### 13.5 配置与降级策略
+
+```dotenv
+REDIS_ENABLED=false          # 默认关：单实例行为，测试全部依赖它
+REDIS_URL=redis://192.168.1.5:6379/0
+REDIS_KEY_PREFIX=webagent    # 多套环境共用一个 Redis 时做隔离
+REDIS_STREAM_MAXLEN=20000    # 每个 run 的 Stream 条数上限（近似裁剪）
+REDIS_ACTIVITY_TTL=120       # 租约 TTL（秒）
+REDIS_POLL_INTERVAL=1.0      # 订阅轮询间隔，决定退订收尾的快慢
+```
+
+**开启后没有降级路径**：Redis 连不上时服务直接启动失败。这是刻意的——静默退回进程内总线
+会造成「服务能跑、跨实例收不到事件」的分裂大脑，比启动失败难查得多。单实例开发请显式关掉。
+
+### 13.6 抽象方式
+
+延续 V1 已有的「Protocol + 双实现 + 单例」套路，让业务代码里没有一处 `if redis_enabled`：
+
+| 抽象 | V1 实现 | V2 实现 |
+| --- | --- | --- |
+| `BusBackend` | `InMemoryBackend` | `RedisPubSubBackend`（Pub/Sub 实时） |
+| `EventLog` | `DbEventLog`（读 `run_event`） | `RedisEventLog`（读 Stream，空则回落 MySQL） |
+| `RunLease` | `NoopLease` | `RedisLease`（租约 + 取消频道） |
+
+`get_bus()` / `get_event_log()` / `get_lease()` 按配置选实现，三处必须一致——否则会出现
+「事件写进 Redis、回放却去 MySQL 找」这种错配，症状是续传大面积失败且极难定位。
+
+### 13.7 单写者约定
+
+一个 run 只由接下 `POST /messages` 的那个实例负责编排，别的实例只能读。这条约定撑起了两处
+设计：seq 分配用本地计数器（省掉每个 token 一次 Redis 往返），以及 Stream 条目 ID 直接取
+seq。V2 **没有实现 failover**：实例挂掉后它持有的 run 由租约过期 → 启动恢复标 error，
+不会被另一个实例接管重跑。
+
+### 13.8 实现过程中发现并修复的缺陷
+
+除 §13.3 那个漏字 bug 外，V2 落地时还踩到三处，都已修复：
+
+| # | 缺陷 | 根因 | 修法 |
+| --- | --- | --- | --- |
+| 1 | **Redis 订阅 / 回放之间漏事件** | `subscribe()` 不等 SUBSCRIBE 确认，见 §13.3 | `subscribe` 改协程，必须 await |
+| 2 | **cancel 掉阻塞在读上的订阅任务会让后续关闭永久挂起** | pump 阻塞在 `pubsub.get_message()`，强行 cancel 打断这次读，redis-py 的连接锁留在不一致状态，之后的 `unsubscribe()/aclose()` 抢同一把锁就死等。现象是**挂在几十行之外的用例上** | 退订只置关闭标志、让 pump 在下一个轮询周期自行退出；`REDIS_POLL_INTERVAL` 决定收尾快慢 |
+| 3 | **`PUT /api/workflows/{code}` 带 definition 必 500** | `payload.model_dump()` 已把嵌套模型转成 dict，代码又对该 dict 调 `.model_dump()` | 从 `payload.definition`（模型对象）重新 dump |
+| 4 | **测试套件被开发者本地 `.env` 污染** | `env_file=".env"` 是相对路径，pytest 从项目根跑会命中本地 `.env`；开了 Redis 后整个套件切到 Redis 模式，不同用例的 run id 从 1 开始互相撞车 | `conftest.py` 强制 `REDIS_ENABLED=false` |
+
+其中 #3 是 V1 就存在的 bug，此前测试只覆盖了 POST 建 Workflow，一直没人发现。
+
+### 13.9 验证结果
+
+- **19 个 Redis 集成测试**（`tests/test_redis.py`）：键布局、Stream 断点续传、重复 seq
+  护栏、TTL、MySQL 回落、跨实例 Pub/Sub、跨实例取消、取消早于订阅到达的补查、启动恢复
+  归属判定，以及两条跨实例续传主线。
+- **V1 回归 74 个用例全绿**，确认默认关闭 Redis 时行为逐字不变。
+- **双实例端到端**：两个独立 uvicorn 进程（实例标识不同），在 B 实例发消息、A 实例收流，
+  中途断开后带 `last_seq` 在 A 实例重连——445 个事件 seq 严格连续、无重复、无乱序，
+  拼接文本与 MySQL 落库、与假模型输出三方逐字一致（873 字）。
+
+外部依赖抖动会伪装成代码故障，因此做了两件事：
+
+- `connect_redis` 带 3 次退避重试。实测遇到过一轮测试跑到一半 Redis 拒连
+  （`Error 22 ... 远程计算机拒绝网络连接`），两秒后它自己恢复；没有重试的话，
+  那一次会变成 19 个用例同时 ERROR。
+- 测试夹具在连不上时**跳过**而不是报错。真正的回归应当表现为「Redis 通着但用例不过」。
 
 ---
 
