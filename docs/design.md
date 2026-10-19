@@ -1,6 +1,6 @@
 # 多 Agent 协作 Web 服务设计文档（Python + MySQL）
 
-> 版本：V3　|　状态：已实现　|　技术基础：Python 3.11+ / FastAPI / SQLAlchemy 2.0 async / MySQL 8
+> 版本：V3.1　|　状态：已实现　|　技术基础：Python 3.11+ / FastAPI / SQLAlchemy 2.0 async / MySQL 8
 
 ---
 
@@ -21,6 +21,7 @@
 13. [V2：Redis 多实例](#13-v2redis-多实例)
 14. [V2-b：用 LangGraph 替换自研编排器](#14-v2-b用-langgraph-替换自研编排器)
 15. [V3：DAG + 条件边](#15-v3dag--条件边)
+16. [V3.1：人工审批](#16-v31人工审批)
 ---
 
 ## 1. 项目目标与设计原则
@@ -336,6 +337,30 @@ CREATE TABLE run_event (
 > `uk_run_seq` 保证 seq 唯一且回放幂等；`idx_run_created` 支撑按时间窗口清理。
 > 清理策略：`DELETE FROM run_event WHERE created_at < NOW() - INTERVAL 7 DAY`，已 done 的 run 最终内容以 `message` 为准。
 
+#### `run_approval` — 人工审批记录（V3.1）
+
+```sql
+CREATE TABLE run_approval (
+  id           BIGINT PRIMARY KEY AUTO_INCREMENT,
+  run_id       BIGINT      NOT NULL,
+  node_id      VARCHAR(64) NOT NULL,
+  status       VARCHAR(16) NOT NULL DEFAULT 'pending',
+  prompt       TEXT        NOT NULL DEFAULT '',
+  comment      TEXT        DEFAULT NULL,
+  decided_by   VARCHAR(64) DEFAULT NULL,
+  requested_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+  decided_at   DATETIME(3) DEFAULT NULL,
+  UNIQUE KEY uk_run_approval_node (run_id, node_id),
+  KEY idx_approval_status (status, requested_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+这张表是**审计账本，不是暂停点**：暂停点（图状态）在 checkpointer 里，见 §16.6。
+`uk_run_approval_node` 保证一个 run 里的同一个审批节点只会有一条记录——DAG 里节点最多跑一次。
+
+> SQLite 上主键必须写成 `INTEGER PRIMARY KEY`（rowid 别名）才会自增，迁移里用
+> `sa.BigInteger().with_variant(sa.Integer, "sqlite")` 表达，见 §16.8 第 4 条。
+
 ### 4.3 SQLAlchemy 异步配置
 
 ```python
@@ -482,10 +507,14 @@ data: {"status":"done","usage":{"prompt_tokens":120,"completion_tokens":340}}
 | `reasoning` | 推理过程增量 | 是 |
 | `tool_call` | 工具调用请求 | 是 |
 | `error` | 错误 | 是 |
+| `approval_required` / `approved` / `rejected` | 人工审批（V3.1），见 §16.4 | 是 |
 | `done` | 正常结束，流关闭 | 是 |
 | `heartbeat` | 心跳 | 否，使用 SSE 注释行 |
 
 > 心跳必须使用 SSE 注释行（以 `:` 开头），不触发 `onmessage`、不占用 `id`，避免污染 seq 序列导致回放错位。
+>
+> **只有 `done` 是终止事件。** V3.1 的三个审批事件都不是终止事件：流程挂在审批节点上时
+> 不发 `done`，SSE 连接继续开着，批准后同一条流接着吐字（§16.4）。
 
 ### 5.3 seq 分配
 
@@ -688,6 +717,8 @@ class InMemoryBackend:
 | GET | `/api/runs/:runId` | run 详情（含状态、步骤） |
 | GET | `/api/runs/:runId/stream` | SSE，参数 `last_seq`、`ticket` |
 | POST | `/api/runs/:runId/cancel` | 取消生成 |
+| GET | `/api/runs/:runId/approval` | 当前待审批项，没有则返回 `null`（V3.1） |
+| POST | `/api/runs/:runId/approval` | 提交审批决策，批准则继续跑、驳回则终止（V3.1） |
 | GET | `/api/health` | 健康检查 |
 
 ### 错误码约定
@@ -697,7 +728,7 @@ class InMemoryBackend:
 | 400 | 请求参数非法（Workflow definition 校验失败、Agent 配置缺失等） |
 | 401 | ticket 无效或过期 |
 | 404 | run / conversation / agent / workflow 不存在 |
-| 409 | 该会话已有 running 的 run，不允许并发发起 |
+| 409 | 该会话已有 running 的 run，不允许并发发起；**或**审批冲突（run 不在等待审批状态、该审批已被决策过） |
 | 410 | run 已归档且事件已清理，无法回放（返回最终消息） |
 
 ---
@@ -727,33 +758,45 @@ web_agent/
 │   ├── main.py                    # FastAPI app 工厂 + 生命周期
 │   ├── api/
 │   │   ├── __init__.py
+│   │   ├── router.py              # 路由汇总
 │   │   ├── deps.py                # get_db, ticket 校验
 │   │   └── routes/
 │   │       ├── __init__.py
 │   │       ├── agent.py
 │   │       ├── workflow.py
 │   │       ├── conversation.py
-│   │       ├── run.py
+│   │       ├── run.py             # 含审批接口（V3.1）
 │   │       ├── auth.py
 │   │       └── health.py
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── orchestrator.py        # run 生命周期 + workflow 调度
+│   │   ├── orchestrator.py        # run 生命周期 + workflow 调度 + 审批挂起/恢复
+│   │   ├── run_graph.py           # LangGraph 图构建 + 节点执行（含审批节点）
+│   │   ├── workflow_def.py        # definition 解析与校验
+│   │   ├── expr.py                # 条件表达式解析与求值（不用 eval）
+│   │   ├── checkpoint.py          # LangGraph checkpointer（审批暂停点，V3.1）
 │   │   ├── agent_runner.py        # 单 Agent 执行（AsyncOpenAI）
 │   │   ├── run_hub.py             # seq 分配 + BusBackend
 │   │   ├── sse_writer.py          # 回放 + 实时合并 + EventWriter 批量落库
-│   │   ├── bus.py                 # BusBackend Protocol + InMemory 实现
+│   │   ├── event_log.py           # 回放源抽象：MySQL / Redis Stream
+│   │   ├── event_writer.py        # 事件批量落库
+│   │   ├── bus.py                 # BusBackend Protocol + InMemory / Redis 实现
+│   │   ├── lease.py               # 归属租约（多实例）
+│   │   ├── redis_client.py        # Redis 连接与实例标识
+│   │   ├── ticket.py              # SSE 短期票据
 │   │   ├── crypto.py              # api_key 加解密
-│   │   └── workflow_def.py        # definition 解析与校验
+│   │   └── errors.py              # 领域异常 → HTTP 状态码
 │   ├── models/                    # SQLAlchemy ORM 模型
 │   │   ├── __init__.py
-│   │   ├── base.py
+│   │   ├── base.py                # 共享列类型（PK / DATETIME3）
+│   │   ├── enums.py               # RunStatus / StepStatus / EventType
 │   │   ├── agent.py
 │   │   ├── workflow.py
 │   │   ├── conversation.py
 │   │   ├── message.py
 │   │   ├── run.py
-│   │   └── run_event.py
+│   │   ├── run_event.py
+│   │   └── run_approval.py        # 审批记录（V3.1）
 │   ├── schemas/                   # Pydantic 请求/响应模型
 │   ├── repo/                      # 数据访问
 │   │   ├── __init__.py
@@ -762,17 +805,23 @@ web_agent/
 │   │   ├── conversation_repo.py
 │   │   ├── message_repo.py
 │   │   ├── run_repo.py
-│   │   └── run_event_repo.py
+│   │   ├── run_event_repo.py
+│   │   └── run_approval_repo.py   # 审批待办与决策（V3.1）
 │   ├── cache.py                   # Agent/Workflow 内存 LRU 缓存
 │   └── config/
 │       ├── __init__.py
 │       ├── settings.py            # pydantic-settings
 │       └── db.py                  # engine / SessionLocal / get_db
-├── web/index.html                 # 功能验证台（单文件，无构建步骤）
+├── web/
+│   ├── index.html                 # 功能验证台（单文件，无构建步骤）
+│   └── admin.html                 # 后台管理页（单文件，无构建步骤）
 ├── alembic/
 │   ├── env.py
-│   └── versions/
+│   └── versions/                  # 0001 初始 / 0002 workflow version / 0003 run_approval
 ├── docs/design.md
+├── scripts/
+│   ├── seed.py                    # 演示数据
+│   └── check_docstrings.py        # docstring 覆盖率检查
 ├── tests/
 ├── requirements.txt
 ├── .env.example
@@ -785,8 +834,9 @@ web_agent/
 
 - **V1**：单实例、线性流水线、MySQL 持久化、SSE 续传（已完成，见 §12）
 - **V2**：Redis Pub/Sub 替换进程内总线支持多实例；`run_event` 走 Redis Stream 作为回放源（已完成，见 §13）
-- **V3**：Workflow 支持 DAG + 条件边（**已完成**，见 §15）；人工审批节点（checkpointer +
-  interrupt）、Agent RAG / MCP 工具**顺延到 V3.1**
+- **V3**：Workflow 支持 DAG + 条件边（**已完成**，见 §15）
+- **V3.1**：人工审批节点——checkpointer + `interrupt` 挂起，批准则继续、驳回则终止本次 run
+  （**已完成**，见 §16）；Agent RAG / MCP 工具**仍未做**
 - **V4**：可观测性（OpenTelemetry 链路追踪、token 成本统计）
 
 ---
@@ -1089,6 +1139,11 @@ checkpoint 的子图，每个 token 一次写——比现在每 token 一次 `XA
 **结论**：`run_event` + Redis Stream 是唯一权威事件日志。它服务的是「对外事件流」这个
 消费者，checkpointer 服务的是「恢复执行」这个消费者，两者不冲突也不可互相替代。
 
+> **V3.1 兑现说明**：本节的三条论证**一条都没变**——checkpointer 依然不适合当事件日志，
+> 事件流依然只由 `run_event` + Redis Stream 负责。V3.1 挂了 checkpointer，但它服务的是
+> 另一个消费者：「图停在哪、恢复时从那儿继续」。本节的结论限定在「事件流」这个用途上，
+> 见 [§16.3](#163-暂停机制原生-checkpointer--interrupt)。
+
 ### 14.4 保留在节点内的重试与取消检查
 
 LangGraph 有 `RetryPolicy`，但它和我们要的不是一回事：
@@ -1250,12 +1305,185 @@ V3 的端到端验证顺带查出两处「docstring 承诺了、代码没做」�
 
 ### 15.9 已知限制
 
-- **人工审批不在 V3**：`checkpointer` + `interrupt` 顺延到 V3.1。V3 仍然不挂 checkpointer，
-  事件流仍由 `run_event` + Redis Stream 唯一负责（理由同 §14.3）。
 - **汇聚节点不能混条件入边**：这是 LangGraph 的语义限制（等齐所有入边才触发），配置期
   明确拒绝并给出可执行的改法（把条件前移到分叉处）。
 - **全条件汇聚被拒绝**：所有入边都是条件边时，任何一条不成立就永远等不到。等价写法是
   把汇聚点改成「无条件边 + 节点内部判断」。
+
+> **V3.1 兑现说明**：本节原先写的「人工审批不在 V3，`checkpointer` + `interrupt` 顺延到
+> V3.1」已在 V3.1 落地，见 [§16](#16-v31人工审批)。审批节点挂起时**事件流仍由
+> `run_event` + Redis Stream 唯一负责**（理由同 §14.3，checkpointer 只管「停在哪」）。
+
+---
+
+## 16. V3.1：人工审批
+
+### 16.1 目标与边界
+
+流程跑到「需要人拍板」的地方停下来，等人给个决策，然后继续往下走，或者就此终止。
+
+本轮范围**只有**人工审批。Agent 的 RAG 检索、MCP 工具调用仍然不做——那是给 agent
+加新能力，与「流程中途等人」是两件事，不该混在一轮里（见 [§11](#11-演进路线)）。
+
+**老 definition 一行都不用改**：节点类型由 `type` 字段表达，省略即 `agent`。
+
+### 16.2 节点类型：`type` 字段
+
+```json
+{
+  "entry": "plan",
+  "nodes": [
+    {"id": "plan",  "agentCode": "planner", "outputKey": "plan_out"},
+    {"id": "gate",  "type": "approval", "prompt": "这份计划可以执行吗？", "outputKey": "gate_out"},
+    {"id": "write", "agentCode": "writer",  "outputKey": "answer"}
+  ],
+  "edges": [{"from": "plan", "to": "gate"}, {"from": "gate", "to": "write"}]
+}
+```
+
+审批节点**必须**有 `prompt`（审批人看什么？），**不能**有 `agentCode`（它不跑模型）。
+两条都在配置期拒掉，不留到运行时。
+
+**为什么用节点类型，而不是另外两种表达方式**：
+
+| 方案 | 问题 |
+| --- | --- |
+| 用某个特殊 `agentCode` 表示审批 | definition 就不再自洽了——「这个节点会停下来」这件事要反查 `agent` 表才知道。审批节点根本不是 agent，凭什么占一个 agentCode？ |
+| 在边上加标记 | 停不停是**节点自己的性质**，不是边的性质。同一个节点从不同边进来都会停，标记在边上表达不了这件事。 |
+
+节点类型是节点自己的属性，放对地方了。
+
+### 16.3 暂停机制：原生 checkpointer + `interrupt()`
+
+§14.3 写过「刻意不挂 checkpointer」，理由是它做不了事件流。V3.1 挂了，但**用途完全不同**：
+
+> checkpointer 不适合当**事件日志**（§14.3 的三条理由一条没变）；而它恰好就是
+> **「存下状态快照、从暂停处原样继续」**这件事的标准解。
+
+两个消费者，两份数据，不重叠：
+
+| 数据 | 回答的问题 | 谁负责 |
+| --- | --- | --- |
+| `run_event` + Redis Stream | 「发生过什么」 | §14.3 的那套，一字未改 |
+| checkpointer | 「图停在哪、那一刻状态是什么」 | LangGraph |
+
+**为什么不自己写「把状态存进 MySQL 再从头重放」**：
+
+- 重放会**重新求值条件边**，求值时机会与原始执行不同（边角情况会出错）；
+- 重放会**重花已经花掉的 LLM token**；
+- 而 checkpointer 的语义是「原样延续」：恢复时只有被中断的那个节点重跑，前面的节点不重跑。
+
+实测（`tests/test_approval_e2e.py`）：一个「规划 → 审批 → 写作」的流程，挂起再批准之后，
+模型只被调了 **2 次**（规划 1 次 + 写作 1 次），规划没有重跑；`usage.prompt_tokens = 22`
+正好是 2 × 11。
+
+**为什么有两套实现**：
+
+| 场景 | 实现 | 理由 |
+| --- | --- | --- |
+| 单实例开发（`REDIS_ENABLED=false`） | `AsyncSqliteSaver` | 零外部依赖，一个本地文件 |
+| 多实例（`REDIS_ENABLED=true`） | `AsyncRedisSaver` | 暂停点必须**所有实例都能看到**：A 实例上挂起、B 实例上收到审批要能续上 |
+
+选 Redis 而不是 MySQL：LangGraph 没有官方 MySQL saver，而本项目已经在用 Redis 做多实例
+协调；再引一个 saver 实现等于多一套要维护的代码。
+
+**checkpointer 不可用时直接报错，不静默降级**：没有 checkpointer 就没有「暂停」，run 会卡
+在审批节点上，用户看到的是「一直在等审批」却永远等不到结果。那种状态比明确报错难查得多。
+
+**`thread_id = f"run-{run_id}"`**：暂停点属于**这一次 run**，不是会话——一个会话可以有多次
+run，第二次 run 不该看到第一次的暂停点。
+
+**首次执行前删 thread、终态时删 thread**：前者的实测症状是「同 thread_id 上残留的通道值
+与本次输入合并，context 被追加两遍」；后者是别让暂停点在 Redis / SQLite 里无限堆积。
+
+### 16.4 状态机与事件
+
+| 变更 | 取值 | 说明 |
+| --- | --- | --- |
+| `RunStatus.WAITING` | 非终态 | 挂在审批节点上等人决策 |
+| `RunStatus.REJECTED` | 终态 | 被驳回，本次 run 就此结束 |
+| `StepStatus.WAITING` | — | 审批节点在 `run_step` 里的状态 |
+| `EventType.APPROVAL_REQUIRED` | 非终止事件 | 流程要人决策了 |
+| `EventType.APPROVED` | 非终止事件 | 人批准了，继续往下跑 |
+| `EventType.REJECTED` | 非终止事件 | 人驳回了 |
+
+**只有 `done` 才是终止事件。** 这一点很要紧：暂停时**不 emit done**——run 还没结束，SSE 流
+要继续开着，批准后**同一条流接着吐字**。若在这里 emit done，客户端会以为整个 run 结束了。
+
+**`waiting` 算「进行中」**：`get_active_by_conversation` 包含它，审批没结束前同一个会话不能
+再发消息；同时启动恢复（只扫 `running` / `pending`）不会误杀它。
+
+**`approval_required` 事件由编排器发，不在节点里发**：LangGraph 恢复时会把节点函数**从头
+重跑一遍**，`interrupt()` 之前的代码会执行两次，那里**不能有任何副作用**（事件、落库都不行）；
+`interrupt()` 之后的代码只在恢复时跑一次。事件因此放在编排器收到 `__interrupt__` 时发。
+
+### 16.5 驳回 = 终止本次 run
+
+**决策**：驳回不「跳过这个节点继续跑」，而是**终止本次 run**（`status=rejected`，意见写进
+`error_msg`）。
+
+理由：驳回意味着「这件事不该按现在的样子做下去」。让它继续跑下去，会产出一个基于错误前提
+的结果，而人已经明确说了「不行」。终止 + 记下原因，让发起人看到「这次没成，原因是 X」，
+比让它跑完再给一个基于错误前提的答案有用。
+
+节点里抛 `RunRejected` → 编排器捕获 → `emit done{status: rejected}` → `_finish(REJECTED)`。
+审批意见同时进 `upstream`（按 `outputKey`）与上下文，落一条 assistant 消息——**万一**驳回
+发生在 DAG 的另一条分支上，那条分支的节点虽然不会跑，审计信息仍然留得下来。
+
+### 16.6 暂停点与审计记录：两份数据
+
+| | checkpointer | `run_approval` 表 |
+| --- | --- | --- |
+| 回答 | 图停在哪、状态是什么 | 谁在什么时候批准/驳回了什么 |
+| 需要它的是 | 恢复执行 | 审计 + 前端展示审批卡片 |
+| 删了会怎样 | run 卡住，批了也续不上 | 丢审计历史，不影响任何在跑的 run |
+
+`run_approval` 表因此是**可以重建**的：它不参与恢复，只是「谁批的」这件事的账本。
+
+### 16.7 恢复可以发生在任意实例
+
+决策通过 `Command(resume=decision)` 携带，**不依赖跨实例频道**——暂停点在共享的
+checkpointer 里，图状态与事件流分工明确（前者管「停在哪」，后者管「发生过什么」）。
+
+恢复前 `hub.register(run_id, start_seq=...)` 把 seq 计数器接上，`last_seq` 从暂停处续接。
+
+### 16.8 踩到的坑
+
+1. **`AsyncSqliteSaver.from_conn_string()` 只认纯文件路径**，不认 `sqlite+aiosqlite://` URL
+   ——它把字符串原样交给 `aiosqlite.connect()`，后者只认路径或 `file:` URI，传 URL 会报
+   "unable to open database file"。
+2. **`state["__interrupt__"]` 是 list 不是元组**，取值要 `[0].value`。
+3. **节点函数在恢复时会从头重跑**（见 §16.4），`interrupt()` 之前不能有副作用。
+4. **迁移里的主键必须带 SQLite 回落**：`sa.BigInteger().with_variant(sa.Integer, "sqlite")`。
+   漏掉的话，SQLite 上 `BIGINT` 主键不是 rowid 别名、**不会自增**，插入直接报
+   `NOT NULL constraint failed: run_approval.id`。
+   这个坑特别阴险：模型用的是带回落的 `PK`（`app/models/base.py`），ORM 建表（`create_all`）
+   又是对的，于是**只有走迁移建出来的库会出问题**，而测试套件的库恰恰是 `create_all` 建的，
+   根本测不到。为此在 `tests/test_migrations.py` 补了一条断言：迁移产物里每个表的主键列
+   都必须声明成 `INTEGER`。
+
+### 16.9 验证结果
+
+- **9 个单测**（`tests/test_approval.py`）：5 个配置期校验 + 4 个挂起/恢复/驳回语义。
+  用**真实的 LangGraph + 真实的 SQLite checkpointer**，不 mock——挂起的语义完全由框架决定，
+  mock 掉它等于什么都没测。
+- **6 个全链路 e2e**（`tests/test_approval_e2e.py`）：起**真实的 uvicorn**（不是
+  ASGITransport——它会把整个响应体缓冲完才返回，SSE 这种「中途要交互、很久才结束」的流会被
+  彻底堵死），加真实的 OpenAI 兼容假模型。覆盖批准走完、驳回终止、重复决策 409、
+  非 waiting 状态 409、无待审批时返回 null、配置期拒绝。
+- **浏览器实测**：批准 → 同一条流接着往下跑 → done；驳回 → run 终止、下游节点没跑；
+  断线重连后审批卡片不重复出现。
+- **全量回归**：144 passed。
+
+### 16.10 已知限制
+
+- **审批只有一个决策人**：没有「会签」「多人都批才算通过」。要支持得把 `run_approval` 的
+  唯一约束从 `(run_id, node_id)` 改成 `(run_id, node_id, decided_by)` 并引入「凑够 N 票」的
+  判定，那是另一种设计。
+- **审批节点不能有超时自动通过/驳回**：`approval_timeout` 配置项已预留，但语义（超时算通过
+  还是算驳回）没有定，因此没有启用。
+- **`checkpointer` 的数据没有清理策略**：只有 run 进终态时删对应 thread。进程崩溃留下的孤儿
+  thread 会一直在 Redis / SQLite 里——量很小，但确实没有兜底清理。
 
 ---
 

@@ -20,15 +20,16 @@
 | **LangGraph 编排（V2）** | 控制流交给 `StateGraph`，连线来自 `definition.edges`；**刻意不挂 checkpointer**，事件流唯一权威（见下） |
 | **DAG + 条件边（V3）** | Workflow 不再是一条链：无条件出边**并行分叉**、多条入边**汇聚**；带 `when` 的边按表达式**分支**。环、孤立节点、汇聚形状等**全部在保存时拒绝** |
 | **条件表达式（V3）** | 手写递归下降解析器（**不用 `eval`**，杜绝 RCE），支持 `== != > < >= <=`、`and/or/not`、括号与白名单函数 `len/contains/lower/is_empty` |
+| **人工审批（V3.1）** | 节点可声明 `type: "approval"`：流程跑到它就**挂起等人拍板**，批准则从暂停点继续（前面的节点不重跑、不重花 token），驳回则本次 run 终止 |
 | 心跳保活 | SSE 注释行 `: ping`，不占 `seq`、不落库、不污染回放序列 |
 | 统一协议 | 所有模型走 OpenAI 兼容 `/v1/chat/completions`，OpenAI / DeepSeek / Qwen / vLLM 通吃 |
 | 可扩展 | 进程内总线抽象为 `BusBackend` Protocol，V2 已落地 Redis Pub/Sub 实现 |
 
 > 多实例的完整设计（含一处被实测抓出来的漏字 bug）见 [`docs/design.md` §13](docs/design.md)。
 
-### 为什么不挂 LangGraph checkpointer
+### 事件流不挂 LangGraph checkpointer
 
-装了 `langgraph-checkpoint-redis` 就能接，**但不接**。三行理由：
+装了 `langgraph-checkpoint-redis` 就能接，但**事件流这条路上不接**。三行理由：
 
 - **粒度差两个数量级**——实测一次三节点流水线产生 **445 条事件**，而 checkpointer 只存 4 份
   快照（每节点一份）。客户端在第 137 个 token 断线就能退回节点边界重放，前端打字机直接
@@ -37,10 +38,10 @@
   **状态快照**，每个 super-step 覆盖上一份。快照不能当事件流读。
 - **不提供互斥**——`BaseCheckpointSaver` 的契约里没有并发控制，归属租约仍得自己维护。
 
-它真正擅长的是我们**还没有**的：人工审批（`interrupt()`）、time-travel、崩溃后按节点续跑。
-留给 V3。
-
-> 完整论证见 [`docs/design.md` §14.3](docs/design.md)。
+> **V3.1 更新**：checkpointer 现在**挂上了**，但服务的是另一个消费者——**「图停在哪、恢复时
+> 从那儿继续」**（人工审批的暂停点）。上面三条一条没变：事件流仍然只由 `run_event` +
+> Redis Stream 负责，checkpointer 不碰它。两个消费者、两份数据，不重叠。
+> 见 [`docs/design.md` §16.3](docs/design.md)。
 
 ---
 
@@ -352,6 +353,48 @@ DAG 下逐个引用是刚需：并行分支同时产出多份内容，用 `{{ups
 | 同一节点的出边条件与无条件混用 | 语义不明确 |
 | `when` 语法错误 / 引用了不存在的 outputKey | 运行期会安静求值成 `None`，**走错分支且不报错** |
 | `inputTemplate` 引用了不存在的变量 | 会把 `{{xxx}}` 原样发给模型看 |
+| 审批节点没写 `prompt` | 审批人看到的是一张白纸 |
+| 审批节点又写了 `agentCode` | 两套语义混在一个节点上，说不清谁生效 |
+
+### 人工审批节点（V3.1）
+
+节点多了一个 `type` 字段，省略即 `agent`——**老 definition 一行都不用改**。
+
+```json
+{
+  "entry": "plan",
+  "nodes": [
+    {"id": "plan",  "agentCode": "planner", "outputKey": "plan_out"},
+    {"id": "gate",  "type": "approval", "prompt": "这份计划可以执行吗？", "outputKey": "gate_out"},
+    {"id": "write", "agentCode": "writer",  "outputKey": "answer"}
+  ],
+  "edges": [{"from": "plan", "to": "gate"}, {"from": "gate", "to": "write"}]
+}
+```
+
+流程跑到 `gate` 就**挂起**：run 状态变成 `waiting`，事件流里出现一条 `approval_required`，
+SSE 连接**不关**（run 还没结束）。人给了决策之后：
+
+| 决策 | 结果 |
+| --- | --- |
+| 批准 | 从暂停点**继续**往下跑。`plan` **不重跑**、不重花 token；审批意见进 `upstream.gate_out` 与上下文 |
+| 驳回 | 本次 run 就此终止（`status=rejected`），驳回意见写进 `error_msg`，下游节点不跑 |
+
+```bash
+# 查当前待审批项（没有就返回 null）
+curl -s $BASE/api/runs/$RUN_ID/approval
+
+# 提交决策
+curl -s -X POST $BASE/api/runs/$RUN_ID/approval \
+  -H 'Content-Type: application/json' \
+  -d '{"approved": true, "comment": "可以执行", "decidedBy": "u1"}'
+```
+
+> 驳回不是「跳过这个节点继续跑」：人已经说了「不行」，让它继续跑会产出一个基于错误前提的结果。
+> 终止 + 记下原因，让发起人看到「这次没成，原因是 X」。
+
+后台管理页（`/admin`）的节点编辑区有「节点类型」下拉，切到「人工审批」就会出现审批提示输入框；
+验证台（`/`）收到 `approval_required` 会亮出审批卡片，可直接批准/驳回。
 
 ---
 
@@ -421,10 +464,15 @@ curl -N -H "Last-Event-ID: 3" "$BASE/api/runs/$RUN/stream?ticket=$TICKET"  # 等
 | `tool_call` | 工具调用请求 | 是 |
 | `node_end` | 节点结束 | 是 |
 | `error` | 出错 | 是 |
+| `approval_required` | 流程挂起，等人拍板（V3.1） | 是 |
+| `approved` / `rejected` | 审批结果（V3.1） | 是 |
 | `done` | 整个 run 结束，流关闭 | 是 |
 | `: ping` | SSE 注释行心跳 | **否** |
 
 > `id:` 字段就是 `seq`，也是续传锚点。心跳用注释行，因此不会污染序列。
+>
+> **只有 `done` 是终止事件。** 流程挂在审批节点上时**不发** `done`，SSE 连接继续开着，
+> 批准后同一条流接着吐字。
 
 ---
 
@@ -456,10 +504,12 @@ curl -N -H "Last-Event-ID: 3" "$BASE/api/runs/$RUN/stream?ticket=$TICKET"  # 等
 | GET | `/api/runs/{id}/messages` | run 的最终消息 |
 | GET | `/api/runs/{id}/stream` | SSE 事件流 |
 | POST | `/api/runs/{id}/cancel` | 取消生成 |
+| GET | `/api/runs/{id}/approval` | 当前待审批项，无则 `null`（V3.1） |
+| POST | `/api/runs/{id}/approval` | 提交审批决策，批准则继续、驳回则终止（V3.1） |
 | POST | `/api/auth/sse-ticket` | 换取 60s 有效 SSE ticket |
 | GET | `/api/health` | 健康检查 |
 
-错误码：`400` 参数非法 · `401` ticket 无效/过期 · `404` 资源不存在 · `409` 该会话已有进行中的 run · `410` 事件已归档无法回放
+错误码：`400` 参数非法 · `401` ticket 无效/过期 · `404` 资源不存在 · `409` 该会话已有进行中的 run，或审批冲突 · `410` 事件已归档无法回放
 
 ---
 
@@ -565,12 +615,14 @@ app/
 │   ├── event_writer.py     # run_event 批量落库（MySQL 长期归档）
 │   ├── sse_writer.py       # 回放 + 实时合并去重（续传核心）
 │   ├── agent_runner.py     # 单 Agent 执行（AsyncOpenAI 流式）
-│   ├── run_graph.py        # LangGraph 图构建 + NodeRunner（V2-b）
-│   ├── orchestrator.py     # run 生命周期 + 节点调度 + 重试
+│   ├── run_graph.py        # LangGraph 图构建 + NodeRunner + 审批节点（V2-b / V3.1）
+│   ├── orchestrator.py     # run 生命周期 + 节点调度 + 重试 + 审批挂起/恢复（V3.1）
+│   ├── checkpoint.py       # LangGraph checkpointer：审批暂停点（Redis / SQLite 双实现，V3.1）
 │   ├── workflow_def.py     # definition 解析与校验
 │   ├── crypto.py           # api_key 加解密
 │   └── ticket.py           # SSE ticket 签发与校验
 ├── models/  repo/  schemas/  config/  cache.py
+│   └── run_approval.py     # 审批记录模型（V3.1）
 web/index.html           # 功能验证台（单文件，无依赖）
 web/admin.html           # 后台管理（单文件，无依赖，访问 /admin）
 scripts/seed.py          # 演示数据
@@ -584,6 +636,7 @@ alembic/  tests/  docs/design.md
 
 - **V1**（已完成）：单实例、线性流水线、MySQL 持久化、SSE 续传
 - **V2**（已完成）：Redis Pub/Sub 替换进程内总线支持多实例；`run_event` 走 Redis Stream 作为回放源；归属租约让启动恢复不再误杀其它实例的 run
-- **V2-b**（已完成）：控制流改由 LangGraph `StateGraph` 表达，连线来自 `definition.edges`，为 V3 的 DAG 留好扩展点（不挂 checkpointer，理由见上文）
-- **V3**：Workflow 支持 DAG + 条件边 + 人工审批（`interrupt()` + checkpointer，届时再引入）；Agent 支持 RAG / MCP 工具
-- **V4**：可观测性（OpenTelemetry 链路追踪、token 成本统计）
+- **V2-b**（已完成）：控制流改由 LangGraph `StateGraph` 表达，连线来自 `definition.edges`，为 V3 的 DAG 留好扩展点（事件流不挂 checkpointer，理由见上文）
+- **V3**（已完成）：Workflow 支持 DAG + 条件边
+- **V3.1**（已完成）：人工审批节点（`interrupt()` + checkpointer 暂停点，批准继续、驳回终止）
+- **V4**：Agent 支持 RAG / MCP 工具；可观测性（OpenTelemetry 链路追踪、token 成本统计）
