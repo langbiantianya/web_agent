@@ -61,6 +61,9 @@ class EventType(StrEnum):
     TOKEN = "token"
     REASONING = "reasoning"
     TOOL_CALL = "tool_call"
+    # V3.2：工具执行结果。与 TOOL_CALL 配对——模型要了工具，这里告诉前端
+    # 「调完了、结果是什么、成功还是失败」。
+    TOOL_RESULT = "tool_result"
     ERROR = "error"
     DONE = "done"
     # V3.1：人工审批的三个事件。它们都**不是**终止事件——「等审批」时流要继续
