@@ -36,12 +36,17 @@ class FakeLLM:
     对应第 N 次调用，值为一个工具调用列表，每项形如
     ``{"id": "call_1", "name": "calc", "arguments": '{"expression": "1+1"}'}``。
     没配到的调用照常返回 ``texts``。
+
+    ``fixed_text`` 让**每次调用都返回同一段文本**（压测用）：``texts`` 是按调用
+    序取的，并发下每次调用拿到哪一段是不确定的——压测需要的是**均匀**的负载。
+    设了它之后 ``texts`` 与 ``tool_calls_plan`` 都不再生效。
     """
 
     texts: list[str] = field(default_factory=lambda: ["你好", "，", "世界"])
     chunk_delay: float = 0.0
     include_reasoning: str = ""
     tool_calls_plan: list[list[dict]] = field(default_factory=list)
+    fixed_text: str | None = None
     port: int = field(default_factory=_free_port)
     calls: list[dict] = field(default_factory=list)
     _server: uvicorn.Server | None = None
@@ -68,12 +73,17 @@ class FakeLLM:
             self.calls.append(body)
 
             index = len(self.calls) - 1
-            text = self.texts[index] if index < len(self.texts) else "默认回复"
-            planned = (
-                self.tool_calls_plan[index]
-                if index < len(self.tool_calls_plan)
-                else None
-            )
+            if self.fixed_text is not None:
+                # 压测模式：每次调用都吐同一段，负载才均匀
+                text = self.fixed_text
+                planned = None
+            else:
+                text = self.texts[index] if index < len(self.texts) else "默认回复"
+                planned = (
+                    self.tool_calls_plan[index]
+                    if index < len(self.tool_calls_plan)
+                    else None
+                )
 
             async def gen():
                 """按 OpenAI 顺序吐帧：reasoning → content → finish → usage → [DONE]。
