@@ -19,7 +19,11 @@ sse-starlette>=2.1
 # ---- 编排引擎 ----
 # V2 起 workflow 的控制流由 LangGraph 表达（节点、连线、条件路由），
 # 持久化仍由本项目的 run_event / Redis Stream 负责，不挂 LangGraph checkpointer。
+# V3.1 起 checkpointer **只**用来存「审批暂停在哪」——对外事件流仍然只由
+# run_event / Redis Stream 负责，两者职责不重叠。
 langgraph>=1.0
+langgraph-checkpoint-sqlite>=3.1   # 单实例开发：审批暂停点存本地 SQLite 文件
+langgraph-checkpoint-redis>=0.5    # 多实例：暂停点存 Redis，任意实例都能恢复
 
 # ---- Redis（V2 多实例，REDIS_ENABLED=false 时用不到）----
 redis>=5.0

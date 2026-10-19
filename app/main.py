@@ -22,6 +22,7 @@ from app import __version__
 from app.api.router import api_router
 from app.config.db import dispose_engine
 from app.config.settings import settings
+from app.core.checkpoint import close_checkpointer, init_checkpointer
 from app.core.errors import AppError
 from app.core.orchestrator import get_orchestrator, recover_stale_runs
 from app.core.redis_client import (
@@ -72,6 +73,15 @@ async def lifespan(app: FastAPI):
             raise
         logger.info("已启用 Redis 后端，实例标识 %s", instance_id())
 
+    # 审批暂停点（V3.1）。连不上就**直接失败**：没有 checkpointer 就没有「暂停」，
+    # 审批节点会卡住不动，用户看到的是「一直在等审批」却永远等不到结果——
+    # 那比启动失败难查得多。
+    try:
+        await init_checkpointer()
+    except Exception as exc:
+        logger.error("审批暂停点初始化失败：%s", exc)
+        raise
+
     try:
         n = await recover_stale_runs()
         if n:
@@ -81,6 +91,7 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("正在关闭…")
     await get_orchestrator().shutdown()
+    await close_checkpointer()
     if redis_is_enabled():
         await disconnect_redis()
     await dispose_engine()

@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     # ---- 事件归档 ----
     run_event_retention_days: int = 7  # 设计 §4.2 清理策略
 
+    # ---- 审批暂停点（V3.1）----
+    # LangGraph checkpointer 存的是「图暂停在哪、状态是什么」，**不存对外事件**
+    # ——事件仍然只由 run_event + Redis Stream 负责，两者不冲突。
+    # 开了 Redis 就用 Redis saver（多实例共享同一个暂停点），否则用本地 SQLite
+    # 文件（单实例开发够用，且不引入新的外部依赖）。
+    checkpoint_enabled: bool = True
+    checkpoint_sqlite_path: str = "./checkpoints.db"
+    # 审批决策的等待上限（秒）。超时后 run 以 error 收尾——审批挂着不动比
+    # 悄悄卡住更好：用户至少能从状态上看出「它停住了」而不是「还在跑」。
+    approval_timeout: int = 86400
+
     # ---- Redis（V2 多实例）----
     # 关：走进程内总线 + MySQL 回放（V1 单实例行为，现有测试全部依赖它）。
     # 开：事件走 Redis Stream（回放源）与 Pub/Sub（实时），可多实例水平扩容。
