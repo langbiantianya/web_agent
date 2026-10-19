@@ -32,5 +32,6 @@ class WorkflowOut(ORMBase):
     description: str
     definition: dict
     enabled: bool
+    version: int = 1
     created_at: datetime | None = None
     updated_at: datetime | None = None

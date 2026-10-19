@@ -41,12 +41,19 @@ class WorkflowRepo:
         return list(await db.scalars(stmt))
 
     async def update(
-        self, db: AsyncSession, code: str, fields: dict
+        self, db: AsyncSession, code: str, fields: dict, bump_version: bool = True
     ) -> Workflow | None:
         """按 code 局部更新字段（值为 None 的键跳过）；不存在时返回 None。
 
-        workflow 表没有 version 列，无法靠版本号让缓存自然失效，
-        所以调用方必须在提交后显式刷新 Workflow 缓存。
+        ``bump_version=True``（默认）时顺手让 ``version+1``，于是
+        :class:`~app.cache.WorkflowCache` 的旧键自然命中不了。调用方不再必须
+        「记得 ``put()``」才能保证不脏读——漏了最多退化成回源查库。
+
+        Args:
+            db: 请求级 AsyncSession。
+            code: 业务唯一 code。
+            fields: 要改的字段；值为 ``None`` 的键会被跳过（区分「不传」与「清空」）。
+            bump_version: 是否自增版本号。
         """
         wf = await self.get_by_code(db, code)
         if wf is None:
@@ -54,6 +61,8 @@ class WorkflowRepo:
         for k, v in fields.items():
             if v is not None:
                 setattr(wf, k, v)
+        if bump_version:
+            wf.version = (wf.version or 0) + 1
         await db.commit()
         await db.refresh(wf)
         return wf
@@ -61,7 +70,9 @@ class WorkflowRepo:
     async def delete(self, db: AsyncSession, code: str) -> bool:
         """按 code 硬删除 Workflow；不存在返回 False，由 API 层转 404。
 
-        删除后必须 ``workflow_cache.clear()``，否则内存里仍是旧定义。
+        删除后仍要 ``workflow_cache.clear()``：删除无法像更新那样用 version+1
+        表达失效——行都没了，谈不上版本，只能整表清。漏调的后果是内存里还留着
+        一条已删除 workflow 的定义，比读到旧版本更难察觉。
         """
         wf = await self.get_by_code(db, code)
         if wf is None:

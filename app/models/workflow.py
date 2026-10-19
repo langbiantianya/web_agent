@@ -17,6 +17,7 @@ class Workflow(Base):
     description: Mapped[str] = mapped_column(sa.String(512), default="")
     definition: Mapped[dict] = mapped_column(JSON_COL, nullable=False)
     enabled: Mapped[bool] = mapped_column(sa.SmallInteger, default=1)
+    version: Mapped[int] = mapped_column(sa.Integer, default=1, nullable=False)
     created_at: Mapped[object] = mapped_column(
         sa.DateTime, server_default=sa.func.now(), nullable=False
     )

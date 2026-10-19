@@ -65,24 +65,31 @@ class WorkflowCache:
         self._store: _LRU = _LRU(maxsize)
 
     @staticmethod
-    def _key(code: str) -> tuple[str, str]:
-        """缓存键 = (code, "")。
+    def _key(code: str, version: int) -> tuple[str, int]:
+        """缓存键 = (code, version)，与 :class:`AgentCache` 完全同构。
 
-        workflow 表没有 version 列，无法像 Agent 那样靠版本号自然失效，
-        因此更新/删除后必须由调用方显式 ``put()`` 或 ``clear()`` 来保持一致。
+        V3 之前 workflow 表没有 version 列，只能用 (code, "") 这样的假键，
+        于是「更新后记得调用方 ``put()``」成了唯一的一致性保证——一个纯粹靠
+        纪律维持的约定，任何一条写漏的路径都会读到旧定义。加了 version 列之后
+        键能带上它：更新让 version+1，旧键自然命中不了，调用方漏调 ``put()``
+        也只是退化成回源查库，不会读到脏数据。
         """
-        return (code, "")
+        return (code, version)
 
-    def get(self, code: str) -> Workflow | None:
-        """按 code 取缓存，未命中则回源查库。"""
-        return self._store.get(self._key(code))
+    def get(self, code: str, version: int) -> Workflow | None:
+        """按 (code, version) 取缓存；version 对不上即视为未命中，应回源查库。"""
+        return self._store.get(self._key(code, version))
 
     def put(self, wf: Workflow) -> None:
-        """写入/覆盖缓存，供更新接口在提交后立即刷新。"""
-        self._store.put(self._key(wf.code), wf)
+        """按实体当前的 code/version 写入缓存。
+
+        version 已是最新；写入方若刚改了 definition，需要重新 put 才会命中新键
+        （但漏了也只是回源，不会脏读）。
+        """
+        self._store.put(self._key(wf.code, wf.version), wf)
 
     def clear(self) -> None:
-        """清空缓存（删除 Workflow 后调用，避免旧定义被继续使用）。"""
+        """清空缓存（删除 Workflow 等无法用 version 递增表达失效的操作后调用）。"""
         self._store.clear()
 
 
