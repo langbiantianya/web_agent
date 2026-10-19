@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.base import utcnow
 from app.models.enums import RunStatus, StepStatus
 from app.models.run import Run, RunStep
 
@@ -41,11 +40,16 @@ class RunRepo:
         return await db.scalar(stmt.limit(1))
 
     async def mark_running(self, db: AsyncSession, run_id: int) -> None:
-        """把 run 从 pending 推进到 running 并记 started_at（一个 run 只应走到这一步一次）。"""
+        """把 run 从 pending 推进到 running 并记 started_at（一个 run 只应走到这一步一次）。
+
+        时间戳一律走 :func:`~app.models.base.utcnow`（UTC 裸值）：同一张表的
+        ``created_at`` 是数据库 ``now()`` 写的 UTC，用本地时间写 ``started_at``
+        会让同一行里混进两个相差 8 小时的时间戳。
+        """
         await db.execute(
             sa.update(Run)
             .where(Run.id == run_id)
-            .values(status=RunStatus.RUNNING.value, started_at=datetime.now())
+            .values(status=RunStatus.RUNNING.value, started_at=utcnow())
         )
         await db.commit()
 
@@ -70,7 +74,7 @@ class RunRepo:
                 status=status.value,
                 last_seq=last_seq,
                 error_msg=error_msg,
-                finished_at=datetime.now(),
+                finished_at=utcnow(),
             )
         )
         await db.commit()
@@ -128,7 +132,7 @@ class RunRepo:
             agent_code=agent_code,
             status=StepStatus.RUNNING.value,
             input_json=input_json,
-            started_at=datetime.now(),
+            started_at=utcnow(),
         )
 
     async def finish_step(
@@ -152,7 +156,7 @@ class RunRepo:
                 status=status.value,
                 output_json=output_json,
                 error_msg=error_msg,
-                finished_at=datetime.now(),
+                finished_at=utcnow(),
             )
         )
         await db.commit()

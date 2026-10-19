@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
@@ -37,6 +39,40 @@ engine = create_async_engine(
     future=True,
     **_engine_kwargs(),
 )
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _pin_session_timezone(dbapi_connection, connection_record) -> None:
+    """把每个新连接的**会话时区**钉到 UTC。
+
+    为什么必须钉：模型里的时间列用的是 ``server_default=sa.func.now()``，
+    也就是让数据库自己填当前时间。两种方言对此的处理不一样：
+
+    - SQLite 的 ``CURRENT_TIMESTAMP`` 返回 **UTC**，本来就对；
+    - MySQL 的 ``NOW()`` 返回**会话时区**的时间，而会话时区默认继承**服务器
+      系统时区**。一台设成 Asia/Shanghai 的 MySQL 就会把 +08:00 的本地时间
+      写进库里。
+
+    于是在中国本机用 MySQL 跑，时间戳会整整差 8 小时；多节点时区不一致时，
+    同一张表里的时间线会直接错乱。钉死成 ``+00:00`` 之后，MySQL 与 SQLite
+    写入的值语义一致，都是 UTC。
+
+    ``+00:00`` 用的是**固定偏移**而不是 ``UTC``/``SYSTEM`` 这类时区名：后者
+    要求 MySQL 装了时区表（``mysql_tzinfo_to_sql``），很多精简版镜像没装，
+    会在建连接时报错。固定偏移无依赖。
+
+    **只对 MySQL 生效**：判据取 ``engine.dialect.name`` 而不是 dbapi 连接的类名
+    ——异步 SQLite 的驱动包叫 ``aiosqlite``，按类名判断会漏掉它，然后对着
+    SQLite 发一条 ``SET time_zone`` 直接语法错误（``near "SET": syntax error``）。
+
+    已有数据不会被这一步修正——历史上按服务器本地时间写入的行仍需一次性
+    ``CONVERT_TZ``，见设计文档 §15.3。
+    """
+    if engine.dialect.name != "mysql":
+        return
+    with dbapi_connection.cursor() as cur:
+        cur.execute("SET time_zone = '+00:00'")
+
 
 SessionLocal = async_sessionmaker(
     bind=engine,

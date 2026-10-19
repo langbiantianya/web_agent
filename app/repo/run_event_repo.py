@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.base import utcnow
 
 if TYPE_CHECKING:  # 仅供类型检查，运行时用局部导入，避免循环引用
     from app.core.run_hub import RunEventDTO
@@ -83,8 +85,14 @@ class RunEventRepo:
         return bool(await db.scalar(stmt))
 
     async def purge_older_than(self, db: AsyncSession, days: int) -> int:
-        """归档清理：删除超过保留期的 run_event（最终内容以 message 为准）。"""
-        cutoff = datetime.now() - timedelta(days=days)
+        """归档清理：删除超过保留期的 run_event（最终内容以 message 为准）。
+
+        cutoff 必须用 UTC：``run_event.created_at`` 是 ``server_default=sa.func.now()``
+        写的（见 :func:`app.config.db._pin_session_timezone`，MySQL 会话时区已钉成
+        UTC）。若这里用 ``datetime.now()`` 取本地时间，在 UTC+8 的机器上 cutoff 会
+        比库里实际存的值**早 8 小时**，等于把保留期悄悄缩短了 1/3。
+        """
+        cutoff = utcnow() - timedelta(days=days)
         result = await db.execute(
             sa.delete(RunEvent).where(RunEvent.created_at < cutoff)
         )
