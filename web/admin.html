@@ -98,8 +98,10 @@
   .tag.warn { background: #3d3319; color: var(--yellow); }
   .tag.bad { background: #3d1d1d; color: var(--red); }
 
-  /* 编排的节点行：id / agent / outputKey 三个字段并排，外加顺序操作 */
-  .node { display: grid; grid-template-columns: 1fr 1.4fr 1.2fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+  /* 编排的节点行：id / 类型 / agent / outputKey 四个字段并排，外加顺序操作。
+     审批节点的「审批提示」另起一行（占满整行），见 .n-prompt。 */
+  .node { display: grid; grid-template-columns: 1fr 0.9fr 1.4fr 1.2fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .node .n-prompt { grid-column: 1 / -1; }
   .node .ord {
     grid-column: 1 / -1; font-size: 11px; color: var(--dim);
     display: flex; align-items: center; gap: 6px;
@@ -426,21 +428,42 @@ async function editWorkflow(code) {
   });
 }
 
+/** 一行节点。
+
+    节点有两种类型（V3.1）：
+    - ``agent``：跑模型，要选 Agent（老配置都是这种，``type`` 省略即可）；
+    - ``approval``：人工审批，不跑模型，要写一句给审批人看的提示。
+
+    两者不能混：一个节点要么交给模型，要么交给人。审批节点**不显示** Agent 下拉
+    （留着只会让人以为它会调模型），改用一个禁用的占位框保持行宽一致。
+ */
 function nodeRow(n, i) {
+  const isApproval = (n.type || "agent") === "approval";
   const opts = state.agents.map(a =>
     '<option value="' + esc(a.code) + '"' + (a.code === n.agentCode ? " selected" : "") + '>' +
     esc(a.name) + " (" + esc(a.code) + ')</option>'
   ).join("");
+  const agentCell = isApproval
+    ? '<select class="n-agent" disabled><option value="">（审批节点不用 Agent）</option></select>'
+    : '<select class="n-agent">' + (opts ? '<option value="">选择 Agent…</option>' + opts : '<option value="">（还没有 Agent）</option>') + '</select>';
   return `
     <div class="node">
       <input type="text" class="n-id" value="${esc(n.id || "")}" placeholder="节点 id">
-      <select class="n-agent">${opts ? '<option value="">选择 Agent…</option>' + opts : '<option value="">（还没有 Agent）</option>'}</select>
+      <select class="n-type">
+        <option value="agent"${isApproval ? "" : " selected"}>Agent</option>
+        <option value="approval"${isApproval ? " selected" : ""}>人工审批</option>
+      </select>
+      ${agentCell}
       <input type="text" class="n-key" value="${esc(n.outputKey || "")}" placeholder="outputKey">
       <div class="row">
         <button class="sm" data-act="node-up" data-i="${i}" title="上移">↑</button>
         <button class="sm" data-act="node-down" data-i="${i}" title="下移">↓</button>
         <button class="sm danger" data-act="node-del" data-i="${i}" title="删除节点">✕</button>
       </div>
+      ${isApproval
+        ? '<input type="text" class="n-prompt" value="' + esc(n.prompt || "") +
+          '" placeholder="审批提示：审批人看到的那个问题">'
+        : ""}
     </div>`;
 }
 
@@ -483,6 +506,11 @@ function renderWorkflowForm() {
     <h2 style="border:none;padding:8px 0">节点 <span class="sp">
       <button class="sm" data-act="node-add">+ 添加节点</button></span></h2>
     <div id="nodes">${d.nodes.map(nodeRow).join("") || '<div class="muted">还没有节点，先添加一个。</div>'}</div>
+    <div class="muted" style="margin:8px 0 14px">
+      节点类型选<b>人工审批</b>时，这个节点不会调模型：流程跑到它就<b>挂起</b>等人决策，
+      人在验证台或接口上批准才继续往下走，驳回则本次 run 终止。此时要写一句
+      <b>审批提示</b>（就是审批人看到的那句话），它不会选 Agent。
+    </div>
 
     <label style="margin-top:12px"><span>entry <span class="hint">（不选则用列表里的第一个节点）</span></span>
       <select id="w_entry">${entryOpts}</select></label>
@@ -529,8 +557,12 @@ function addNode() {
   const d = state.wf.definition;
   d.nodes.push({
     id: "node" + (d.nodes.length + 1),
+    // 新节点默认是 Agent 节点；审批节点靠下拉切换，不主动塞进来——
+    // 免得用户只是想要个普通节点，却先看到一个必须填审批提示的框。
+    type: "agent",
     agentCode: state.agents.length ? state.agents[0].code : "",
     outputKey: "",
+    prompt: "",
   });
   renderWorkflowForm();
 }
@@ -548,6 +580,10 @@ function moveNode(i, delta) {
 
     V3 起 edges 是**用户自己列的**，不再是「按节点顺序自动串成链」——DAG 需要分叉、
     汇聚和条件边，自动成链表达不了它们。节点的声明顺序只影响列表显示与同层顺序。
+
+    V3.1 起节点还分类型：审批节点提交 ``type/prompt`` 且**不带** agentCode，
+    Agent 节点则带 agentCode。两者的字段不重叠，服务端因此能把「形状不对」
+    （审批节点却给了 agentCode、或审批节点没写 prompt）在保存期就拒掉。
  */
 function buildDefinition() {
   const d = state.wf.definition;
@@ -557,7 +593,9 @@ function buildDefinition() {
     .map(e => (e.when ? { from: e.from, to: e.to, when: e.when } : { from: e.from, to: e.to }));
   return {
     entry: d.entry && d.entry ? d.entry : (nodes.length ? nodes[0].id : ""),
-    nodes: nodes.map(n => ({ id: n.id, agentCode: n.agentCode, outputKey: n.outputKey })),
+    nodes: nodes.map(n => (n.type === "approval"
+      ? { id: n.id, type: "approval", prompt: n.prompt || "", outputKey: n.outputKey }
+      : { id: n.id, type: "agent", agentCode: n.agentCode || "", outputKey: n.outputKey })),
     edges: edges,
     inputTemplate: d.inputTemplate || "",
   };
@@ -569,10 +607,23 @@ function syncNodes() {
   const d = state.wf.definition;
 
   document.querySelectorAll("#nodes .node").forEach((row, i) => {
-    if (!d.nodes[i]) d.nodes[i] = { id: "", agentCode: "", outputKey: "" };
+    if (!d.nodes[i]) d.nodes[i] = { id: "", type: "agent", agentCode: "", outputKey: "", prompt: "" };
+    const typeSel = row.querySelector(".n-type");
+    // 老配置没有 type 字段，一律按 Agent 节点读——V3.1 不改老 definition 的语义。
+    d.nodes[i].type = typeSel ? typeSel.value : (d.nodes[i].type || "agent");
     d.nodes[i].id = row.querySelector(".n-id").value.trim();
-    d.nodes[i].agentCode = row.querySelector(".n-agent").value;
+    const agentSel = row.querySelector(".n-agent");
+    if (d.nodes[i].type === "approval") {
+      // 审批节点不显示 Agent 下拉（只有占位项），读它只会把已选的 Agent 抹掉。
+      // 这里**保留原值**：用户在 Agent/审批之间来回切时不该丢掉已选 Agent。
+      // 提交时 buildDefinition 不会给审批节点写 agentCode，定义仍然是干净的。
+      d.nodes[i].agentCode = d.nodes[i].agentCode || "";
+    } else {
+      d.nodes[i].agentCode = agentSel ? agentSel.value : "";
+    }
     d.nodes[i].outputKey = row.querySelector(".n-key").value.trim();
+    const promptEl = row.querySelector(".n-prompt");
+    d.nodes[i].prompt = promptEl ? promptEl.value.trim() : "";
   });
 
   // 边：先按行重建。节点可能刚被改名，按 id 匹配而不是按下标。
@@ -600,8 +651,13 @@ async function saveWorkflow() {
     syncNodes();
     const def = buildDefinition();
     if (!def.nodes.length) throw new Error("至少需要一个节点");
-    const missing = def.nodes.filter(n => !n.agentCode).map(n => n.id);
+    const missing = def.nodes
+      .filter(n => n.type !== "approval" && !n.agentCode).map(n => n.id);
     if (missing.length) throw new Error("这些节点还没选 Agent：" + missing.join("、"));
+    // 审批节点不选 Agent，但必须写清楚要批什么——否则审批人看到的是一张白纸。
+    const noPrompt = def.nodes
+      .filter(n => n.type === "approval" && !n.prompt).map(n => n.id);
+    if (noPrompt.length) throw new Error("这些审批节点还没写审批提示：" + noPrompt.join("、"));
     const halfEdge = def.edges.filter(e => !e.from || !e.to).length;
     if (halfEdge) throw new Error("有 " + halfEdge + " 条连线还没选全起点或终点");
     if (def.edges.length && def.nodes.length < 2) {
@@ -767,6 +823,20 @@ $("wfForm").addEventListener("input", e => {
   if (e.target.closest("#nodes") || e.target.closest("#edges") || e.target.id === "w_tpl") syncNodes();
 });
 $("wfForm").addEventListener("change", e => {
+  // 节点类型一变，整行要重画：审批节点要露出「审批提示」输入框、不再显示 Agent 下拉。
+  //
+  // 这里**只同步 type 这一项**，不能直接调 syncNodes()：此刻 DOM 还是旧结构
+  // （审批节点的 Agent 下拉被替换成了占位项），整体同步会读出空串，把用户已经
+  // 选好的 Agent 抹掉。改完 type 再重画，重画后的 syncNodes 读到的是新结构。
+  if (e.target.classList.contains("n-type")) {
+    const rows = Array.from(document.querySelectorAll("#nodes .node"));
+    const i = rows.indexOf(e.target.closest(".node"));
+    if (i >= 0 && state.wf && state.wf.definition.nodes[i]) {
+      state.wf.definition.nodes[i].type = e.target.value;
+    }
+    renderWorkflowForm();
+    return;
+  }
   if (e.target.classList.contains("n-agent")
       || e.target.classList.contains("e-from")
       || e.target.classList.contains("e-to")

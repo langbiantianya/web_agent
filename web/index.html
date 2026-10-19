@@ -90,6 +90,23 @@
   .caret::after { content: "▋"; color: var(--yellow); animation: blink .8s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0 } }
 
+  /* 审批卡片（V3.1）：流程挂起等人决策时插在对话流里。
+     它不是一条消息而是一块**可交互**的面板——人得在这里给出决策。 */
+  .approval { margin-bottom: 12px; border: 1px solid var(--yellow); border-radius: 8px; overflow: hidden; }
+  .approval > .hd {
+    display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+    background: #3d3319; font-size: 12px;
+  }
+  .approval > .hd .nm { font-weight: 600; }
+  .approval > .bd { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .approval .prompt { white-space: pre-wrap; word-break: break-word; }
+  .approval .acts { display: flex; gap: 8px; align-items: stretch; }
+  .approval .acts input { flex: 1; min-width: 0; }
+  .approval .acts button { white-space: nowrap; }
+  .approval.settled > .hd { background: #16281a; }
+  .approval.rejected > .hd { background: #3d1c1c; }
+  .approval .done-note { font-size: 12px; color: var(--dim); }
+
   .stats { display: flex; gap: 20px; padding: 10px 14px; border-top: 1px solid var(--border); flex-wrap: wrap; }
   .stats div { font-size: 12px; color: var(--dim); }
   .stats b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -201,6 +218,8 @@ const S = {
   lastSeq: 0, count: 0, tokens: 0, nodes: 0, reconn: 0,
   seqOk: true, pings: 0, streaming: false, testMode: false,
   pendingText: 0, nodeEls: new Map(), lastSeqSeen: 0,
+  // 审批卡片（V3.1）：同一时刻只有一张待决策的卡片
+  approvalEl: null,
 };
 
 // ---------------------------------------------------------------- 工具
@@ -315,6 +334,95 @@ function closeNode(node) {
   if (tags.length) tags[tags.length - 1].textContent = '完成';
 }
 
+// ------------------------------------------------------------ 审批（V3.1）
+
+/** 渲染审批卡片。
+
+    卡片插在对话流末尾：流程挂起的位置就是人要做决定的位置。
+
+    同一个节点只保留一张卡——断线重连会把 ``approval_required`` 回放一遍，
+    重画一张新的会让人以为要批两次。
+ */
+function showApproval(node, prompt) {
+  const chat = $('chat');
+  if (chat.querySelector('.muted')) chat.innerHTML = '';
+  if (S.approvalEl && S.approvalEl.dataset.node === node) return S.approvalEl;
+
+  const el = document.createElement('div');
+  el.className = 'approval';
+  el.dataset.node = node;
+  el.innerHTML =
+    `<div class="hd"><span class="nm">人工审批 · ${node}</span>` +
+    `<span class="tag warn">等待决策</span></div>` +
+    `<div class="bd"><div class="prompt"></div>` +
+    `<div class="acts"><input type="text" class="ap-comment" placeholder="审批意见（驳回时建议写清原因）">` +
+    `<button class="primary ap-ok">批准</button>` +
+    `<button class="danger ap-no">驳回</button></div></div>`;
+  el.querySelector('.prompt').textContent = prompt || '（该节点没有写审批提示）';
+  chat.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+  S.approvalEl = el;
+
+  el.querySelector('.ap-ok').onclick = () => submitApproval(el, true);
+  el.querySelector('.ap-no').onclick = () => submitApproval(el, false);
+  return el;
+}
+
+/** 提交审批决策。
+
+    决策走接口而不是本地改状态：审批是**服务端事实**（run 可能被别人批了），
+    本地自说自话会出现「页面显示已批准、其实 run 还在等」。
+ */
+async function submitApproval(el, approved) {
+  if (!S.runId) return fail('还没有 run');
+  const comment = (el.querySelector('.ap-comment').value || '').trim();
+  el.querySelectorAll('.acts button').forEach(b => { b.disabled = true; });
+  try {
+    const r = await api(`/api/runs/${S.runId}/approval`, 'POST', {
+      approved, comment, decidedBy: 'demo',
+    });
+    settleApproval(el, approved, r.comment || comment);
+    banner(approved ? '已批准，流程从审批处继续往下跑' : '已驳回，本次 run 就此终止', approved ? 'ok' : 'warn');
+  } catch (e) {
+    // 失败就把按钮放开：人还能再试一次（比如刚被别人批了，服务端会返回 409）
+    el.querySelectorAll('.acts button').forEach(b => { b.disabled = false; });
+    fail(e);
+  }
+}
+
+/** 把审批卡片就地变成「已决策」。
+
+    不关卡片：人需要看到自己的决定被采纳了，而不是卡片凭空消失。
+
+    必须是**幂等**的：本地提交成功后服务端会再推一条 ``approved``/``rejected``
+    事件，两处都会调到这里。追加两次意见就会看到两行一样的字，所以意见只留一条。
+ */
+function settleApproval(el, approved, comment) {
+  if (!el) return;
+  el.classList.add('settled');
+  if (!approved) el.classList.add('rejected');
+  const tag = el.querySelector('.hd .tag');
+  if (tag) {
+    tag.textContent = approved ? '已批准' : '已驳回';
+    tag.className = 'tag ' + (approved ? 'ok' : 'warn');
+  }
+  const acts = el.querySelector('.acts');
+  if (acts) acts.remove();
+  let note = el.querySelector('.done-note');
+  if (!note) {
+    note = document.createElement('div');
+    note.className = 'done-note';
+    el.querySelector('.bd').appendChild(note);
+  }
+  note.textContent = comment ? `审批意见：${comment}` : '';
+}
+
+/** 按节点找到审批卡片并结算——服务端事件回来时用（可能是别处做的决策）。 */
+function settleApprovalByNode(node, approved, comment) {
+  const el = document.querySelector(`.approval[data-node="${node}"]`);
+  if (el) settleApproval(el, approved, comment);
+}
+
 function handle(ev, seq, data) {
   switch (ev) {
     case 'node_start':
@@ -329,10 +437,28 @@ function handle(ev, seq, data) {
     case 'node_end':
       closeNode(data.node);
       break;
+    case 'approval_required':
+      // 流程挂起等人决策：run 还没结束，SSE 流继续开着，批准后接着吐字
+      showApproval(data.node, data.prompt);
+      setState('waiting');
+      banner('流程已挂起，等待人工审批（批准后同一条流会接着往下跑）', 'warn');
+      break;
+    case 'approved':
+      settleApprovalByNode(data.node, true, data.comment);
+      banner('审批通过，流程继续', 'ok');
+      break;
+    case 'rejected':
+      settleApprovalByNode(data.node, false, data.comment);
+      banner('审批被驳回，本次 run 终止', 'warn');
+      break;
     case 'error':
       banner('服务端错误：' + (data.message || JSON.stringify(data)), 'warn');
       break;
     case 'done':
+      if (data.status === 'rejected') {
+        banner('run 已因审批驳回而终止' + (data.message ? '：' + data.message : ''), 'warn');
+        setState('rejected');
+      }
       break;
   }
 }
@@ -373,7 +499,9 @@ async function connect() {
   S.es = new EventSource(url);
   setState('connecting');
 
-  for (const ev of ['node_start', 'node_end', 'token', 'reasoning', 'tool_call', 'error', 'done']) {
+  // approval_* 也要订阅：审批是「人要做决定」的时刻，卡片靠这些事件亮起/结算
+  for (const ev of ['node_start', 'node_end', 'token', 'reasoning', 'tool_call',
+                    'approval_required', 'approved', 'rejected', 'error', 'done']) {
     S.es.addEventListener(ev, e => {
       let data = {};
       try { data = JSON.parse(e.data); } catch {}
@@ -411,6 +539,7 @@ async function newConversation() {
   $('convInfo').innerHTML = `session_id <code>${conv.session_id.slice(0, 12)}…</code><br>workflow_id ${conv.workflow_id}`;
   $('chat').innerHTML = '<div class="muted">会话已就绪，发送一条消息开始。</div>';
   S.nodeEls.clear();
+  S.approvalEl = null;
   banner('会话已创建 #' + conv.id, 'ok');
 }
 
@@ -423,6 +552,7 @@ async function send() {
   S.lastSeq = 0; S.lastSeqSeen = 0; S.count = 0; S.tokens = 0; S.nodes = 0;
   S.reconn = 0; S.seqOk = true; S.nodeEls.clear(); S.testMode = $('autoTest').checked;
   S.finished = false; autoFired = false;
+  S.approvalEl = null;
   addMsg('我', text, 'user');
   $('input').value = '';
 
@@ -441,11 +571,12 @@ async function send() {
 }
 
 async function pollRun() {
+  let announcedWaiting = false;
   for (let i = 0; i < 600; i++) {
     if (!S.runId) return;
     let run;
     try { run = await api(`/api/runs/${S.runId}`); } catch { return; }
-    if (['done', 'error', 'cancelled'].includes(run.status)) {
+    if (['done', 'error', 'cancelled', 'rejected'].includes(run.status)) {
       S.streaming = false;
       setState(run.status);
       enableRun(false);
@@ -457,6 +588,13 @@ async function pollRun() {
       }
       localStorage.removeItem(`run:${S.runId}:seq`);
       return;
+    }
+    // waiting 是**非终态**：run 挂在审批节点上等人决策，既不能当完成、也不能当失败。
+    // 这里只提示一次，别把横幅刷成屏保。
+    if (run.status === 'waiting' && !announcedWaiting) {
+      announcedWaiting = true;
+      setState('waiting');
+      banner(`run #${run.id} 挂在审批节点「${run.current_node || '?'}」上，等人决策`, 'warn');
     }
     await new Promise(r => setTimeout(r, 500));
   }
@@ -502,11 +640,28 @@ async function restore() {
     banner(`发现进行中的 run #${active.run_id}（node=${active.current_node}），重新订阅并回放`, 'ok');
     await connect();
     pollRun();
+    // 刷新页面不能让审批丢失：run 还挂着等决策，事件流里未必重放过
+    // approval_required，所以直接问服务端要一次待审批项。
+    await loadPendingApproval(active.run_id);
   } else {
     banner('没有进行中的 run，会话历史已刷新', 'ok');
     enableRun(false);
     setState('idle');
   }
+}
+
+/** 问服务端要当前 run 的待审批项；有就把卡片补上。
+
+    没有这一步的话，刷新页面后审批卡片会凭空消失，而 run 还在那儿等着——
+    人会以为流程卡死了。
+ */
+async function loadPendingApproval(runId) {
+  let a;
+  try { a = await api(`/api/runs/${runId}/approval`); } catch { return; }
+  if (!a) return;
+  S.approvalEl = null;
+  showApproval(a.node_id, a.prompt);
+  setState('waiting');
 }
 
 // ---------------------------------------------------------------- 加载
