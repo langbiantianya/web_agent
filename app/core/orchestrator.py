@@ -1,11 +1,16 @@
-"""编排器：run 生命周期 + workflow 调度（设计文档 §6.1）。
+"""编排器：run 生命周期 + 节点调度（设计文档 §6.1 / §6.2）。
 
 生命周期：
 1. 加载 run / conversation / workflow / agent 配置；
 2. 装配上下文（会话历史 + 原始用户输入）；
-3. 按 ``linear_order()`` 逐节点执行：node_start → LLM 流式吐字 → node_end；
+3. 把 workflow definition 编译成 LangGraph 图并执行：每个节点
+   ``node_start`` → LLM 流式吐字 → ``node_end``；
 4. 全部节点结束后 emit done；任何异常 emit error 并终止；
 5. **无论成败都 finalize**：冲刷 EventWriter 里的最后一批事件、回写 run.last_seq。
+
+**V2 变化**：第 3 步的控制流交给了 LangGraph（``app/core/run_graph.py``），本类只
+负责生命周期与「图节点回调进来的三个动作」。节点执行逻辑本身没变，所以事件顺序、
+重试语义、取消行为与 V1 逐条一致。
 
 关键点：生成完全跑在 ``asyncio.create_task`` 里，与发起它的 HTTP 请求解耦，
 请求返回后、甚至客户端断开后，生成仍在后台继续（设计文档 §3.3）。
@@ -22,6 +27,7 @@ from app.config.db import SessionLocal
 from app.config.settings import settings
 from app.core.agent_runner import AgentResult, AgentRunner, _client_factory
 from app.core.errors import RunCancelled
+from app.core.run_graph import NodeRunner, build_run_graph, recursion_limit
 from app.core.run_hub import RunHub, get_hub
 from app.core.workflow_def import WorkflowDefinition, WorkflowNode
 from app.models.enums import (
@@ -151,53 +157,32 @@ class Orchestrator:
             if context and context[-1]["role"] == MessageRole.USER.value:
                 context.pop()
 
-            upstream: dict[str, str] = {}
-            usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
-
-            for node in definition.linear_order():
-                if self.hub.is_cancelled(run_id):
-                    raise RunCancelled("用户取消")
-
-                agent = agents[node.agentCode]
-                await self.hub.emit(
-                    run_id,
-                    EventType.NODE_START,
-                    {"node": node.id, "agentCode": node.agentCode, "model": agent.model},
-                )
-                await run_repo_set_node(run_id, node.id)
-
-                rendered = definition.render_input(user_input, upstream)
-                result = await self._run_node_with_retry(
-                    run_id=run_id,
-                    node=node,
-                    agent=agent,
-                    context=context,
-                    rendered_input=rendered,
-                )
-
-                usage_total["prompt_tokens"] += result.usage.get("prompt_tokens", 0)
-                usage_total["completion_tokens"] += result.usage.get("completion_tokens", 0)
-
-                output_key = node.outputKey or node.id
-                upstream[output_key] = result.text
-
-                await self.hub.emit(
-                    run_id,
-                    EventType.NODE_END,
-                    {"node": node.id, "outputKey": output_key, "agentCode": node.agentCode},
-                )
-
-                # 节点产出落库，成为后续节点的上下文
-                await self._persist_assistant_message(
-                    run_id, plan["conversation_id"], node.agentCode, result.text
-                )
-                context = context + [{"role": "assistant", "content": result.text}]
+            # 从这里开始，节点怎么串由 LangGraph 决定（V2）。执行逻辑本身仍在
+            # ``run_graph.NodeRunner`` 里，本类只提供它需要的三个动作。
+            runner = NodeRunner(
+                run_id=run_id,
+                conversation_id=plan["conversation_id"],
+                definition=definition,
+                agents=agents,
+                user_input=user_input,
+                hub=self.hub,
+                ops=self,
+            )
+            graph = build_run_graph(definition, runner)
+            final_state = await graph.ainvoke(
+                {
+                    "context": context,
+                    "upstream": {},
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+                },
+                {"recursion_limit": recursion_limit(definition)},
+            )
 
             last_seq = (
                 await self.hub.emit(
                     run_id,
                     EventType.DONE,
-                    {"status": RunStatus.DONE.value, "usage": usage_total},
+                    {"status": RunStatus.DONE.value, "usage": final_state["usage"]},
                 )
             ).seq
             await self._finish(run_id, RunStatus.DONE, last_seq)
@@ -236,6 +221,36 @@ class Orchestrator:
                 logger.exception("run %s 失败后收尾也失败了", run_id)
 
     # ------------------------------------------------------------- 节点
+
+    # 下面三个方法是 :class:`~app.core.run_graph.NodeOps` 的实现，供 LangGraph
+    # 图节点回调。它们与 V1 手写循环里逐字对应，行为必须保持一致。
+
+    async def set_current_node(self, run_id: int, node_id: str) -> None:
+        """把当前节点写进 ``run.current_node``（进度展示与排障用）。"""
+        await run_repo_set_node(run_id, node_id)
+
+    async def persist_message(
+        self, run_id: int, conversation_id: int, agent_code: str, text: str
+    ) -> None:
+        """:meth:`_persist_assistant_message` 的图侧入口，行为完全一致。"""
+        await self._persist_assistant_message(run_id, conversation_id, agent_code, text)
+
+    async def run_with_retry(
+        self,
+        run_id: int,
+        node: WorkflowNode,
+        agent,
+        context: list[dict],
+        rendered_input: str,
+    ) -> AgentResult:
+        """:meth:`_run_node_with_retry` 的图侧入口，行为完全一致。"""
+        return await self._run_node_with_retry(
+            run_id=run_id,
+            node=node,
+            agent=agent,
+            context=context,
+            rendered_input=rendered_input,
+        )
 
     async def _run_node_with_retry(
         self,

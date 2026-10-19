@@ -55,9 +55,9 @@
 | MySQL 驱动 | `asyncmy` | Cython 重写协议核心，大批量查询性能优于纯 Python 驱动 |
 | 数据库迁移 | Alembic | 版本化迁移，配合 SQLAlchemy 元数据 |
 | LLM SDK | openai Python SDK（`AsyncOpenAI`） | `base_url` 可覆盖，直接兼容 OpenAI 协议 |
-| Agent 编排 | 自研轻量编排器（V1），预留 LangGraph（V2） | V1 线性流水线自研足够；V2 复杂 DAG 引入 LangGraph |
-| 进程内总线 | `asyncio.Queue` + `BusBackend` Protocol | 与事件循环一致，预留 Redis Pub/Sub 扩展位 |
-| 分布式扩展 | Redis Pub/Sub（V2） | 替换 `BusBackend` 实现即可水平扩容 |
+| Agent 编排 | LangGraph（V2 起） | V1 自研线性流水线；V2 把控制流交给图，节点逻辑保留 |
+| 事件总线 | `BusBackend` Protocol，Redis Pub/Sub / 进程内队列双实现 | 同一份 SSE 代码跑单实例与多实例 |
+| 分布式扩展 | Redis（V2） | 回放源换 Stream、跨实例事件换 Pub/Sub、归属换租约 |
 
 > **实现修正**：原文示例中的 `from fastapi.sse import EventSourceResponse` 有误，FastAPI 并未内置 SSE 模块。正确导入为 `from sse_starlette.sse import EventSourceResponse, ServerSentEvent`。
 
@@ -587,9 +587,21 @@ async def execute_run(run_id: int, workflow: Workflow, user_input: str):
     await hub.emit(run_id, "done", {...})
 ```
 
-### 6.2 V2：引入 LangGraph
+### 6.2 V2：改用 LangGraph 表达控制流
 
-当需要 DAG 条件路由、检查点恢复、人机协同时，引入 LangGraph：将 `AgentRunner` 封装为图节点函数，`run_step` 表对应 checkpointer 持久化层。
+V2 把「按什么顺序执行节点」这件事交给 LangGraph，节点执行逻辑本身原样保留：
+
+```python
+graph = build_run_graph(definition, NodeRunner(...))
+final = await graph.ainvoke(initial_state, {"recursion_limit": recursion_limit(definition)})
+```
+
+拆分点是 `app/core/run_graph.py` 里的 `NodeOps` / `NodeRunner`：**「节点要干什么」在
+NodeRunner，「图怎么连」在 `build_run_graph`**。换图结构不会碰到执行逻辑，反过来也一样。
+
+`recursion_limit` 取 `len(nodes) + 10`：LangGraph 按「超步」计数，线性链每节点一超步。
+留 10 的余量是为了将来加条件边时不必回来改——触发这个上限意味着图里出现了环，
+早失败比跑出重复执行要好。详细取舍见 §14。
 
 ### 6.3 LLM 调用
 
@@ -1006,6 +1018,108 @@ seq。V2 **没有实现 failover**：实例挂掉后它持有的 run 由租约�
   （`Error 22 ... 远程计算机拒绝网络连接`），两秒后它自己恢复；没有重试的话，
   那一次会变成 19 个用例同时 ERROR。
 - 测试夹具在连不上时**跳过**而不是报错。真正的回归应当表现为「Redis 通着但用例不过」。
+
+---
+
+## 14. V2-b：用 LangGraph 替换自研编排器
+
+V1 的 `execute_run` 是一段 `for node in workflow.linear_order()`。它能跑，但「控制流」
+这件事被写死在了 Python 循环里——想加分支、判断路由、并行汇聚，都得回来改这个循环。
+V2-b 把控制流交给图，节点执行逻辑一行不动。
+
+### 14.1 拆分点：NodeOps / NodeRunner
+
+```python
+graph = build_run_graph(definition, runner)
+final = await graph.ainvoke(initial_state, {"recursion_limit": len(nodes) + 10})
+```
+
+`RunState` 只放**跨节点流动**的数据（context / upstream / usage）。每 run 固定不变的量
+（run_id、agents、hub……）不进 state，它们是 `NodeRunner` 的构造参数——放进 state 只会让
+LangGraph 每个 super-step 都去序列化一遍本不需要持久化的东西。
+
+`NodeOps` 是 Protocol，`Orchestrator` 实现它（`set_current_node` / `run_with_retry` /
+`persist_message` 三个方法），因此 `run_graph.py` 不依赖 `orchestrator.py`，反之也不依赖。
+节点闭包只做一件事：把 state 转交给 `execute_node`。
+
+### 14.2 连线来自 definition.edges，不是 nodes 声明顺序
+
+这是本次迁移最关键的一处。`build_run_graph` 按 `edges` 连线，而不是假设「按 nodes 顺序
+串起来」。于是 V3 加条件边 / DAG 时，改的只有这一个函数，`execute_node` 一行都不用动。
+`tests/test_run_graph.py` 里 `test_execution_order_follows_edges_not_declaration_order`
+专门钉住这一点：nodes 声明为 `[b, a]`、edges 为 `a→b`，必须按 `a→b` 执行。
+
+节点名用 `node.id`，它同时是事件里的 `node` 字段、`upstream` 的键和 `run_step` 的外键——
+用它当图节点名能让日志里的图和业务数据对得上。
+
+### 14.3 刻意不挂 checkpointer
+
+`langgraph-checkpoint-redis` 提供了 `AsyncRedisSaver`（支持 `.with_ttl()`），技术上完全
+可以接。**不接**，理由有三条，每条都能用本项目的实测数据说明：
+
+**粒度差两个数量级。** `EventType` 七种里 `TOKEN` / `REASONING` 是逐块推进的。§13.9 的
+双实例实测里，一次三节点流水线产生 **445 条事件**；而 checkpointer 的粒度是 super-step，
+一个节点执行完存一份，即 4 个 checkpoint。**445 : 4 ≈ 每个 checkpoint 里压着 110 条事件。**
+换成它，客户端在第 137 个 token 断线就只能从节点边界重放，前端打字机退化成「整段冒出来」
+——这正是 V1 花力气修好的「尾部 token 丢失」要换个方向再犯一次。
+
+**存的东西类型不同。** `run_event` 存的是 `RunEventDTO(run_id, seq, event_type, payload)`
+——追加、不可变、带全局序号的事件流。LangGraph 存的是 `Checkpoint(channel_values,
+channel_versions, pending_writes, next)`——**状态快照**，每个 super-step 覆盖上一份。
+快照不能当事件流读：打字机、重放、以及「流文本 == 库文本」这类断言，全都建立在能按 seq
+逐条重放上。
+
+**checkpointer 不提供互斥。** 读 `BaseCheckpointSaver` 的 docstring，通篇只讲状态持久化
+与 `thread_id` 主键，没有任何并发控制语义。而 §13.4 的归属租约解决的正是「别让两个实例
+同时编排同一个 run」。换过去的结果是事件流换掉了，租约、取消控制频道、启动时回收无主 run
+三样一个不少，架构复杂度反而多一份。
+
+「用 `get_state_history()` 从快照差分推事件」这条路也堵死了：要让 LLM 节点变成逐 token
+checkpoint 的子图，每个 token 一次写——比现在每 token 一次 `XADD` **更贵**；token 增量
+必须进 state channel 才能被差分到，于是每次 token 都要重写累积全文，检查点体积 O(n²)；
+差分推出来的 `seq` 也没有「无缺口」性质，因此没有 `XADD <seq>-0` 那道天然护栏。
+
+**结论**：`run_event` + Redis Stream 是唯一权威事件日志。它服务的是「对外事件流」这个
+消费者，checkpointer 服务的是「恢复执行」这个消费者，两者不冲突也不可互相替代。
+
+### 14.4 保留在节点内的重试与取消检查
+
+LangGraph 有 `RetryPolicy`，但它和我们要的不是一回事：
+
+- **重试**：我们要「指数退避 + 写 `run_step` 记录每次尝试 + 取消时立即中止」。`RetryPolicy`
+  只管重试次数，退避策略、每次尝试的可观测性都要绕出去自己实现。留在节点函数里更可控。
+- **取消检查**：必须放在**每个图节点的开头**。放到图外就没有「进入下一节点前」的统一
+  拦截点——图不会给你一个节点间的钩子。这里保留 `hub.is_cancelled`，它只读本地布尔字段，
+  每 chunk 轮询一次，那里不能出现 await（见 §13.4）。
+
+### 14.5 V1 的 DAG 拒绝校验仍然保留
+
+`len(edges) != len(nodes) - 1` 即拒绝，尽管 LangGraph 让 DAG 变得容易。路线图把 DAG 放在
+V3，本次不擅自扩大范围。识别为 V3 的低成本改动点：校验规则放宽 + `build_run_graph` 支持
+条件边，两处互不干扰。
+
+### 14.6 依赖副作用
+
+`pip install langgraph` 把 `websockets` 从 17.2 降到 16.1.1（langchain-core 1.6.12、
+langgraph-checkpoint 4.3.0 一并引入）。已实测 `uvicorn.protocols.websockets.websockets_impl`
+仍可正常导入，但会打 `UvicornDeprecationWarning`——uvicorn 已计划把默认实现换成
+`websockets-sansio`。不影响 SSE（SSE 走的是 `sse-starlette`），仅此记录。
+
+### 14.7 验证结果
+
+- **9 个图构建测试**（`tests/test_run_graph.py`）：含执行顺序按 edges、空图、单节点、
+  节点名对齐、异常原样冒泡。
+- **全量 102 个用例全绿**（43.6s），默认关闭 Redis 时行为与 V1 逐字不变。
+- 堆栈确认 `graph.ainvoke` 真的在调用链上，不是「import 了但没走到」——
+  节点报错时堆栈是 `langgraph/_internal/_runnable.py:522 ainvoke → run_graph.py:195
+  _run → execute_node`。
+- **迁移后重跑双实例端到端**（B 实例编排、A 实例收流、中途断开后带 `last_seq` 在 A 重连）：
+  277 个事件 seq 严格连续、无重复、无乱序，拼接文本 540 字与 MySQL 落库、与假模型三段
+  输出三方逐字一致，run 终态 `done`、`last_seq=277` 与流末 seq 相等。
+
+**已知代价**（诚实记录，非缺陷）：每个 token 一次 `XADD`，一个万字 run 就是万条 Stream
+条目，直到 `MAXLEN ~` 裁剪。这不是架构问题而是调参问题（`redis_stream_maxlen`）——换
+checkpointer 只会更贵，不会更省。
 
 ---
 

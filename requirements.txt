@@ -16,6 +16,11 @@ openai>=1.40
 # ---- SSE ----
 sse-starlette>=2.1
 
+# ---- 编排引擎 ----
+# V2 起 workflow 的控制流由 LangGraph 表达（节点、连线、条件路由），
+# 持久化仍由本项目的 run_event / Redis Stream 负责，不挂 LangGraph checkpointer。
+langgraph>=1.0
+
 # ---- Redis（V2 多实例，REDIS_ENABLED=false 时用不到）----
 redis>=5.0
 

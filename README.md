@@ -17,11 +17,28 @@
 | **多实例（V2）** | 开启 `REDIS_ENABLED` 后事件走 Redis Stream（回放源）+ Pub/Sub（实时），**任意实例都能接任意 run 的流** |
 | **归属租约（V2）** | 生成方持带 TTL 的租约并续期；新实例启动只回收**无主**的 run，不会误杀别人正在跑的 |
 | **跨实例取消（V2）** | 取消信号走控制频道，在 B 实例点「停止」能真的停掉 A 实例上的生成 |
+| **LangGraph 编排（V2）** | 控制流交给 `StateGraph`，连线来自 `definition.edges`；**刻意不挂 checkpointer**，事件流唯一权威（见下） |
 | 心跳保活 | SSE 注释行 `: ping`，不占 `seq`、不落库、不污染回放序列 |
 | 统一协议 | 所有模型走 OpenAI 兼容 `/v1/chat/completions`，OpenAI / DeepSeek / Qwen / vLLM 通吃 |
 | 可扩展 | 进程内总线抽象为 `BusBackend` Protocol，V2 已落地 Redis Pub/Sub 实现 |
 
 > 多实例的完整设计（含一处被实测抓出来的漏字 bug）见 [`docs/design.md` §13](docs/design.md)。
+
+### 为什么不挂 LangGraph checkpointer
+
+装了 `langgraph-checkpoint-redis` 就能接，**但不接**。三行理由：
+
+- **粒度差两个数量级**——实测一次三节点流水线产生 **445 条事件**，而 checkpointer 只存 4 份
+  快照（每节点一份）。客户端在第 137 个 token 断线就能退回节点边界重放，前端打字机直接
+  退化成「整段冒出来」。
+- **存的东西不同**——`run_event` 是**追加的、带单调 seq 的事件流**；checkpointer 是
+  **状态快照**，每个 super-step 覆盖上一份。快照不能当事件流读。
+- **不提供互斥**——`BaseCheckpointSaver` 的契约里没有并发控制，归属租约仍得自己维护。
+
+它真正擅长的是我们**还没有**的：人工审批（`interrupt()`）、time-travel、崩溃后按节点续跑。
+留给 V3。
+
+> 完整论证见 [`docs/design.md` §14.3](docs/design.md)。
 
 ---
 
@@ -376,8 +393,9 @@ location /api/ {
 pytest -q
 ```
 
-**93 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
-Redis 连不上时这 19 个会自动 skip，其余照跑）。覆盖设计文档里最容易写错的两处：
+**102 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
+Redis 连不上时这 19 个会自动 skip，其余照跑），9 个是图构建测试（`tests/test_run_graph.py`，
+含「执行顺序按 edges 而非 nodes 声明顺序」）。覆盖设计文档里最容易写错的两处：
 
 - `run_event` 批量落库不丢事件、seq 严格递增唯一、并发 emit 不产生重复 seq
 - 「先订阅 → 冲刷 → 回放 → 按 seq 合并」在断线重连时不漏字、不重复、不乱序
@@ -403,7 +421,7 @@ python scripts/check_docstrings.py            # 全量
 python scripts/check_docstrings.py app/core   # 指定目录/文件/模块路径
 ```
 
-当前状态：**417 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
+当前状态：**449 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
 默认扫描范围含根目录的 `run.py`，新增根目录脚本记得加进 `DEFAULT_TARGETS`。
 
 ---
@@ -427,6 +445,7 @@ app/
 │   ├── event_writer.py     # run_event 批量落库（MySQL 长期归档）
 │   ├── sse_writer.py       # 回放 + 实时合并去重（续传核心）
 │   ├── agent_runner.py     # 单 Agent 执行（AsyncOpenAI 流式）
+│   ├── run_graph.py        # LangGraph 图构建 + NodeRunner（V2-b）
 │   ├── orchestrator.py     # run 生命周期 + 节点调度 + 重试
 │   ├── workflow_def.py     # definition 解析与校验
 │   ├── crypto.py           # api_key 加解密
@@ -444,5 +463,6 @@ alembic/  tests/  docs/design.md
 
 - **V1**（已完成）：单实例、线性流水线、MySQL 持久化、SSE 续传
 - **V2**（已完成）：Redis Pub/Sub 替换进程内总线支持多实例；`run_event` 走 Redis Stream 作为回放源；归属租约让启动恢复不再误杀其它实例的 run
-- **V3**：Workflow 支持 DAG + 条件边 + 人工审批；Agent 支持 RAG / MCP 工具
+- **V2-b**（已完成）：控制流改由 LangGraph `StateGraph` 表达，连线来自 `definition.edges`，为 V3 的 DAG 留好扩展点（不挂 checkpointer，理由见上文）
+- **V3**：Workflow 支持 DAG + 条件边 + 人工审批（`interrupt()` + checkpointer，届时再引入）；Agent 支持 RAG / MCP 工具
 - **V4**：可观测性（OpenTelemetry 链路追踪、token 成本统计）
