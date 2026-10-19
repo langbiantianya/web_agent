@@ -58,3 +58,21 @@ class GoneError(AppError):
 
 class RunCancelled(Exception):
     """内部信号：用户主动取消生成。"""
+
+
+class ToolLoopExceeded(Exception):
+    """工具调用轮数超限——模型在工具上陷住了。
+
+    刻意**不重试**：重试同一个节点，模型大概率还是同样地陷住，白烧一轮 token。
+    直接失败并把「超过几轮」告诉用户，比让它继续烧钱有用。
+    """
+
+    def __init__(self, max_rounds: int) -> None:
+        """构造异常。
+
+        Args:
+            max_rounds: 触发本异常时允许的最大轮数。
+        """
+        super().__init__(f"工具调用超过 {max_rounds} 轮，模型在工具上陷住了")
+        self.max_rounds = max_rounds
+        self.message = str(self)

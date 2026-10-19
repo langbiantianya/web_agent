@@ -38,7 +38,7 @@ from app.core.checkpoint import (
     delete_thread,
     get_checkpointer,
 )
-from app.core.errors import RunCancelled
+from app.core.errors import RunCancelled, ToolLoopExceeded
 from app.core.run_graph import NodeRunner, RunRejected, build_run_graph, recursion_limit
 from app.core.run_hub import RunHub, get_hub
 from app.core.workflow_def import WorkflowDefinition, WorkflowNode
@@ -498,17 +498,29 @@ class Orchestrator:
                     hub=self.hub,
                     is_cancelled=lambda: self.hub.is_cancelled(run_id),
                 )
-                result = await runner.run(messages)
+                result = await runner.run_with_tools(messages)
                 await self._finish_step(
                     run_id,
                     node.id,
                     StepStatus.DONE,
-                    {"text": result.text, "toolCalls": result.tool_calls},
+                    {
+                        "text": result.text,
+                        "toolCalls": result.tool_calls,
+                        "toolRounds": result.tool_rounds,
+                    },
                 )
                 return result
 
             except RunCancelled:
                 await self._finish_step(run_id, node.id, StepStatus.ERROR, None, "已取消")
+                raise
+            except ToolLoopExceeded as exc:
+                # 工具死循环**不重试**：重试同一个节点，模型大概率还是同样地陷住，
+                # 白烧一轮 token。直接失败并把「陷住了」告诉用户。
+                await self._finish_step(
+                    run_id, node.id, StepStatus.ERROR, None, str(exc)
+                )
+                logger.warning("run %s 节点 %s 工具调用陷入死循环：%s", run_id, node.id, exc)
                 raise
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc

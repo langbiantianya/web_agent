@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     node_max_retries: int = 2        # 失败重试次数，指数退避（设计 §3.3）
     node_retry_base_delay: float = 0.5
 
+    # ---- 工具调用（V3.2）----
+    # 一次节点执行里「模型→工具→模型」最多来回几轮。超了就判定模型在工具上
+    # 陷住了，直接失败——继续下去只会白烧 token，而重试同一个节点大概率还是
+    # 同样地陷住。
+    tool_max_rounds: int = 5
+    # 工具结果回灌给模型时的最大字符数：太长会挤爆下一轮的 prompt。
+    tool_result_max_chars: int = 4000
+
     # ---- LLM ----
     openai_timeout: float = 120.0
 

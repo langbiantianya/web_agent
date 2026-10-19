@@ -18,12 +18,31 @@ from openai import APIError, AsyncOpenAI, NOT_GIVEN
 
 from app.config.settings import settings
 from app.core.crypto import decrypt
-from app.core.errors import RunCancelled
+from app.core.errors import RunCancelled, ToolLoopExceeded
 from app.core.run_hub import RunEventDTO, RunHub
+from app.core.tools import build_openai_tools, execute_tool
 from app.models.agent import Agent
 from app.models.enums import EventType
 
 logger = logging.getLogger(__name__)
+
+
+def _truncate(text: str) -> str:
+    """截断过长的工具结果。
+
+    工具结果要回灌进下一轮的 prompt，不截断的话一个返回 1MB 的工具能把 prompt
+    撑爆，而 token 账单按字符走。
+
+    Args:
+        text: 工具返回的原始文本。
+
+    Returns:
+        截断后的文本（超长时带一个说明标记）。
+    """
+    limit = settings.tool_result_max_chars
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n…（结果过长，已截断到 {limit} 字符）"
 
 
 @dataclass(slots=True)
@@ -32,6 +51,8 @@ class AgentResult:
     reasoning: str = ""
     tool_calls: list[dict] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
+    # 用了几轮工具调用（V3.2）。0 表示模型没要过工具。
+    tool_rounds: int = 0
 
 
 class LLMClientFactory:
@@ -204,6 +225,106 @@ class AgentRunner:
                 except Exception:  # pragma: no cover
                     logger.debug("关闭 LLM 流失败", exc_info=True)
 
+    # ------------------------------------------------------------- 工具闭环
+
+    async def run_with_tools(self, messages: list[dict]) -> AgentResult:
+        """跑一次节点，必要时让模型多轮调用工具（V3.2）。
+
+        闭环的形状是：**模型要工具 → 执行工具 → 结果以 ``role=tool`` 回灌 →
+        模型继续**，直到某一轮不再要工具。
+
+        ## 为什么结果要回灌，而不是直接结束
+
+        模型要工具时，它的意图是「拿到数据再回答」。直接结束等于让它话说一半就
+        没了——把工具结果回灌回去，模型才有条件给出真正的答案。
+
+        ## 文本是各轮拼接，不是只取最后一轮
+
+        流里 emit 的 token 就是各轮的拼接，落库的 assistant 消息也是同一个拼接，
+        于是「流文本 == 库文本」这条性质依然成立（设计文档 §14.3 依赖它）。
+        代价是中间轮模型的过程性发言（"我先算一下"）也会进最终产出——那本来就是
+        它说出口的话，留在上下文里不算错。
+
+        ## 工具报错不直接失败节点
+
+        工具执行失败时把错误文本回灌给模型，让它有机会自己纠正（换个参数、或者
+        干脆不用这个工具）。真正兜不住的是「模型一直调同一个必失败的工具」，
+        那由轮次上限收口。
+
+        ## 轮次预算怎么算
+
+        ``tool_max_rounds`` 是**模型调用次数**的上限，不是工具执行次数。模型在
+        最后一轮还想要工具，就判定它陷住了——这时**不执行**那次工具：执行了也
+        没有下一轮去读结果，白跑一次。
+
+        于是预算的实际效果是：模型最多能用上 ``max_rounds - 1`` 个工具结果，
+        并在第 ``max_rounds`` 次调用里给出最终答案。
+
+        Args:
+            messages: 已装配好的 system + 历史上下文 + 本轮输入。
+
+        Returns:
+            ``AgentResult``：各轮拼接的文本、全部工具调用、累计 usage。
+
+        Raises:
+            ToolLoopExceeded: 工具调用轮数超过上限。
+            RunCancelled: 用户取消。
+            APIError: 端点返回错误且重试次数耗尽（由编排器决定是否重试）。
+        """
+        convo = list(messages)
+        total_text = ""
+        total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        all_tool_calls: list[dict] = []
+        rounds = 0
+        max_rounds = max(1, settings.tool_max_rounds)
+
+        for round_no in range(1, max_rounds + 1):
+            result = await self.run(convo)
+            total_text += result.text
+            for key in total_usage:
+                total_usage[key] += result.usage.get(key, 0)
+
+            if not result.tool_calls:
+                result.text = total_text
+                result.usage = total_usage
+                result.tool_calls = all_tool_calls
+                result.tool_rounds = rounds
+                return result
+
+            rounds = round_no
+            if round_no == max_rounds:
+                # 预算用尽，模型还要工具：判定它陷住了。
+                # 这里**不执行**那次工具——执行了也没人消费（没有下一轮去读结果），
+                # 白跑一次。直接失败，把「陷住了」告诉用户。
+                break
+
+            all_tool_calls.extend(result.tool_calls)
+            # 模型这一轮说的话要原样带回去——OpenAI 协议要求 assistant 消息带上
+            # 与后续 tool 消息配对的 tool_calls（id 必须一致）
+            convo.append({
+                "role": "assistant",
+                "content": result.text or None,
+                "tool_calls": result.tool_calls,
+            })
+
+            for tc in result.tool_calls:
+                fn = tc.get("function") or {}
+                name = fn.get("name") or ""
+                ok, output = await execute_tool(name, fn.get("arguments") or "{}")
+                output = _truncate(output)
+                await self._emit(
+                    EventType.TOOL_RESULT,
+                    {"tool": name, "ok": ok, "summary": output[:200]},
+                )
+                convo.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id") or "",
+                    "name": name,
+                    "content": output,
+                })
+
+        raise ToolLoopExceeded(max_rounds)
+
     # ------------------------------------------------------------- 内部
 
     def _build_kwargs(self, messages: list[dict], want_usage: bool) -> dict[str, Any]:
@@ -212,6 +333,10 @@ class AgentRunner:
         ``extra_params`` 里的自定义键（top_p、seed、thinking 等）在最后覆盖基础
         值，优先级最高——改 Agent 配置就能调参，不用改代码。``tool_choice`` 是
         唯一例外：没配 tools 时带上它会被多数端点拒掉，所以此时跳过。
+
+        ``tools`` 存的是**工具名**（见 :mod:`app.core.tools`），这里从注册表展开成
+        OpenAI 的 function-calling schema。展开而不是透传的原因见该模块的说明：
+        「模型能调的」与「服务端能执行的」必须是同一张表。
 
         Args:
             messages: 已装配好的 system + 会话历史 + 本轮输入。
@@ -226,7 +351,7 @@ class AgentRunner:
             "max_tokens": self.agent.max_tokens or 2048,
             "stream": True,
         }
-        tools = self.agent.tools
+        tools = build_openai_tools(self.agent.tools)
         if tools:
             kwargs["tools"] = tools
             if extra.get("tool_choice") is not None:
