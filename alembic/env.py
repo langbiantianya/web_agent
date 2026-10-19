@@ -30,12 +30,16 @@ def _configure(connection: Connection) -> None:
 
     ``compare_type`` 防「只改了列名没改类型」漏检；``render_as_batch`` 让
     SQLite 的 ALTER（加列/改约束）走临时表重建，否则生成不出可执行迁移。
+
+    ``transaction_per_migration=True`` 是**每个迁移各自开一个事务**，不是
+    「关闭事务包裹」——后者是 ``transactional_ddl=False``。这里要前者的原因：
+    MySQL 的 DDL 会隐式提交，把多条 ALTER 塞进同一个事务既做不到原子，
+    中途失败还会留下「改了一半」的表。按迁移独立提交，失败粒度反而更清晰。
     """
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
-        # MySQL 不支持事务内 DDL，这里统一关闭事务包裹
         transaction_per_migration=True,
         render_as_batch=connection.dialect.name == "sqlite",
     )
