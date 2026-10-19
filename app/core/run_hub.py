@@ -191,6 +191,11 @@ class RunHub:
            订阅者不会拿到一条「有推送但回放不到」的幽灵事件。
 
         持锁覆盖这三步，因此广播顺序 == seq 顺序，前端不会收到乱序事件。
+
+        **Redis 不可用时降级而不是崩掉**：外部 Redis 瞬时不可达是常态（实测踩过
+        一次，整个 run 在第一个节点前就夭折了）。这里把第 1、3 步的失败降级成
+        告警——第 2 步的 MySQL 归档照旧进行，回放读不到 Stream 时会回落到 MySQL
+        （见 :meth:`app.core.event_log.RedisEventLog.replay`），所以事件不会丢。
         """
         state = await self._ensure_state(run_id)
         etype = EventType(event_type).value
@@ -199,7 +204,14 @@ class RunHub:
             state.counter += 1
             seq = state.counter
             evt = RunEventDTO(run_id=run_id, seq=seq, event_type=etype, payload=payload)
-            await self._log.append(run_id, seq, etype, payload)
+            try:
+                await self._log.append(run_id, seq, etype, payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - 回放源不可用不该杀掉生成
+                logger.warning(
+                    "run %s 的事件写入回放源失败，本次只进 MySQL 归档", run_id, exc_info=True
+                )
             if state.writer is not None:
                 # 同步追加，不阻塞；后台按条数/时间批量落库
                 state.writer.append(
@@ -208,7 +220,14 @@ class RunHub:
                     )
                 )
             # 无界队列 put_nowait，极快；广播顺序与 seq 顺序一致
-            await self._bus.publish(channel_of(run_id), evt.to_wire())
+            try:
+                await self._bus.publish(channel_of(run_id), evt.to_wire())
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - 实时广播失败不该杀掉生成
+                logger.warning(
+                    "run %s 的事件广播失败，订阅者需靠回放补齐", run_id, exc_info=True
+                )
         return evt
 
     # -------------------------------------------------------------- 订阅

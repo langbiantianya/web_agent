@@ -130,13 +130,37 @@ class RedisLease:
 
         只写一个 ``owner`` 键就够：``is_owned`` 问的是「还有没有主」，而「是谁」
         只在排障时有用，不必单独再存一份。
+
+        **Redis 抖动不能杀掉这次生成**：实测外部 Redis 瞬时不可达时，``SET`` 会
+        抛 ConnectionError，run 在第一个节点都没开始前就夭折了——用户看到的是
+        「什么都没发生就失败了」。这里改成「重试两次，还不行就降级」：不持租约
+        继续跑，靠续期循环在 Redis 恢复后把归属键补上（见 :meth:`_renew_loop`）。
+
+        降级的风险只有一条：Redis 恢复前的窗口里没有归属键，别的实例启动恢复
+        可能把这条 run 当成无主回收。这比起「直接失败」小得多——失败是必然的，
+        降级只是概率性的。
         """
         from app.config.settings import settings
         from app.core.redis_client import instance_id, run_owner_key
 
         redis = await self._redis()
-        await redis.set(run_owner_key(run_id), instance_id(),
-                        ex=settings.redis_activity_ttl)
+        key = run_owner_key(run_id)
+        for attempt in (1, 2):
+            try:
+                await redis.set(key, instance_id(), ex=settings.redis_activity_ttl)
+                break
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - Redis 抖动按降级处理
+                if attempt == 2:
+                    logger.warning(
+                        "run %s 归属租约写入失败（Redis 不可用），降级为无租约运行", run_id
+                    )
+                    break
+                logger.warning("run %s 归属租约写入失败，重试一次", run_id)
+                await asyncio.sleep(0.3)
+
+        # 续期循环照常拉起：它会在 Redis 恢复后把归属键补回来
         self._renewers[run_id] = asyncio.create_task(
             self._renew_loop(run_id), name=f"lease-renew-{run_id}"
         )
@@ -148,30 +172,40 @@ class RedisLease:
         续期周期必须**明显小于 TTL**：Redis 抖动一次、网络抖一下，都可能让某次
         续期迟到；周期取 TTL/3 留出两次容错窗口。TTL 到期会被别的实例（以及启动
         恢复）判定为「无主」，代价是那个 run 被误标成 error——宁可多续，也别漏。
+
+        续期的具体做法见 :meth:`renew`。
         """
         from app.config.settings import settings
-        from app.core.redis_client import run_owner_key
 
         interval = max(1.0, settings.redis_activity_ttl / 3)
         while True:
             await asyncio.sleep(interval)
             try:
-                await (await self._redis()).expire(
-                    run_owner_key(run_id), settings.redis_activity_ttl
-                )
+                await self.renew(run_id)
             except asyncio.CancelledError:
                 raise
             except Exception:  # pragma: no cover - Redis 抖动不该杀掉生成
                 logger.exception("run %s 的租约续期失败", run_id)
 
     async def renew(self, run_id: int) -> None:
-        """手动续期一次（续期循环之外的按需使用点）。"""
-        from app.config.settings import settings
-        from app.core.redis_client import run_owner_key
+        """续期一次租约（续期循环之外的按需使用点）。
 
-        await (await self._redis()).expire(
-            run_owner_key(run_id), settings.redis_activity_ttl
-        )
+        用 ``expire`` 而不是 ``set``：键还在时只延 TTL，归属实例的值保持不变，
+        不会把别的实例的归属覆盖掉。但 ``expire`` 对不存在的键是 no-op——首次
+        ``claim`` 撞上 Redis 抖动而降级时，键根本就没建起来，光续期等于空转，
+        这条 run 会一直「无主」，别的实例可能把它当无主的回收掉。
+
+        所以这里检查 ``expire`` 的返回值：为 0 说明键没了，补一个 ``set`` 把归属
+        重新立起来（Redis 恢复了才补得上，没恢复就继续等下一次）。
+        """
+        from app.config.settings import settings
+        from app.core.redis_client import instance_id, run_owner_key
+
+        key = run_owner_key(run_id)
+        redis = await self._redis()
+        refreshed = await redis.expire(key, settings.redis_activity_ttl)
+        if not refreshed:
+            await redis.set(key, instance_id(), ex=settings.redis_activity_ttl)
 
     async def release(self, run_id: int) -> None:
         """删除归属键并停掉续期、取消监听。

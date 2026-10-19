@@ -183,6 +183,13 @@ class RedisEventLog:
         **Stream 里什么都没有时回落到 MySQL**。这不是可选兜底而是必需的：Stream
         有 TTL、MySQL 保留 7 天，而启用 Redis 之前产生的 run 压根没有 Stream。
         只读 Stream 会让这些 run 一被续传就读不到内容。
+
+        **Stream 有内容时取两边的并集**。原因：Redis 抖动期间写 Stream 会失败，
+        那些事件只进了 MySQL 归档（见 :meth:`app.core.run_hub.RunHub.emit` 的降级
+        处理），于是 Stream 里会**缺一段**。只读 Stream 的话，续传就会漏掉那段——
+        而且是「越靠后的越容易漏」，因为缺的是尾部。只读 MySQL 也不对：归档是批量
+        落库的，生成方还没 flush 时它是滞后的，跨实例续传恰恰是靠 Stream 才拿到
+        最新事件的。取并集，两边各自缺的部分正好互补。
         """
         from app.repo.run_event_repo import REPLAY_LIMIT
 
@@ -203,7 +210,17 @@ class RedisEventLog:
             )
             for entry_id, fields in entries
         ]
-        return ReplayResult(events=events, first_seq=_seq_of(entries[0][0]))
+        # 与 MySQL 归档取并集：Stream 缺的那段只能从归档里补
+        merged: dict[int, RunEventDTO] = {e.seq: e for e in events}
+        try:
+            archived = await DbEventLog().replay(run_id, after_seq)
+        except Exception:  # pragma: no cover - 归档读失败不该让回放整个失败
+            logger.exception("run %s 读 MySQL 归档失败，只回放 Stream 里的部分", run_id)
+            archived = ReplayResult(events=[])
+        for e in archived.events:
+            merged.setdefault(e.seq, e)
+        ordered = [merged[seq] for seq in sorted(merged)][:REPLAY_LIMIT]
+        return ReplayResult(events=ordered, first_seq=_seq_of(entries[0][0]))
 
     async def finalize(self, run_id: int) -> None:
         """run 结束后给 Stream 设过期，避免 Redis 里无限堆积。
