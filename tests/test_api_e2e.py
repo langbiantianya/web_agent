@@ -210,6 +210,63 @@ async def test_agent_crud_and_version_bump(client: httpx.AsyncClient, llm: FakeL
     assert (await client.get("/api/agents/nope")).status_code == 404
 
 
+async def test_workflow_update_with_definition_is_not_500(
+    client: httpx.AsyncClient, llm: FakeLLM
+):
+    """回归：PUT 带 definition 时不能 500。
+
+    这里曾经有个必现的 500：``payload.model_dump(exclude_unset=True)`` 会把嵌套的
+    ``definition`` 递归转成普通 dict，紧接着代码又对这个 dict 调
+    ``.model_dump()`` → AttributeError。整个接口只要带 definition 提交就挂，
+    而老测试只覆盖了 POST 建 Workflow，一直没人发现。
+
+    断言两条：状态码 200；回读的定义里节点是改过的那批（确认真的写进去了，
+    而不是「没报错但也没保存」）。
+    """
+    created = await _make_workflow(client, ["upd_a1", "upd_a2"], llm)
+    code = created["code"]
+
+    r = await client.put(
+        f"/api/workflows/{code}",
+        json={
+            "definition": {
+                "entry": "upd_a1",
+                "nodes": [
+                    {"id": "upd_a1", "agentCode": "upd_a1", "outputKey": "p"},
+                    {"id": "upd_a2", "agentCode": "upd_a2", "outputKey": "f"},
+                ],
+                "edges": [{"from": "upd_a1", "to": "upd_a2"}],
+                "inputTemplate": "{{user_input}}",
+            }
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    assert [n["id"] for n in r.json()["definition"]["nodes"]] == ["upd_a1", "upd_a2"]
+
+    # 再回读一次，确认真的落库了
+    back = await client.get(f"/api/workflows/{code}")
+    assert back.status_code == 200
+    assert back.json()["definition"]["entry"] == "upd_a1"
+
+
+async def test_workflow_update_partial_keeps_other_fields(
+    client: httpx.AsyncClient, llm: FakeLLM
+):
+    """局部更新：只传 enabled 时，name 与 definition 必须原样保留。"""
+    created = await _make_workflow(client, ["part_a1", "part_a2"], llm)
+    code = created["code"]
+    original = created["definition"]
+
+    r = await client.put(f"/api/workflows/{code}", json={"enabled": False})
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["enabled"] is False
+    assert body["name"] == created["name"]
+    assert body["definition"]["nodes"] == original["nodes"]
+
+
 async def test_workflow_rejects_dag_definition(client: httpx.AsyncClient):
     """API 层也要挡一次分叉图：不能只靠服务层校验。
 

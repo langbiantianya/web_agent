@@ -73,8 +73,13 @@ async def update_workflow(code: str, payload: WorkflowUpdate, db: DbSession) -> 
     与 Agent 不同，Workflow 没有 version 概念，但同样会同步刷新缓存。
     """
     fields = payload.model_dump(exclude_unset=True)
-    if "definition" in fields and fields["definition"] is not None:
-        fields["definition"] = fields["definition"].model_dump(
+    if "definition" in fields and payload.definition is not None:
+        # 必须从 ``payload.definition``（模型对象）重新 dump，不能用
+        # ``fields["definition"]``：上面那行 model_dump() 已经把嵌套模型递归转成
+        # 普通 dict 了，再对 dict 调 ``.model_dump()`` 必然 AttributeError → 500。
+        # 这里需要重新 dump 只是为了拿到 by_alias / exclude_none 的效果——
+        # 外层那次 dump 用的都是默认参数，不做这两件事。
+        fields["definition"] = payload.definition.model_dump(
             by_alias=True, exclude_none=True
         )
     if "enabled" in fields and fields["enabled"] is not None:
