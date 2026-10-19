@@ -21,6 +21,7 @@
 | **DAG + 条件边（V3）** | Workflow 不再是一条链：无条件出边**并行分叉**、多条入边**汇聚**；带 `when` 的边按表达式**分支**。环、孤立节点、汇聚形状等**全部在保存时拒绝** |
 | **条件表达式（V3）** | 手写递归下降解析器（**不用 `eval`**，杜绝 RCE），支持 `== != > < >= <=`、`and/or/not`、括号与白名单函数 `len/contains/lower/is_empty` |
 | **人工审批（V3.1）** | 节点可声明 `type: "approval"`：流程跑到它就**挂起等人拍板**，批准则从暂停点继续（前面的节点不重跑、不重花 token），驳回则本次 run 终止 |
+| **工具调用闭环（V3.2）** | Agent 可挂内置工具（`now` / `calc`）：模型要工具 → 服务端执行 → 结果回灌 → 模型继续答。工具**只能来自代码内置注册表**，配置里写的是工具名，未注册的名字**保存时就被拒** |
 | 心跳保活 | SSE 注释行 `: ping`，不占 `seq`、不落库、不污染回放序列 |
 | 统一协议 | 所有模型走 OpenAI 兼容 `/v1/chat/completions`，OpenAI / DeepSeek / Qwen / vLLM 通吃 |
 | 可扩展 | 进程内总线抽象为 `BusBackend` Protocol，V2 已落地 Redis Pub/Sub 实现 |
@@ -250,7 +251,7 @@ location /api/ {
 
 | 标签页 | 能做什么 |
 | --- | --- |
-| **Agent 配置** | 增删改查 Agent：system_prompt / model / base_url / api_key / temperature / max_tokens / 启用开关 / tools 与 extra_params |
+| **Agent 配置** | 增删改查 Agent：system_prompt / model / base_url / api_key / temperature / max_tokens / 启用开关 / **工具勾选**（V3.2，选项来自服务端注册表）与 extra_params |
 | **Workflow 编排** | 增删改查 Workflow。**节点用表单编排**（id、选 Agent、outputKey），**连线显式添加**（from → to → 可选 `when` 条件），实时预览将要提交的 definition JSON |
 | **会话观测** | 按 `user_id` 查会话，看消息历史与进行中的 run（run_id / 状态 / 当前节点 / last_seq） |
 
@@ -396,6 +397,48 @@ curl -s -X POST $BASE/api/runs/$RUN_ID/approval \
 后台管理页（`/admin`）的节点编辑区有「节点类型」下拉，切到「人工审批」就会出现审批提示输入框；
 验证台（`/`）收到 `approval_required` 会亮出审批卡片，可直接批准/驳回。
 
+### Agent 工具调用（V3.2）
+
+Agent 的 `tools` 字段挂的是**内置工具名**：
+
+```json
+{"code": "analyst", "tools": ["calc", "now"], "...": "..."}
+```
+
+**工具名即契约**：`tools` 里写的是名字，schema（模型看到的描述）与执行器（服务端实际
+做的事）都从**同一张注册表**取，所以两者不可能对不上。未注册的名字**保存时就拒**（400），
+配置根本进不了库。
+
+> 为什么不让人直接写 OpenAI 的 function schema？因为那等于**让配置决定执行逻辑**——
+> 工具参数直接来自模型，而模型会被提示词注入影响。本项目已有同样的先例：条件表达式不用
+> `eval`。想加新工具就在 `app/core/tools.py` 的注册表里加一条，不用改配置格式、不用改前端。
+
+内置工具：
+
+| 工具 | 作用 | 参数 |
+| --- | --- | --- |
+| `now` | 当前时间（UTC + 本地） | 无 |
+| `calc` | 算术求值（`+ - * / // % **` 与括号） | `expression` |
+
+`calc` 的求值走 `ast` 解析 + **节点白名单**遍历（`app/core/arith.py`），**不用 `eval`**；
+并有长度、AST 节点数、指数、结果量级四道上限——`2 ** 10000000` 这种表达式不能把 CPU 吃光。
+
+闭环的形状是：**模型要工具 → 服务端执行 → 结果以 `role=tool` 回灌 → 模型继续答**。
+
+| 情况 | 行为 |
+| --- | --- |
+| 工具算错（参数不合法、表达式非法） | **不失败节点**，错误文本回灌给模型，让它有机会自己纠正；`tool_result` 事件里 `ok=false` |
+| 模型一直调同一个必失败的工具 | 轮次上限（`TOOL_MAX_ROUNDS`，默认 5）收口：run 以 `error` 结束，**不重试**（重试大概率同样陷住，白烧 token） |
+| 工具结果太长 | 截断到 `TOOL_RESULT_MAX_CHARS`（默认 4000）再回灌，避免挤爆下一轮 prompt |
+
+```bash
+# 看当前部署有哪些工具可用
+curl -s $BASE/api/tools
+```
+
+后台管理页（`/admin`）的 Agent 编辑区是**工具勾选框**，选项来自 `/api/tools`；验证台（`/`）
+会把工具调用与结果插在节点的输出流里（`⚙ 调用 calc` / `↩ 返回 60`）。
+
 ---
 
 ## 跑通一次完整对话
@@ -462,6 +505,7 @@ curl -N -H "Last-Event-ID: 3" "$BASE/api/runs/$RUN/stream?ticket=$TICKET"  # 等
 | `token` | 文本增量 | 是 |
 | `reasoning` | 思维链增量（DeepSeek / Qwen） | 是 |
 | `tool_call` | 工具调用请求 | 是 |
+| `tool_result` | 工具执行结果（V3.2）：调了哪个工具、成没成、结果摘要 | 是 |
 | `node_end` | 节点结束 | 是 |
 | `error` | 出错 | 是 |
 | `approval_required` | 流程挂起，等人拍板（V3.1） | 是 |
@@ -494,6 +538,7 @@ curl -N -H "Last-Event-ID: 3" "$BASE/api/runs/$RUN/stream?ticket=$TICKET"  # 等
 | --- | --- | --- |
 | GET/POST | `/api/agents` | 列出 / 创建 Agent |
 | GET/PUT/DELETE | `/api/agents/{code}` | 详情 / 更新（version+1）/ 删除 |
+| GET | `/api/tools` | 可用的内置工具目录（V3.2） |
 | GET/POST | `/api/workflows` | 列出 / 创建 Workflow |
 | GET/PUT/DELETE | `/api/workflows/{code}` | 详情 / 更新 / 删除 |
 | GET/POST | `/api/conversations` | 列出 / 创建会话 |
@@ -604,11 +649,13 @@ app/
 ├── main.py                 # FastAPI 工厂 + 生命周期 + 统一异常处理
 ├── api/
 │   ├── deps.py             # get_db / ticket 校验 / 断点解析
-│   └── routes/             # agent / workflow / conversation / run / auth / health
+│   └── routes/             # agent / workflow / conversation / run / auth / health / tool
 ├── core/
 │   ├── bus.py              # BusBackend Protocol + InMemory / Redis Pub-Sub 两种实现
 │   ├── event_log.py        # EventLog Protocol + Db / Redis Stream 两种回放源
 │   ├── expr.py             # 条件表达式解析与求值（手写递归下降，不用 eval，V3）
+│   ├── tools.py            # 内置工具注册表：工具名即契约（now / calc，V3.2）
+│   ├── arith.py            # 算术求值（ast 白名单遍历，不用 eval，V3.2）
 │   ├── lease.py            # RunLease Protocol + Noop / Redis 两种归属租约与取消频道
 │   ├── redis_client.py     # Redis 连接生命周期 + 实例标识 + 键布局（V2）
 │   ├── run_hub.py          # seq 分配 + 事件广播 + 取消信号
@@ -639,4 +686,5 @@ alembic/  tests/  docs/design.md
 - **V2-b**（已完成）：控制流改由 LangGraph `StateGraph` 表达，连线来自 `definition.edges`，为 V3 的 DAG 留好扩展点（事件流不挂 checkpointer，理由见上文）
 - **V3**（已完成）：Workflow 支持 DAG + 条件边
 - **V3.1**（已完成）：人工审批节点（`interrupt()` + checkpointer 暂停点，批准继续、驳回终止）
-- **V4**：Agent 支持 RAG / MCP 工具；可观测性（OpenTelemetry 链路追踪、token 成本统计）
+- **V3.2**（已完成）：Agent 工具调用闭环（内置工具注册表 + 执行 → 回灌 → 继续；工具名即契约，配置期校验）
+- **V4**：MCP 工具（把 V3.2 的工具来源从「代码内置」换成「MCP 服务器」，闭环本身不改）；可观测性（OpenTelemetry 链路追踪、token 成本统计）
