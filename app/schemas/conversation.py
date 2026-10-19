@@ -102,3 +102,44 @@ class CancelOut(BaseModel):
     run_id: int
     status: str
     cancelled: bool
+
+
+class ApprovalOut(ORMBase):
+    """一条待审批项（V3.1）。
+
+    审批人看到的就是这些：哪个节点要批、批什么、什么时候提出的。
+
+    继承 ``ORMBase``（而不是直接 ``BaseModel``）是因为它要直接从 ``run_approval``
+    的 ORM 实例上校验——少一个 ``from_attributes`` 就会在这一步炸掉。
+    """
+
+    id: int
+    run_id: int
+    node_id: str
+    status: str
+    prompt: str = ""
+    comment: str | None = None
+    decided_by: str | None = None
+    requested_at: datetime | None = None
+    decided_at: datetime | None = None
+
+
+class ApprovalDecisionIn(BaseModel):
+    """提交审批决策的请求体。"""
+
+    approved: bool
+    # 驳回时建议写清原因：它会进 run 的 error_msg，也是给下游模型的上下文
+    comment: str = ""
+    # 谁做的决策（user_id / 姓名），只做审计用
+    decidedBy: str = ""
+
+
+class ApprovalDecisionOut(BaseModel):
+    """提交决策后的回执。"""
+
+    run_id: int
+    approval_id: int
+    approved: bool
+    status: str
+    comment: str | None = None
+    decided_by: str | None = None

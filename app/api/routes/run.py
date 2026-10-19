@@ -11,16 +11,25 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.api.deps import DbSession, ResumeFrom
 from app.config.settings import settings
-from app.core.errors import GoneError, NotFoundError
+from app.core.errors import ConflictError, GoneError, NotFoundError
 from app.core.orchestrator import get_orchestrator
 from app.core.run_hub import RunEventDTO, get_hub
 from app.core.sse_writer import get_sse_stream
 from app.core.ticket import verify_ticket
 from app.models.enums import RunStatus
 from app.repo.message_repo import message_repo
+from app.repo.run_approval_repo import run_approval_repo
 from app.repo.run_event_repo import run_event_repo
 from app.repo.run_repo import run_repo
-from app.schemas.conversation import CancelOut, MessageOut, RunDetailOut, RunStepOut
+from app.schemas.conversation import (
+    ApprovalDecisionIn,
+    ApprovalDecisionOut,
+    ApprovalOut,
+    CancelOut,
+    MessageOut,
+    RunDetailOut,
+    RunStepOut,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +94,76 @@ async def cancel_run(run_id: int, db: DbSession) -> CancelOut:
         return CancelOut(run_id=run_id, status=RunStatus.CANCELLED.value, cancelled=True)
 
     return CancelOut(run_id=run_id, status="cancelling", cancelled=True)
+
+
+@router.get("/{run_id}/approval", response_model=ApprovalOut | None)
+async def get_pending_approval(run_id: int, db: DbSession) -> ApprovalOut | None:
+    """当前待审批项；没有就返回 null（HTTP 200 + body null）。
+
+    页面刷新后靠它重建审批卡片——SSE 断了不代表审批消失了，run 还挂着等决策。
+    """
+    run = await run_repo.get_by_id(db, run_id)
+    if run is None:
+        raise NotFoundError(f"run 不存在：{run_id}")
+
+    approval = await run_approval_repo.get_pending(db, run_id)
+    if approval is None:
+        return None
+    return ApprovalOut.model_validate(approval)
+
+
+@router.post("/{run_id}/approval", response_model=ApprovalDecisionOut)
+async def submit_approval(
+    run_id: int, body: ApprovalDecisionIn, db: DbSession
+) -> ApprovalDecisionOut:
+    """提交审批决策：批准则继续跑，驳回则终止本次 run。
+
+    决策落库后**立刻在后台恢复执行**，接口不等后续节点跑完——后面可能还有好几个
+    节点要跑好几分钟。
+
+    Args:
+        run_id: 要决策的 run。
+        body: 决策内容（批准与否、意见、决策人）。
+        db: 请求级数据库会话。
+
+    Raises:
+        NotFoundError: run 不存在。
+        ConflictError: run 不在等待审批状态，或该审批已被决策过。
+    """
+    run = await run_repo.get_by_id(db, run_id)
+    if run is None:
+        raise NotFoundError(f"run 不存在：{run_id}")
+
+    if run.status != RunStatus.WAITING.value:
+        raise ConflictError(f"run 当前状态是 {run.status}，不在等待审批")
+
+    approval = await run_approval_repo.get_pending(db, run_id)
+    if approval is None:
+        raise ConflictError("该 run 没有待审批项（可能已被决策过）")
+
+    decided = await run_approval_repo.decide(
+        db, approval.id, body.approved, body.comment, body.decidedBy
+    )
+    if decided is None or decided.status == "pending":
+        # 并发提交：另一次请求已经决策过了
+        raise ConflictError("该审批已被决策过")
+
+    # 后台恢复执行：批准 → 接着往下跑；驳回 → 图节点抛 RunRejected，run 终止
+    decision = {
+        "approved": body.approved,
+        "comment": body.comment,
+        "decidedBy": body.decidedBy,
+    }
+    get_orchestrator().spawn_resume(run_id, decision)
+
+    return ApprovalDecisionOut(
+        run_id=run_id,
+        approval_id=approval.id,
+        approved=body.approved,
+        status=decided.status,
+        comment=decided.comment,
+        decided_by=decided.decided_by,
+    )
 
 
 @router.get("/{run_id}/stream")
