@@ -3,6 +3,10 @@
 *.db
 *.sqlite3
 web_agent.db
+# SQLite 的 WAL 副文件：主库被 *.db 忽略了，副文件得单独列
+*.db-wal
+*.db-shm
+checkpoints.db*
 
 # ---- Python ----
 __pycache__/

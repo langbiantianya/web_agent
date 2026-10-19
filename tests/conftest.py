@@ -21,11 +21,19 @@ sys.path.insert(0, str(ROOT))
 # 会互相覆盖同一个文件（还会在 import 期 unlink 掉对方正在用的库，Windows 上直接
 # 抛 PermissionError），表现为毫无关联的用例随机失败。按进程隔离即可各跑各的。
 _TMP_DB = Path(tempfile.gettempdir()) / f"web_agent_test_{os.getpid()}.db"
-if _TMP_DB.exists():
-    try:
-        _TMP_DB.unlink()
-    except OSError:  # pragma: no cover - 上一次进程残留且被占用
-        pass
+# SQLite 开了 WAL（见 app/config/db.py），会带出 -wal / -shm 两个副文件。
+# 只删主库、留着副文件，下一个进程打开时会把它们当成「已有事务的日志」——
+# 症状是莫名其妙的 "database is locked" 或读到不存在的行。一起清掉。
+for _stale in (
+    _TMP_DB,
+    _TMP_DB.with_name(_TMP_DB.name + "-wal"),
+    _TMP_DB.with_name(_TMP_DB.name + "-shm"),
+):
+    if _stale.exists():
+        try:
+            _stale.unlink()
+        except OSError:  # pragma: no cover - 上一次进程残留且被占用
+            pass
 
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB.as_posix()}"
 os.environ["SECRET_KEY"] = "test-secret-key-0123456789"

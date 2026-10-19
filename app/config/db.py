@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 
 from sqlalchemy import event
@@ -14,6 +15,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from app.config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _engine_kwargs() -> dict:
@@ -72,6 +75,83 @@ def _pin_session_timezone(dbapi_connection, connection_record) -> None:
         return
     with dbapi_connection.cursor() as cur:
         cur.execute("SET time_zone = '+00:00'")
+
+
+# WAL 只在**第一条连接**上切一次：``PRAGMA journal_mode=WAL`` 需要库的排他锁，
+# 而 SQLite 是 NullPool（每个会话一条新连接），每条连接都执行一次的话，
+# 撞上别的连接持有的读事务就会一直等——实测会把测试套件偶发挂住。
+# 切过一次之后模式是**持久**的（记在库文件头里），后续连接不用再切。
+_sqlite_wal_ready = False
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _configure_sqlite(dbapi_connection, connection_record) -> None:
+    """给 SQLite 连接配上并发下能用的参数。
+
+    ## 三个问题，三条对策
+
+    SQLite 的默认配置在**并发写**下必然出错，而且错得很直接。
+
+    **问题一：默认日志模式是 ``delete``（回滚日志）。**
+    写事务期间对整个库加**排他锁**，读者也被挡住。
+
+    对策：``journal_mode=WAL``。写者与读者不再互斥。这是最关键的一条，
+    **每进程只切一次**（见上面的说明）——切它要拿库的排他锁，每条连接都切会
+    撞上别的连接持有的读事务，把测试套件偶发挂住。
+
+    **问题二：默认 ``busy_timeout`` 只有 5 秒。**
+    撞上别的写者时，SQLite 最多等 5 秒就抛 ``database is locked``。
+
+    对策：``busy_timeout=15000``，撞上时排队等而不是立刻失败。连接级参数。
+
+    **问题三：SQLite 只有一个写者，并发写必然排队。**
+    这条**没有配置层面的解**——见下面的「已知上限」。
+
+    ## 已知上限：SQLite 的并发天花板
+
+    实测（本机 4 核，见 ``docs/performance.md``）：并发 **32** 个请求同时建 run
+    没问题；**64** 个开始出现 ``database is locked``。
+
+    还有一个更隐蔽的坑：WAL 模式下，一个「先读后写」的事务（deferred BEGIN）
+    先拿到读快照，之后要写时若别的连接已提交过，SQLite **立刻**返回
+    ``database is locked``，而且**不走 busy handler**——等多久都没用。
+    本项目正好踩中：``POST /api/conversations/{id}/messages`` 在同一个事务里
+    先「锁会话行 + 查进行中的 run」（读），再「建 run + 落用户消息」（写）。
+
+    试过用 ``BEGIN IMMEDIATE`` 解决（SQLAlchemy 官方并发写配方），**放弃**：
+    它让**每个**事务一上来就握写锁，于是任何「跨 await 持有事务」的地方都会
+    把别人堵死——本项目的 SSE 流整个生命周期都占着一个请求级事务，一开流
+    别的写入就全挂。**把报错变成死锁更糟**，所以保持 deferred，只靠 WAL +
+    busy_timeout 缓解。
+
+    结论：**SQLite 只适合开发与单机小流量**。生产用 MySQL（行级锁 + MVCC），
+    本节这套 pragma 对 MySQL 完全不生效（见 ``_engine_kwargs``）。
+
+    ## 边界
+
+    - **只对 SQLite 生效**。
+    - **WAL 要求文件在本地文件系统上**：网络盘不支持。设置失败时静默降级回默认
+      模式（并在日志里留一条），不能因此让服务起不来。
+    """
+    global _sqlite_wal_ready
+    if engine.dialect.name != "sqlite":
+        return
+    cur = dbapi_connection.cursor()
+    try:
+        # 连接级参数：不涉及任何锁，可以每条连接都设
+        cur.execute("PRAGMA busy_timeout=15000")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        if not _sqlite_wal_ready:
+            # 先读当前模式：已经是 WAL 就不用再切（切它要拿排他锁）
+            cur.execute("PRAGMA journal_mode")
+            row = cur.fetchone()
+            if not row or str(row[0]).lower() != "wal":
+                cur.execute("PRAGMA journal_mode=WAL")
+            _sqlite_wal_ready = True
+    except Exception:  # noqa: BLE001 - pragma 失败不该让服务起不来
+        logger.warning("SQLite pragma 配置失败，回退默认模式", exc_info=True)
+    finally:
+        cur.close()
 
 
 SessionLocal = async_sessionmaker(
