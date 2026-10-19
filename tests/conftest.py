@@ -34,6 +34,11 @@ os.environ["DEBUG"] = "false"
 os.environ["EVENT_BATCH_SIZE"] = "5"
 os.environ["EVENT_FLUSH_INTERVAL"] = "0.02"
 os.environ["NODE_RETRY_BASE_DELAY"] = "0.01"
+# 审批暂停点（V3.1）也按进程隔离：checkpointer 的 SQLite 文件留在项目根目录会
+# 变成跨次运行共享的状态，审批用例之间会互相看到对方的暂停点。
+os.environ["CHECKPOINT_SQLITE_PATH"] = str(
+    Path(tempfile.gettempdir()) / f"web_agent_ckpt_{os.getpid()}.db"
+)
 
 # **必须**强制关掉 Redis，而不只是"希望 .env 里没开"。
 #
