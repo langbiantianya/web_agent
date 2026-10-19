@@ -203,6 +203,22 @@ async def stream_run(
         run_id, resume_from, get_hub().is_active(run_id),
     )
 
+    # **在返回流之前就把事务放掉**。
+    #
+    # FastAPI 的 yield 依赖（这里是 get_db）是在**响应发完之后**才关闭的，
+    # 而 SSE 响应会一直开着（几分钟甚至更久）。于是这个请求的 DB 事务会跟着
+    # 整条流一直挂着：一条连接被长期占着，一个读快照长期不释放。
+    #
+    # 后果有两个，都不好看：
+    # - SQLite 的 WAL 只能在**没有活跃读快照**时做 checkpoint。流一直开着，
+    #   WAL 文件就一直涨；
+    # - 事务一旦被别处改成「一上来就拿写锁」的模式（SQLite 的
+    #   BEGIN IMMEDIATE 配方就是），一条开着的流就等于一把长期占着写锁的钥匙。
+    #
+    # 这里要的数据（run 状态、首 seq）上面已经取完了，回滚一个只读事务不丢
+    # 任何东西。回滚之后连接立刻归还，WAL 也能正常 checkpoint。
+    await db.rollback()
+
     async def event_generator():
         """把领域事件转成 SSE 帧逐条吐出（``SSEStream`` 的薄适配层）。
 
