@@ -603,7 +603,7 @@ location /api/ {
 pytest -q
 ```
 
-**129 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
+**171 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
 Redis 连不上时这 19 个会自动 skip，其余照跑），6 个是 Redis 降级测试
 （`tests/test_redis_degradation.py`，用假件模拟抖动，不需要真实 Redis），
 15 个是图构建与执行测试（`tests/test_run_graph.py`，含「执行顺序按 edges 而非 nodes
@@ -616,6 +616,8 @@ Redis 连不上时这 19 个会自动 skip，其余照跑），6 个是 Redis �
 - **跨实例取消**：B 实例点取消，A 实例上的生成收到信号并停止
 - **归属租约**：启动恢复只回收无主的 run，不误杀其它实例正在跑的
 - **Redis 抖动降级**：租约拿不到、Stream 写不进去、广播发不出去时，**run 不能夭折**
+- **并发下的数据库**：SSE 流不占着 DB 事务、32 个并发「先读后写」的事务不撞
+  `database is locked`（`tests/test_db_concurrency.py`）
 
 端到端用例会起一个**真实的 OpenAI 兼容 HTTP 服务**当假模型（`tests/fake_llm.py`），
 走完整网络栈验证 SSE 吐字、取消、重试、断线续传。另有双实例端到端（两个独立
@@ -635,8 +637,49 @@ python scripts/check_docstrings.py            # 全量
 python scripts/check_docstrings.py app/core   # 指定目录/文件/模块路径
 ```
 
-当前状态：**539 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
+当前状态：**690 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
 默认扫描范围含根目录的 `run.py`，新增根目录脚本记得加进 `DEFAULT_TARGETS`。
+
+---
+
+## 容量与性能
+
+完整的实测报告见 [`docs/performance.md`](docs/performance.md)，压测脚本是
+`scripts/bench.py`。
+
+**4c4g 单实例能带多少并发，取决于三件事，本服务只占其中最小的那一项：**
+
+| 口径 | 4c4g | 依据 |
+| --- | --- | --- |
+| CPU | 1800–4300 token/s ≈ **35–86 人**（每用户 50 token/s） | 实测每 token 耗 0.7–1.7 ms CPU，4 核留 25% 给系统 |
+| 内存 | 约 **9700 条**并发流 | 实测基线 155 MB + 每条流 0.3 MB |
+| 数据库 | SQLite 约 **64 条**；MySQL 不限 | 实测 64 并发 0 失败，128 并发 28–30 个 500 |
+| 模型配额 | 取决于供应商 | 一条流至少要一个模型请求——**这通常是真正的天花板** |
+
+**规划建议**：4c4g + MySQL，按 **50 个并发生成用户**起步、**80 个**做预案；
+再往上加实例（本服务无状态，V2 的 Redis 架构支持多实例，扩容是线性的）。
+**用 SQLite 的话并发上限被钉在 64**——生产请用 MySQL。
+
+**服务端不是 CPU 密集型**：64 条并发流也只用掉不到 1 核，它绝大部分时间在等模型。
+
+> 压测客户端、假模型、服务端同机抢 4 核，实测的服务端 CPU 占用是**下界**；
+> MySQL 路径**未实测**（本机没有凭据）。完整的偏差清单见 `docs/performance.md` §8。
+
+```powershell
+# 压测（会建独立的临时库，不碰开发库）
+python scripts/bench.py --label saturated --chunk-delay 0
+python scripts/bench.py --label realistic --chunk-delay 0.02
+```
+
+### 压测带出来的两个真问题（已修）
+
+1. **SQLite 并发写直接 500**（`database is locked`）。修法是 WAL + busy_timeout
+   （`app/config/db.py`）。**试过 `BEGIN IMMEDIATE` 并放弃**——它把「报错」变成
+   了「死锁」。SQLite 只适合开发。
+2. **SSE 流一直占着 DB 连接**。FastAPI 的 yield 依赖在响应发完之后才关闭，
+   而 SSE 响应一直开着——每条开着的流都占住连接池里的一个连接。MySQL 默认池
+   `pool_size=10 + max_overflow=20`，也就是**整个服务最多 30 条并发流**。
+   修法：SSE 路由取完数据后**在返回流之前就 `await db.rollback()`**。
 
 ---
 
@@ -661,7 +704,7 @@ app/
 │   ├── run_hub.py          # seq 分配 + 事件广播 + 取消信号
 │   ├── event_writer.py     # run_event 批量落库（MySQL 长期归档）
 │   ├── sse_writer.py       # 回放 + 实时合并去重（续传核心）
-│   ├── agent_runner.py     # 单 Agent 执行（AsyncOpenAI 流式）
+│   ├── agent_runner.py     # 单 Agent 执行（AsyncOpenAI 流式 + 工具闭环 V3.2）
 │   ├── run_graph.py        # LangGraph 图构建 + NodeRunner + 审批节点（V2-b / V3.1）
 │   ├── orchestrator.py     # run 生命周期 + 节点调度 + 重试 + 审批挂起/恢复（V3.1）
 │   ├── checkpoint.py       # LangGraph checkpointer：审批暂停点（Redis / SQLite 双实现，V3.1）
@@ -673,8 +716,9 @@ app/
 web/index.html           # 功能验证台（单文件，无依赖）
 web/admin.html           # 后台管理（单文件，无依赖，访问 /admin）
 scripts/seed.py          # 演示数据
+scripts/bench.py         # 并发压测：起真实 uvicorn + 假模型，量 CPU/内存/延迟
 scripts/check_docstrings.py  # docstring 覆盖检查
-alembic/  tests/  docs/design.md
+alembic/  tests/  docs/design.md  docs/performance.md
 ```
 
 ---
