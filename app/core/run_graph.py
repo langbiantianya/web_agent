@@ -4,17 +4,27 @@ V1 的编排是一个手写循环：``for node in definition.linear_order()``。
 「线性流水线」约束下是对的，但一旦要做条件路由、DAG、人工审批，就得重写这个循环
 ——而这类图编排恰恰是 LangGraph 的强项。
 
-## 边界：LangGraph 只做控制流，不做持久化
+## 边界：LangGraph 只做控制流，不做「事件的持久化」
 
-**刻意不挂 checkpointer。** 本服务已经有自己的、经过验证的事件日志：
+**事件流仍然不挂 checkpointer。** 本服务已经有自己的、经过验证的事件日志：
 
 - Redis Stream（V2）——回放源，emit 时同步写入；
 - MySQL ``run_event``——长期归档。
 
-若再挂 LangGraph 的 checkpointer，就会出现**两个真相来源**：节点状态存一份、
-事件序列存一份，两者可能不一致，而且续传要同时读两个地方。LangGraph 换来的
-是控制流表达力，不是持久化需求，所以这里只要控制流。（人工审批需要
-checkpointer，那是 V4 的事，届时它只负责「暂停在哪」，不碰对外事件。）
+若再让 checkpointer 存事件，就会出现**两个真相来源**：节点状态存一份、事件序列存
+一份，两者可能不一致，而且续传要同时读两个地方。LangGraph 换来的是控制流表达力，
+不是持久化需求，所以事件这边只要控制流。
+
+**但 V3.1 的人工审批需要知道「暂停在哪」**——这一条 checkpointer 恰好擅长。于是职责
+被清楚地切开：
+
+| 存什么 | 存在哪 | 回答什么问题 |
+| --- | --- | --- |
+| 对外事件流 | Redis Stream + MySQL ``run_event`` | 发生过什么 |
+| 图状态（暂停点） | LangGraph checkpointer | 停在哪、恢复时接着怎么跑 |
+
+两者不重叠。审批恢复时用的是 checkpointer 里的图状态，客户端看到的进度仍然是
+事件流里的事件——**事件流始终是客户端的唯一真相**。
 
 ## 为什么仍然保留节点内的重试与取消检查
 
@@ -43,6 +53,7 @@ import logging
 from typing import Annotated, Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 
 from app.core.errors import RunCancelled
 from app.core.expr import evaluate
@@ -130,6 +141,26 @@ class NodeOps(Protocol):
     ) -> None:
         """把节点产出落成 assistant 消息，供后续节点当上下文。"""
         ...
+
+    async def finish_approval_step(
+        self, run_id: int, node_id: str, approved: bool, comment: str
+    ) -> None:
+        """给审批节点收尾：写 run_step 的终态。"""
+        ...
+
+
+class RunRejected(Exception):
+    """审批被驳回——本次 run 就此终止。
+
+    单独一个异常类型而不是复用 ``RunCancelled``：两者在 run 表上的终态不同
+    （``rejected`` vs ``cancelled``），驳回是**业务结论**，取消是**用户动作**，
+    混在一起会让「这次到底发生了什么」查不清。
+    """
+
+    def __init__(self, comment: str) -> None:
+        """记下驳回意见，它会成为 run 的 error_msg。"""
+        super().__init__(comment or "审批被驳回")
+        self.comment = comment
 
 
 class NodeRunner:
@@ -226,18 +257,89 @@ class NodeRunner:
             "usage": dict(result.usage),
         }
 
+    async def execute_approval(self, node: WorkflowNode, state: RunState) -> dict:
+        """执行一个**人工审批**节点：挂起图，等人给决策，恢复后继续。
+
+        ## 为什么用 LangGraph 的 ``interrupt()``
+
+        它把「图停在哪」交给 checkpointer 存，状态是**精确**的：恢复时图从暂停点
+        继续，不重走前面的节点、不重跑已经花掉的 LLM 调用。对比「把状态存进
+        MySQL 再从头重放」的方案，后者的条件边求值时机会与原始执行不同（边角
+        情况会出错），而这里的语义是原样延续。
+
+        ## 恢复时这个函数会被**重新执行一遍**
+
+        LangGraph 恢复时从头重跑节点，``interrupt()`` 第二次调用是**返回**决策值
+        而不是抛异常。所以：
+
+        - ``interrupt()`` 之前的代码会跑两次 → 那里**不能有任何副作用**
+          （事件、落库都不行）；
+        - ``interrupt()`` 之后的代码只在恢复时跑一次 → 事件与落库都放这里。
+
+        ``approval_required`` 事件因此由编排器在收到 ``__interrupt__`` 时发，而不是
+        在这里——在这里发会被执行两遍。
+
+        Args:
+            node: 审批节点（``type=approval``）。
+            state: 图状态；审批节点不读它。
+
+        Returns:
+            状态增量：审批意见进入 ``upstream``，并作为上下文里的一条备注。
+
+        Raises:
+            RunRejected: 审批被驳回——本次 run 就此终止。
+        """
+        decision = interrupt({"node": node.id, "prompt": node.prompt})
+
+        approved = bool((decision or {}).get("approved"))
+        comment = str((decision or {}).get("comment") or "")
+        decided_by = str((decision or {}).get("decidedBy") or "")
+
+        await self.ops.finish_approval_step(
+            self.run_id, node.id, approved, comment or ("已通过" if approved else "已驳回")
+        )
+
+        if not approved:
+            await self.hub.emit(
+                self.run_id,
+                EventType.REJECTED,
+                {"node": node.id, "comment": comment, "decidedBy": decided_by},
+            )
+            raise RunRejected(comment)
+
+        text = comment or "已通过"
+        await self.hub.emit(
+            self.run_id,
+            EventType.APPROVED,
+            {"node": node.id, "comment": text, "decidedBy": decided_by},
+        )
+        await self.ops.persist_message(
+            self.run_id, self.conversation_id, node.id, f"【审批意见】{text}"
+        )
+
+        output_key = node.outputKey or node.id
+        return {
+            "context": [{"role": "assistant", "content": f"【审批意见】{text}"}],
+            "upstream": {output_key: text},
+            "usage": {},
+        }
+
     def make_node_fn(self, node: WorkflowNode):
         """为一个 workflow 节点生成 LangGraph 节点函数（闭包绑住 ``node``）。"""
 
         async def _run(state: RunState) -> dict:
-            """LangGraph 调用的入口，转交给 :meth:`execute_node`。"""
+            """LangGraph 调用的入口，按节点类型分派。"""
+            if node.is_approval:
+                return await self.execute_approval(node, state)
             return await self.execute_node(node, state)
 
         _run.__name__ = f"node_{node.id}"
         return _run
 
 
-def build_run_graph(definition: WorkflowDefinition, runner: NodeRunner):
+def build_run_graph(
+    definition: WorkflowDefinition, runner: NodeRunner, checkpointer: Any | None = None
+):
     """按 definition 连线，编译出本次 run 的执行图（V3：支持 DAG + 条件边）。
 
     两种连线方式，按节点分开处理：
@@ -256,6 +358,8 @@ def build_run_graph(definition: WorkflowDefinition, runner: NodeRunner):
     Args:
         definition: 已通过配置期校验的 workflow 定义。
         runner: 本次 run 的节点执行器。
+        checkpointer: LangGraph 的状态存档（V3.1 人工审批用）。**只存图状态，
+            不存对外事件**——事件仍然只由 run_event + Redis Stream 负责。
 
     Returns:
         编译好的 LangGraph，可 ``await graph.ainvoke(state, config)``。
@@ -289,7 +393,7 @@ def build_run_graph(definition: WorkflowDefinition, runner: NodeRunner):
             for target in edges:
                 builder.add_edge(node_id, target.to)
 
-    compiled = builder.compile()
+    compiled = builder.compile(checkpointer=checkpointer)
     logger.info(
         "run 图已构建：entry=%s，%s 个节点，%s 条边（其中条件边 %s 条），拓扑序 %s",
         entry,

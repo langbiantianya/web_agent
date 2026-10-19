@@ -32,10 +32,18 @@ class RunRepo:
     async def get_active_by_conversation(
         self, db: AsyncSession, conversation_id: int
     ) -> Run | None:
-        """该会话是否已有 pending/running 的 run（用于 409 判定）。"""
+        """该会话是否已有 pending/running/waiting 的 run（用于 409 判定）。
+
+        ``waiting``（V3.1 等待人工审批）也算「进行中」：审批没结束之前，这个
+        会话不该再发新消息——否则同一个会话会有两条并行的 run，消息上下文会串。
+        """
         stmt = sa.select(Run).where(
             Run.conversation_id == conversation_id,
-            Run.status.in_([RunStatus.PENDING.value, RunStatus.RUNNING.value]),
+            Run.status.in_([
+                RunStatus.PENDING.value,
+                RunStatus.RUNNING.value,
+                RunStatus.WAITING.value,
+            ]),
         )
         return await db.scalar(stmt.limit(1))
 
@@ -75,6 +83,26 @@ class RunRepo:
                 last_seq=last_seq,
                 error_msg=error_msg,
                 finished_at=utcnow(),
+            )
+        )
+        await db.commit()
+
+    async def pause(
+        self, db: AsyncSession, run_id: int, last_seq: int, node_id: str
+    ) -> None:
+        """把 run 置为 waiting（V3.1：暂停在审批节点上等人决策）。
+
+        **不是终态**：run 还会被恢复继续跑，所以 ``finished_at`` 保持为空、
+        ``error_msg`` 不写。``last_seq`` 必须写准——恢复执行时新实例要靠它把
+        seq 计数器接上，写错了会与 ``run_event`` 的 ``uk_run_seq`` 撞车。
+        """
+        await db.execute(
+            sa.update(Run)
+            .where(Run.id == run_id)
+            .values(
+                status=RunStatus.WAITING.value,
+                last_seq=last_seq,
+                current_node=node_id,
             )
         )
         await db.commit()

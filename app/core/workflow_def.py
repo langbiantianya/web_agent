@@ -14,11 +14,15 @@ V3 起支持 **DAG + 条件边**：
 2. 从 entry 走不到的孤立节点（死配置，且会让图看起来比实际复杂）；
 3. **入边里混了条件边的汇聚节点**——LangGraph 会等齐所有入边才触发汇聚节点，
    某个上游被条件跳过就会永远等不到。
+
+V3.1 起节点还有两种类型（见 :class:`NodeType`）：``agent``（默认，调模型）与
+``approval``（人工审批，不调模型等人决策）。
 """
 
 from __future__ import annotations
 
 import re
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -28,12 +32,75 @@ from app.core import expr
 _VAR_RE = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 
+class NodeType(StrEnum):
+    """节点类型（V3.1 起有两种）。
+
+    - ``AGENT``：调一个 Agent 产出文本。**默认值**，老 definition 不用改。
+    - ``APPROVAL``：人工审批节点。不调模型，而是等人给决策；决策意见作为它的
+      产出进入 ``upstream``，下游节点照常读。
+    """
+
+    AGENT = "agent"
+    APPROVAL = "approval"
+
+
 class WorkflowNode(BaseModel):
+    """一个工作流节点。
+
+    ``type`` 决定它到底是「调模型的节点」还是「等人审批的节点」。默认是
+    ``agent``，所以 V1/V2/V3 的 definition 一行都不用改。
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(min_length=1, max_length=64)
-    agentCode: str = Field(min_length=1, max_length=64)
+    type: str = Field(default=NodeType.AGENT.value, max_length=16)
+    agentCode: str = Field(default="", max_length=64)
     outputKey: str = Field(default="", max_length=64)
+    # 审批节点上给审批人看的话；只有 type=approval 时才有意义
+    prompt: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def _validate_node_shape(self) -> WorkflowNode:
+        """按类型校验字段组合。
+
+        - ``agent`` 节点必须有 ``agentCode``——没有它就没法调模型；
+        - ``approval`` 节点必须有 ``prompt``（审批人要看什么？）且**不能**有
+          ``agentCode``：两套语义混在一个节点上，出问题时说不清是哪边生效。
+
+        Raises:
+            ValueError: 字段组合不合法。由 pydantic 包装为 ValidationError 上抛。
+        """
+        if self.type not in {t.value for t in NodeType}:
+            raise ValueError(
+                f"未知的节点类型 {self.type}；可用："
+                f"{'、'.join(t.value for t in NodeType)}"
+            )
+        if self.type == NodeType.AGENT.value:
+            if not self.agentCode:
+                raise ValueError(f"节点 {self.id} 是 agent 类型，必须指定 agentCode")
+            return self
+        if not self.prompt:
+            raise ValueError(f"节点 {self.id} 是 approval 类型，必须写 prompt")
+        if self.agentCode:
+            raise ValueError(
+                f"节点 {self.id} 是 approval 类型，不能同时指定 agentCode"
+            )
+        return self
+
+    @property
+    def is_approval(self) -> bool:
+        """是否人工审批节点。"""
+        return self.type == NodeType.APPROVAL.value
+
+    @property
+    def key(self) -> str:
+        """该节点产出的键——``upstream`` 里用它取值。
+
+        没写 ``outputKey`` 时退回节点 id，与运行期 :attr:`WorkflowNode.output_key`
+        的取法保持一致。
+        """
+        return self.outputKey or self.id
 
 
 class WorkflowEdge(BaseModel):

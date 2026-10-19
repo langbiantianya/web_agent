@@ -14,20 +14,32 @@
 
 关键点：生成完全跑在 ``asyncio.create_task`` 里，与发起它的 HTTP 请求解耦，
 请求返回后、甚至客户端断开后，生成仍在后台继续（设计文档 §3.3）。
+
+**V3.1 变化**：支持人工审批。审批节点用 LangGraph 的 ``interrupt()`` 把图挂起，
+图状态存进 checkpointer（见 :mod:`app.core.checkpoint`），run 置为 ``waiting``；
+人来决策后由 :meth:`Orchestrator.resume` 用 ``Command(resume=...)`` 接着跑。
+事件流仍是客户端的唯一真相——checkpointer 只管「暂停在哪」。
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 import sqlalchemy as sa
+from langgraph.types import Command
 
 from app.config.db import SessionLocal
 from app.config.settings import settings
 from app.core.agent_runner import AgentResult, AgentRunner, _client_factory
+from app.core.checkpoint import (
+    checkpoint_config,
+    delete_thread,
+    get_checkpointer,
+)
 from app.core.errors import RunCancelled
-from app.core.run_graph import NodeRunner, build_run_graph, recursion_limit
+from app.core.run_graph import NodeRunner, RunRejected, build_run_graph, recursion_limit
 from app.core.run_hub import RunHub, get_hub
 from app.core.workflow_def import WorkflowDefinition, WorkflowNode
 from app.models.enums import (
@@ -41,10 +53,31 @@ from app.models.message import Message
 from app.repo.agent_repo import agent_repo
 from app.repo.conversation_repo import conversation_repo
 from app.repo.message_repo import message_repo
+from app.repo.run_approval_repo import run_approval_repo
 from app.repo.run_repo import run_repo
 from app.repo.workflow_repo import workflow_repo
 
 logger = logging.getLogger(__name__)
+
+
+def extract_interrupt(state: dict) -> dict | None:
+    """从 ``ainvoke`` 的返回状态里取出挂起信息。
+
+    LangGraph 把挂起放在 ``state["__interrupt__"]``：一个 ``(Interrupt, ...)``
+    元组，``Interrupt.value`` 就是传给 ``interrupt()`` 的那个 payload。
+
+    刻意用「取不到就返回 None」而不是抛错——没有挂起是**正常**情况（普通流程
+    走完全程），只有形状不对才说明 LangGraph 改了协议，那属于要立刻发现的错误。
+    """
+    raw = state.get("__interrupt__")
+    if not raw:
+        return None
+    first = raw[0] if isinstance(raw, (tuple, list)) else raw
+    value = getattr(first, "value", None)
+    if isinstance(value, dict):
+        return value
+    logger.warning("无法解析的 __interrupt__ 形状：%r", raw)
+    return None
 
 
 class Orchestrator:
@@ -73,6 +106,27 @@ class Orchestrator:
             用 ``pop(..., None)`` 而非 ``del``：run 可能在任务结束前就被 cancel
             接口或 shutdown 清掉了表项。
             """
+            self._tasks.pop(run_id, None)
+
+        task.add_done_callback(_cleanup)
+        return task
+
+    def spawn_resume(self, run_id: int, decision: dict) -> asyncio.Task:
+        """把「审批之后接着跑」扔进后台执行并立即返回。
+
+        与 :meth:`spawn` 同一个套路：审批接口不能等整条 run 跑完才返回——批准之后
+        后面可能还有好几个节点要跑好几分钟，HTTP 请求挂在那儿既不现实也不安全。
+
+        任务名加 ``-resume`` 后缀：排障时一眼能看出这是审批恢复的执行，不是首次
+        执行。
+        """
+        task = asyncio.create_task(
+            self.resume(run_id, decision), name=f"run-{run_id}-resume"
+        )
+        self._tasks[run_id] = task
+
+        def _cleanup(_t: asyncio.Task) -> None:
+            """任务结束时的回调：从任务表摘掉自己。"""
             self._tasks.pop(run_id, None)
 
         task.add_done_callback(_cleanup)
@@ -168,15 +222,29 @@ class Orchestrator:
                 hub=self.hub,
                 ops=self,
             )
-            graph = build_run_graph(definition, runner)
+            graph = build_run_graph(
+                definition, runner, checkpointer=get_checkpointer()
+            )
+            # 首次执行前清掉这个 run 的历史 checkpoint：同一个 thread_id 上如果留着
+            # 上一次的通道值，LangGraph 会把它们与本次输入**合并**（context 会被
+            # 追加两遍）。恢复执行走的是 :meth:`resume`，那里绝不删——那正是要
+            # 继续用的状态。
+            await delete_thread(run_id)
             final_state = await graph.ainvoke(
                 {
                     "context": context,
                     "upstream": {},
                     "usage": {"prompt_tokens": 0, "completion_tokens": 0},
                 },
-                {"recursion_limit": recursion_limit(definition)},
+                checkpoint_config(run_id, recursion_limit(definition)),
             )
+
+            # 走到审批节点被挂起了：把 run 置为 waiting，等人来决策。
+            # 注意这里**不** emit done——run 还没结束，流要继续开着。
+            paused = extract_interrupt(final_state)
+            if paused is not None:
+                await self._pause(run_id, paused)
+                return
 
             last_seq = (
                 await self.hub.emit(
@@ -186,6 +254,23 @@ class Orchestrator:
                 )
             ).seq
             await self._finish(run_id, RunStatus.DONE, last_seq)
+
+        except RunRejected as exc:
+            # 审批被驳回：run 就此终止，驳回意见进 error_msg。
+            last_seq = (
+                await self.hub.emit(
+                    run_id,
+                    EventType.DONE,
+                    {
+                        "status": RunStatus.REJECTED.value,
+                        "message": exc.comment or "审批被驳回",
+                    },
+                )
+            ).seq
+            await self._finish(
+                run_id, RunStatus.REJECTED, last_seq, exc.comment or "审批被驳回"
+            )
+            logger.info("run %s 因审批驳回而终止", run_id)
 
         except RunCancelled as exc:
             last_seq = (
@@ -220,6 +305,119 @@ class Orchestrator:
             except Exception:  # pragma: no cover
                 logger.exception("run %s 失败后收尾也失败了", run_id)
 
+    # ------------------------------------------------------------- 审批（V3.1）
+
+    async def _pause(self, run_id: int, payload: dict) -> None:
+        """把一次 run 停在审批节点上，等人给决策。
+
+        做的事按顺序是：
+
+        1. 开一条待审批记录（``run_approval``）——审计与前端展示都要它；
+        2. 记一条 ``run_step``，状态 running，让人一眼看出卡在哪个节点；
+        3. emit ``approval_required``——**客户端据此显示审批卡片**；
+        4. 冲刷事件 + 释放租约 + 把 run 置为 ``waiting``。
+
+        第 4 步里的 ``last_seq`` 必须写准：恢复执行时（新实例）要靠它把 seq
+        计数器接上，写错了会与 ``run_event`` 的 ``uk_run_seq`` 撞车。
+
+        **这里不 emit done**：run 还没结束，事件流要继续开着，批准后同一条流上
+        接着吐字。
+        """
+        node_id = str(payload.get("node") or "")
+        prompt = str(payload.get("prompt") or "")
+
+        async with SessionLocal() as db:
+            await run_approval_repo.create(db, run_id, node_id, prompt)
+            await run_repo.start_step(
+                db, run_id, node_id, node_id, {"type": "approval", "prompt": prompt}
+            )
+            await db.commit()
+
+        await self.hub.emit(
+            run_id,
+            EventType.APPROVAL_REQUIRED,
+            {"node": node_id, "prompt": prompt},
+        )
+
+        # 冲刷最后一批事件并释放租约：暂停期间本实例不再「持有」这个 run。
+        # 暂停点本身在 checkpointer 里，与租约无关——换实例也能恢复。
+        last_seq = await self.hub.finalize(run_id)
+        async with SessionLocal() as db:
+            await run_repo.pause(db, run_id, last_seq, node_id)
+        logger.info("run %s 暂停在审批节点 %s，等待人工决策", run_id, node_id)
+
+    async def resume(self, run_id: int, decision: dict) -> None:
+        """审批之后接着跑：从暂停点恢复执行。
+
+        用 ``Command(resume=decision)`` 恢复：LangGraph 会从 checkpointer 里
+        取回暂停时的状态，**精确**地从那个节点继续——不重走前面的节点、不重跑
+        已经花掉的 LLM 调用。决策值就是 ``interrupt()`` 第二次调用时返回的东西。
+
+        恢复可以在**任意实例**上发生：暂停点在共享的 checkpointer 里，图状态与
+        事件流分工明确（前者管「停在哪」，后者管「发生过什么」）。
+        """
+        plan = await self._load_plan(run_id)
+        if plan is None:
+            logger.error("run %s 或其依赖配置不存在，无法恢复", run_id)
+            return
+
+        definition = plan["definition"]
+        agents = plan["agents"]
+        user_input = plan["user_input"]
+
+        # seq 计数器从暂停处续接
+        self.hub.register(run_id, start_seq=plan["start_seq"])
+        await self.hub.claim(run_id)
+        await run_repo_mark_running(run_id)
+
+        runner = NodeRunner(
+            run_id=run_id,
+            conversation_id=plan["conversation_id"],
+            definition=definition,
+            agents=agents,
+            user_input=user_input,
+            hub=self.hub,
+            ops=self,
+        )
+        graph = build_run_graph(definition, runner, checkpointer=get_checkpointer())
+        try:
+            final_state = await graph.ainvoke(
+                Command(resume=decision),
+                checkpoint_config(run_id, recursion_limit(definition)),
+            )
+        except RunRejected as exc:
+            last_seq = (
+                await self.hub.emit(
+                    run_id,
+                    EventType.DONE,
+                    {
+                        "status": RunStatus.REJECTED.value,
+                        "message": exc.comment or "审批被驳回",
+                    },
+                )
+            ).seq
+            await self._finish(
+                run_id, RunStatus.REJECTED, last_seq, exc.comment or "审批被驳回"
+            )
+            logger.info("run %s 因审批驳回而终止", run_id)
+            return
+
+        # 恢复后理论上不会再挂起（审批已决策）；真挂起说明流程有第二个审批点，
+        # 那种情况同样要停下来等人，不能当成跑完了。
+        paused = extract_interrupt(final_state)
+        if paused is not None:
+            await self._pause(run_id, paused)
+            return
+
+        last_seq = (
+            await self.hub.emit(
+                run_id,
+                EventType.DONE,
+                {"status": RunStatus.DONE.value, "usage": final_state["usage"]},
+            )
+        ).seq
+        await self._finish(run_id, RunStatus.DONE, last_seq)
+
     # ------------------------------------------------------------- 节点
 
     # 下面三个方法是 :class:`~app.core.run_graph.NodeOps` 的实现，供 LangGraph
@@ -234,6 +432,24 @@ class Orchestrator:
     ) -> None:
         """:meth:`_persist_assistant_message` 的图侧入口，行为完全一致。"""
         await self._persist_assistant_message(run_id, conversation_id, agent_code, text)
+
+    async def finish_approval_step(
+        self, run_id: int, node_id: str, approved: bool, comment: str
+    ) -> None:
+        """给审批节点收尾：写 run_step 的终态。
+
+        驳回记 error、批准记 done——step 表回答的是「这个节点最后怎么样了」，
+        审批节点被驳回同样是「没通过」，用 error 才能在复盘时一眼看出来。
+        """
+        async with SessionLocal() as db:
+            await run_repo.finish_step(
+                db,
+                run_id,
+                node_id,
+                StepStatus.DONE if approved else StepStatus.ERROR,
+                {"approved": approved, "comment": comment},
+                None if approved else comment,
+            )
 
     async def run_with_retry(
         self,
@@ -324,7 +540,8 @@ class Orchestrator:
                 return None
 
             definition = WorkflowDefinition.model_validate(wf.definition)
-            codes = [n.agentCode for n in definition.nodes]
+            # 审批节点不调模型，没有 agentCode——不能混进要加载的 agent 列表里
+            codes = [n.agentCode for n in definition.nodes if not n.is_approval]
             agents = await agent_repo.get_by_codes(db, codes)
 
             missing = [c for c in codes if c not in agents or not agents[c].enabled]
@@ -414,13 +631,15 @@ class Orchestrator:
     async def _finish(
         self, run_id: int, status: RunStatus, last_seq: int, error_msg: str | None = None
     ) -> None:
-        """冲刷事件 → 回写 run 状态与 last_seq（避免写放大）。"""
+        """冲刷事件 → 回写 run 状态与 last_seq（避免写放大）→ 清理暂停点。"""
         try:
             await self.hub.finalize(run_id)
         except Exception:  # pragma: no cover
             logger.exception("run %s finalize 失败", run_id)
         async with SessionLocal() as db:
             await run_repo.finish(db, run_id, status, last_seq, error_msg)
+        # run 到终态了，暂停点没有用了：留着只会在 Redis / SQLite 里堆垃圾
+        await delete_thread(run_id)
 
 
 # ---- 模块级小函数：每次开一个短连接，避免跨整个 run 持有事务 ----
