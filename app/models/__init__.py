@@ -13,6 +13,7 @@ from app.models.enums import (
 )
 from app.models.message import Message
 from app.models.run import Run, RunStep
+from app.models.run_approval import RunApproval
 from app.models.run_event import RunEvent
 from app.models.workflow import Workflow
 
@@ -26,6 +27,7 @@ __all__ = [
     "MessageRole",
     "MessageStatus",
     "Run",
+    "RunApproval",
     "RunEvent",
     "RunStatus",
     "RunStep",

@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "run",
     "run_step",
     "run_event",
+    "run_approval",
 }
 
 
@@ -113,6 +114,34 @@ def _sqlite_type(decl: str) -> str:
     if "DECIMAL" in d or "NUMERIC" in d or "FLOAT" in d or "REAL" in d:
         return "REAL"
     return d
+
+
+def test_primary_keys_are_rowid_aliases(migrated_db: Path):
+    """每个表的主键列都必须声明成 ``INTEGER PRIMARY KEY``。
+
+    SQLite 里只有 ``INTEGER PRIMARY KEY`` 才是 rowid 别名、才会自增。写成
+    ``BIGINT`` 的主键不会自增，插入时必须自己给 id，实际报错是
+    "NOT NULL constraint failed: xxx.id"。
+
+    这类问题在 ORM 建表时不会出现：模型用的是
+    ``BigInteger().with_variant(Integer, 'sqlite')``（见 :data:`app.models.base.PK`），
+    create_all 建出来的就是 INTEGER。**只有走迁移建出来的库**会出问题——而测试
+    套件里的库恰恰是 create_all 建的，所以这条断言盯的必须是**迁移产物**。
+
+    上面那条「结构与 ORM 一致」的断言抓不到它：那里的类型归一化把 BIGINT 和
+    INTEGER 都算成 "INTEGER"，主键到底能不能自增被抹平了。
+    """
+    for table in sorted(EXPECTED_TABLES):
+        pk = [
+            r for r in _query(migrated_db, f"PRAGMA table_info({table})")
+            if r[5]
+        ]
+        assert len(pk) == 1, f"{table} 的主键列数量是 {len(pk)}，应为 1"
+        name, decl = pk[0][1], pk[0][2]
+        assert decl.upper() == "INTEGER", (
+            f"{table}.{name} 声明成 {decl}——SQLite 上只有 INTEGER PRIMARY KEY "
+            f"才自增，写成 BIGINT 会报 NOT NULL constraint failed"
+        )
 
 
 @pytest.mark.parametrize(
