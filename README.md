@@ -240,6 +240,31 @@ location /api/ {
 
 ---
 
+## 后台管理（`web/admin.html`）
+
+启动后访问 **`/admin`**。同样零依赖单文件、同源提供，只调用既有 REST 接口，
+**不新增任何服务端能力**——所有增删改走的就是 `/api/agents`、`/api/workflows` 那两套接口。
+
+| 标签页 | 能做什么 |
+| --- | --- |
+| **Agent 配置** | 增删改查 Agent：system_prompt / model / base_url / api_key / temperature / max_tokens / 启用开关 / tools 与 extra_params |
+| **Workflow 编排** | 增删改查 Workflow。**节点用表单编排**（id、选 Agent、outputKey、上下移），`edges` 按顺序自动串成链，并实时预览将要提交的 definition JSON |
+| **会话观测** | 按 `user_id` 查会话，看消息历史与进行中的 run（run_id / 状态 / 当前节点 / last_seq） |
+
+几个刻意的设计：
+
+- **api_key 不回填、不回显**。列表接口只给 `has_api_key` 布尔值，编辑时该框留空表示
+  「不修改」——直接带上空值等于把已存的 key 抹掉。
+- **edges 不让手工填**。手工连边十有八九会连成 DAG 或成环，而服务端在配置期就会拒绝；
+  让页面按顺序自动成链，把「填错了」这件事消灭在提交之前。
+- **首次进入自动选中第一项**，右侧不会是一片「请选择」。
+- **事件一律 `addEventListener` + 委托**，不用 inline `onclick`，与验证台一致，
+  将来加 CSP 也不会整片失效。
+- 会话列表接口按 `user_id` 过滤（不传即 `anonymous`），所以页面上给了 `user_id` 输入框——
+  演示数据的会话属于 `demo`，不切用户就只会看到空列表。
+
+---
+
 ## 跑通一次完整对话
 
 ```bash
@@ -421,7 +446,7 @@ python scripts/check_docstrings.py            # 全量
 python scripts/check_docstrings.py app/core   # 指定目录/文件/模块路径
 ```
 
-当前状态：**449 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
+当前状态：**450 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
 默认扫描范围含根目录的 `run.py`，新增根目录脚本记得加进 `DEFAULT_TARGETS`。
 
 ---
@@ -452,6 +477,7 @@ app/
 │   └── ticket.py           # SSE ticket 签发与校验
 ├── models/  repo/  schemas/  config/  cache.py
 web/index.html           # 功能验证台（单文件，无依赖）
+web/admin.html           # 后台管理（单文件，无依赖，访问 /admin）
 scripts/seed.py          # 演示数据
 scripts/check_docstrings.py  # docstring 覆盖检查
 alembic/  tests/  docs/design.md

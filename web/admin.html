@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>多 Agent 协作服务 · 后台管理</title>
+<style>
+  /* 配色与验证台保持一致：同一个服务的两个页面，用户不该觉得换了个系统。 */
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2128; --border: #30363d;
+    --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff; --green: #3fb950;
+    --yellow: #d29922; --red: #f85149; --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.off { background: var(--red); }
+  .meta { margin-left: auto; color: var(--dim); font-size: 12px; display: flex; gap: 14px; align-items: center; }
+
+  nav { display: flex; gap: 2px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  nav button {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--dim); padding: 10px 16px; cursor: pointer; font-size: 13px;
+    font-family: inherit; border-radius: 0;
+  }
+  nav button:hover { color: var(--text); }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+
+  main { padding: 16px; }
+  .split { display: grid; grid-template-columns: 340px 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 1000px) { .split { grid-template-columns: 1fr } }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  .card > h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); margin: 0; padding: 12px 14px;
+    border-bottom: 1px solid var(--border); font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card > h2 .sp { margin-left: auto; }
+  .card .body { padding: 14px; }
+
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 13px;
+    font-family: inherit; transition: .15s;
+  }
+  button:hover:not(:disabled) { background: #262c36; border-color: #484f58; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover:not(:disabled) { background: #2b7cf3; }
+  button.danger { border-color: #6e2b28; color: var(--red); }
+  button.sm { padding: 4px 8px; font-size: 12px; }
+
+  select, textarea, input[type=text], input[type=number], input[type=password] {
+    width: 100%; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+    font-family: inherit; font-size: 13px;
+  }
+  select:focus, textarea:focus, input:focus { outline: none; border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 70px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  textarea.prompt { font-family: inherit; font-size: 13px; }
+  label { display: block; margin-bottom: 12px; }
+  label > span { display: block; font-size: 12px; color: var(--dim); margin-bottom: 4px; }
+  label > span .hint { color: #6e7681; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  @media (max-width: 620px) { .grid2 { grid-template-columns: 1fr } }
+
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .muted { color: var(--dim); font-size: 12px; }
+  code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 12px; color: var(--purple); }
+
+  .items { max-height: calc(100vh - 230px); overflow-y: auto; }
+  .items > div[data-act] {
+    padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer;
+    display: flex; align-items: center; gap: 8px; font-size: 13px;
+  }
+  .items > div[data-act]:last-child { border-bottom: none; }
+  .items > div[data-act]:hover { background: var(--panel2); }
+  .items > div.sel { background: #12233d; box-shadow: inset 2px 0 0 var(--accent); }
+  .items .nm { font-weight: 600; }
+  .items .sub { color: var(--dim); font-size: 11px; }
+
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #21262d; color: var(--dim); white-space: nowrap; }
+  .tag.ok { background: #1c3d24; color: var(--green); }
+  .tag.warn { background: #3d3319; color: var(--yellow); }
+  .tag.bad { background: #3d1d1d; color: var(--red); }
+
+  /* 编排的节点行：id / agent / outputKey 三个字段并排，外加顺序操作 */
+  .node { display: grid; grid-template-columns: 1fr 1.4fr 1.2fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .node .ord {
+    grid-column: 1 / -1; font-size: 11px; color: var(--dim);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .node .ord::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  @media (max-width: 700px) { .node { grid-template-columns: 1fr; } }
+
+  pre {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px; overflow: auto; max-height: 260px; margin: 0;
+    font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--dim);
+  }
+  .msg { margin-bottom: 10px; padding: 9px 11px; border-radius: 6px; background: var(--panel2); }
+  .msg.user { background: #12233d; border-left: 3px solid var(--accent); }
+  .msg .who { font-size: 11px; color: var(--dim); margin-bottom: 4px; display: flex; justify-content: space-between; gap: 8px; }
+  .msg .txt { white-space: pre-wrap; word-break: break-word; }
+
+  #toast {
+    position: fixed; right: 20px; bottom: 20px; z-index: 100;
+    background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 6px; padding: 10px 14px; font-size: 13px; max-width: 460px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5); display: none; white-space: pre-wrap;
+  }
+  #toast.bad { border-left-color: var(--red); }
+  #toast.ok { border-left-color: var(--green); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>多 Agent 协作服务 · 后台管理</h1>
+  <span class="dot" id="hdot"></span>
+  <div class="meta">
+    <span id="hmeta">连接中…</span>
+    <button class="sm" id="btnRefresh">刷新</button>
+    <a href="/" target="_blank" style="color:var(--accent);font-size:12px">功能验证台 ↗</a>
+  </div>
+</header>
+
+<nav>
+  <button data-tab="agents" class="active">Agent 配置</button>
+  <button data-tab="workflows">Workflow 编排</button>
+  <button data-tab="convs">会话观测</button>
+</nav>
+
+<main>
+  <!-- ================================================== Agent 配置 -->
+  <section id="tab-agents" class="split">
+    <div class="card">
+      <h2>Agent 列表 <span class="sp"><button class="sm primary" id="btnNewAgent">+ 新建</button></span></h2>
+      <div class="items" id="agentList"></div>
+    </div>
+    <div class="card">
+      <h2 id="agentTitle">选择左侧 Agent，或新建一个</h2>
+      <div class="body" id="agentForm"></div>
+    </div>
+  </section>
+
+  <!-- ============================================== Workflow 编排 -->
+  <section id="tab-workflows" class="split hidden">
+    <div class="card">
+      <h2>Workflow 列表 <span class="sp"><button class="sm primary" id="btnNewWf">+ 新建</button></span></h2>
+      <div class="items" id="wfList"></div>
+    </div>
+    <div class="card">
+      <h2 id="wfTitle">选择左侧 Workflow，或新建一个</h2>
+      <div class="body" id="wfForm"></div>
+    </div>
+  </section>
+
+  <!-- ================================================ 会话观测 -->
+  <section id="tab-convs" class="split hidden">
+    <div class="card">
+      <h2>会话列表 <span class="sp"><button class="sm primary" id="btnNewConv">+ 新建</button></span></h2>
+      <div style="padding:10px 14px;border-bottom:1px solid var(--border)">
+        <label style="margin:0"><span>user_id <span class="hint">（列表接口按用户过滤，不传只看 anonymous）</span></span></span>
+        <div class="row" style="margin-top:6px">
+          <input type="text" id="convUser" value="anonymous" style="flex:1;min-width:120px">
+          <button class="sm" id="btnLoadConvs">查询</button>
+        </div>
+      </div>
+      <div class="items" id="convList"></div>
+    </div>
+    <div class="card">
+      <h2 id="convTitle">会话详情</h2>
+      <div class="body" id="convDetail"></div>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+
+/* 事件一律走 addEventListener + 事件委托，不用 inline onclick。
+   与 web/index.html 保持同一套写法，理由有二：inline handler 在将来加 CSP 时
+   会整片失效；列表项是 innerHTML 重绘出来的，委托一次就够，不必每次重绘重绑。 */
+
+const state = { agents: [], wfs: [], convs: [], agent: null, wf: null, conv: null };
+const $ = id => document.getElementById(id);
+
+// ------------------------------------------------------------ 基础设施
+
+/** 把服务端错误压成一句人话。后端统一返回 {code,message,data}，校验错误在 data.errors 里。 */
+function errText(r, body) {
+  if (body && body.message) {
+    if (body.data && Array.isArray(body.data.errors) && body.data.errors.length) {
+      const first = body.data.errors[0];
+      return body.message + "：" + first.msg + "（" + first.loc.join(".") + "）";
+    }
+    return body.message;
+  }
+  return "HTTP " + r.status;
+}
+
+async function api(path, opts) {
+  opts = opts || {};
+  const init = { method: opts.method || "GET", headers: { "Content-Type": "application/json" } };
+  if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
+  const r = await fetch(path, init);
+  if (r.status === 204) return null;
+  const text = await r.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch (e) { body = null; }
+  if (!r.ok) throw new Error(errText(r, body));
+  return body;
+}
+
+let toastTimer = null;
+function toast(msg, kind) {
+  const el = $("toast");
+  el.textContent = msg;
+  el.className = kind || "";
+  el.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = "none"; }, kind === "bad" ? 7000 : 3000);
+}
+
+/** 包一层：任何失败都变成 toast，不让异常冒到 console 里变成静默失败。 */
+async function guard(fn, okMsg) {
+  try {
+    await fn();
+    if (okMsg) toast(okMsg, "ok");
+  } catch (e) {
+    toast("✗ " + e.message, "bad");
+  }
+}
+
+const esc = s => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const fmtTime = s => s ? new Date(s).toLocaleString("zh-CN", { hour12: false }) : "—";
+
+function switchTab(name) {
+  ["agents", "workflows", "convs"].forEach(t => {
+    $("tab-" + t).classList.toggle("hidden", t !== name);
+  });
+  document.querySelectorAll("nav button").forEach(b => {
+    b.classList.toggle("active", b.dataset.tab === name);
+  });
+}
+
+// ---------------------------------------------------------------- Agent
+
+async function loadAgents() {
+  state.agents = await api("/api/agents?limit=200");
+  const el = $("agentList");
+  if (!state.agents.length) { el.innerHTML = '<div class="muted" style="padding:14px">还没有 Agent</div>'; return; }
+  el.innerHTML = state.agents.map(a => `
+    <div data-act="agent" data-code="${esc(a.code)}" class="${state.agent && state.agent.id === a.id ? "sel" : ""}">
+      <div style="min-width:0">
+        <div class="nm">${esc(a.name)} <span class="sub">${esc(a.code)}</span></div>
+        <div class="sub">${esc(a.model)} · v${a.version}</div>
+      </div>
+      <span class="tag ${a.enabled ? "ok" : "warn"}">${a.enabled ? "启用" : "停用"}</span>
+      ${a.has_api_key ? '<span class="tag">key</span>' : '<span class="tag bad">无 key</span>'}
+    </div>`).join("");
+}
+
+function newAgent() { state.agent = { isNew: true }; renderAgentForm(); }
+
+async function editAgent(code) {
+  await guard(async () => {
+    state.agent = await api("/api/agents/" + encodeURIComponent(code));
+    renderAgentForm();
+    await loadAgents();
+  });
+}
+
+function renderAgentForm() {
+  const a = state.agent, box = $("agentForm");
+  if (!a) { box.innerHTML = '<div class="muted">选择左侧 Agent，或新建一个。</div>'; return; }
+  $("agentTitle").textContent = a.isNew ? "新建 Agent" : "编辑 " + a.code;
+
+  // 编辑态不回填已存的 key：API 也不返回明文（只有 has_api_key）。
+  // 留空 = 不改动，这是 PUT 语义里最容易被误解的一条。
+  const keyHint = a.isNew ? "" : (a.has_api_key ? "已配置；留空表示保持不变" : "尚未配置");
+  const hasJson = a.tools || a.extra_params;
+
+  box.innerHTML = `
+    <div class="grid2">
+      <label><span>code <span class="hint">（创建后不可改）</span></span>
+        <input type="text" id="a_code" value="${esc(a.code || "")}" ${a.isNew ? "" : "disabled"}></label>
+      <label><span>名称</span><input type="text" id="a_name" value="${esc(a.name || "")}"></label>
+    </div>
+    <label><span>描述</span><input type="text" id="a_desc" value="${esc(a.description || "")}"></label>
+    <label><span>system_prompt <span class="hint">（每次调用都会带上）</span></span>
+      <textarea class="prompt" id="a_prompt" rows="4">${esc(a.system_prompt || "")}</textarea></label>
+    <div class="grid2">
+      <label><span>model</span><input type="text" id="a_model" value="${esc(a.model || "")}"></label>
+      <label><span>base_url <span class="hint">（OpenAI 兼容协议，需带 /v1）</span></span>
+        <input type="text" id="a_base" value="${esc(a.base_url || "")}"></label>
+    </div>
+    <label><span>api_key ${keyHint ? '<span class="hint">（' + esc(keyHint) + '）</span>' : ""}</span>
+      <input type="password" id="a_key" placeholder="${a.isNew ? "sk-…" : "留空则不修改"}" autocomplete="new-password"></label>
+    <div class="grid2">
+      <label><span>temperature <span class="hint">0.0 – 2.0</span></span>
+        <input type="number" id="a_temp" step="0.05" min="0" max="2" value="${a.temperature != null ? a.temperature : 0.7}"></label>
+      <label><span>max_tokens</span><input type="number" id="a_max" min="1" value="${a.max_tokens || 2048}"></label>
+    </div>
+    <label><span>tools / extra_params <span class="hint">JSON，可留空</span></span>
+      <textarea id="a_json" rows="2" placeholder='{"tools": [...], "extra_params": {...}}'>${esc(
+        hasJson ? JSON.stringify({ tools: a.tools || null, extra_params: a.extra_params || null }) : ""
+      )}</textarea></label>
+    <label><span><input type="checkbox" id="a_on" ${a.enabled === false ? "" : "checked"} style="width:auto;margin-right:6px">启用</span></label>
+    <div class="row">
+      <button class="primary" data-act="save-agent">保存</button>
+      ${a.isNew ? "" : '<button class="danger" data-act="del-agent">删除</button>'}
+      <span class="muted">PUT 会让 version+1，配置缓存随之失效，下一个 run 直接用新配置</span>
+    </div>`;
+}
+
+async function saveAgent() {
+  await guard(async () => {
+    let tools = null, extra = null;
+    const raw = $("a_json").value.trim();
+    if (raw) {
+      let parsed;
+      try { parsed = JSON.parse(raw); }
+      catch (e) { throw new Error("tools/extra_params 不是合法 JSON：" + e.message); }
+      tools = parsed.tools || null;
+      extra = parsed.extra_params || null;
+    }
+    const payload = {
+      name: $("a_name").value.trim(),
+      description: $("a_desc").value.trim(),
+      system_prompt: $("a_prompt").value,
+      model: $("a_model").value.trim(),
+      base_url: $("a_base").value.trim(),
+      temperature: parseFloat($("a_temp").value),
+      max_tokens: parseInt($("a_max").value, 10),
+      tools: tools,
+      extra_params: extra,
+      enabled: $("a_on").checked,
+    };
+    const key = $("a_key").value;
+    // 留空就不带这个字段——带了等于把已存的 key 抹成空。
+    if (key) payload.api_key = key;
+
+    const a = state.agent;
+    if (a.isNew) {
+      payload.code = $("a_code").value.trim();
+      state.agent = await api("/api/agents", { method: "POST", body: payload });
+    } else {
+      state.agent = await api("/api/agents/" + encodeURIComponent(a.code), { method: "PUT", body: payload });
+    }
+    await loadAgents();
+    renderAgentForm();
+  }, "已保存");
+}
+
+async function delAgent() {
+  const a = state.agent;
+  if (!confirm("删除 Agent「" + a.code + "」？\n若已被 workflow 引用，建议改用取消勾选「启用」来停用。")) return;
+  await guard(async () => {
+    await api("/api/agents/" + encodeURIComponent(a.code), { method: "DELETE" });
+    state.agent = null;
+    renderAgentForm();
+    await loadAgents();
+  }, "已删除");
+}
+
+// ------------------------------------------------------------ Workflow
+
+async function loadWorkflows() {
+  state.wfs = await api("/api/workflows?limit=200");
+  const el = $("wfList");
+  if (!state.wfs.length) { el.innerHTML = '<div class="muted" style="padding:14px">还没有 Workflow</div>'; return; }
+  el.innerHTML = state.wfs.map(w => `
+    <div data-act="wf" data-code="${esc(w.code)}" class="${state.wf && state.wf.id === w.id ? "sel" : ""}">
+      <div style="min-width:0">
+        <div class="nm">${esc(w.name)} <span class="sub">${esc(w.code)}</span></div>
+        <div class="sub">${(w.definition.nodes || []).length} 个节点</div>
+      </div>
+      <span class="tag ${w.enabled ? "ok" : "warn"}">${w.enabled ? "启用" : "停用"}</span>
+    </div>`).join("");
+}
+
+function newWorkflow() {
+  state.wf = {
+    isNew: true,
+    definition: { entry: "", nodes: [], edges: [], inputTemplate: "用户问题：{{user_input}}\n上游产出：{{upstream}}" },
+  };
+  renderWorkflowForm();
+}
+
+async function editWorkflow(code) {
+  await guard(async () => {
+    state.wf = await api("/api/workflows/" + encodeURIComponent(code));
+    renderWorkflowForm();
+    await loadWorkflows();
+  });
+}
+
+function nodeRow(n, i) {
+  const opts = state.agents.map(a =>
+    '<option value="' + esc(a.code) + '"' + (a.code === n.agentCode ? " selected" : "") + '>' +
+    esc(a.name) + " (" + esc(a.code) + ')</option>'
+  ).join("");
+  const arrow = i === 0 ? "入口" : "↑ 上一个节点";
+  return `
+    <div class="node">
+      <div class="ord">${arrow}</div>
+      <input type="text" class="n-id" value="${esc(n.id || "")}" placeholder="节点 id">
+      <select class="n-agent">${opts ? '<option value="">选择 Agent…</option>' + opts : '<option value="">（还没有 Agent）</option>'}</select>
+      <input type="text" class="n-key" value="${esc(n.outputKey || "")}" placeholder="outputKey">
+      <div class="row">
+        <button class="sm" data-act="node-up" data-i="${i}" title="上移">↑</button>
+        <button class="sm" data-act="node-down" data-i="${i}" title="下移">↓</button>
+        <button class="sm danger" data-act="node-del" data-i="${i}" title="删除节点">✕</button>
+      </div>
+    </div>`;
+}
+
+function renderWorkflowForm() {
+  const w = state.wf, box = $("wfForm");
+  if (!w) { box.innerHTML = '<div class="muted">选择左侧 Workflow，或新建一个。</div>'; return; }
+  $("wfTitle").textContent = w.isNew ? "新建 Workflow" : "编辑 " + w.code;
+  const d = w.definition;
+  if (!Array.isArray(d.nodes)) d.nodes = [];
+  if (!Array.isArray(d.edges)) d.edges = [];
+
+  box.innerHTML = `
+    <div class="grid2">
+      <label><span>code <span class="hint">（创建后不可改）</span></span>
+        <input type="text" id="w_code" value="${esc(w.code || "")}" ${w.isNew ? "" : "disabled"}></label>
+      <label><span>名称</span><input type="text" id="w_name" value="${esc(w.name || "")}"></label>
+    </div>
+    <label><span>描述</span><input type="text" id="w_desc" value="${esc(w.description || "")}"></label>
+    <label><span><input type="checkbox" id="w_on" ${w.enabled === false ? "" : "checked"} style="width:auto;margin-right:6px">启用</span></label>
+
+    <h2 style="border:none;padding:8px 0">节点 <span class="sp">
+      <button class="sm" data-act="node-add">+ 添加节点</button></span></h2>
+    <div id="nodes">${d.nodes.map(nodeRow).join("") || '<div class="muted">还没有节点，先添加一个。</div>'}</div>
+
+    <label><span>inputTemplate <span class="hint">可用 {{user_input}} / {{upstream}} / {{上游outputKey}}</span></span>
+      <textarea class="prompt" id="w_tpl" rows="3">${esc(d.inputTemplate || "")}</textarea></label>
+
+    <div class="muted" style="margin-bottom:10px">
+      edges 按上面的顺序<b>自动串成一条链</b>，不需要手工填。当前版本只支持线性流水线，
+      分叉（DAG）会在保存时被服务端拒绝。
+    </div>
+    <pre id="w_preview"></pre>
+
+    <div class="row" style="margin-top:12px">
+      <button class="primary" data-act="save-wf">保存</button>
+      ${w.isNew ? "" : '<button class="danger" data-act="del-wf">删除</button>'}
+    </div>`;
+  syncNodes();
+}
+
+function addNode() {
+  const d = state.wf.definition;
+  d.nodes.push({
+    id: "node" + (d.nodes.length + 1),
+    agentCode: state.agents.length ? state.agents[0].code : "",
+    outputKey: "",
+  });
+  renderWorkflowForm();
+}
+
+function rmNode(i) { state.wf.definition.nodes.splice(i, 1); renderWorkflowForm(); }
+
+function moveNode(i, delta) {
+  const n = state.wf.definition.nodes, j = i + delta;
+  if (j < 0 || j >= n.length) return;
+  const tmp = n[i]; n[i] = n[j]; n[j] = tmp;
+  renderWorkflowForm();
+}
+
+/** 把 DOM 里的节点行读回 state.wf.definition，并顺手刷新预览。 */
+function syncNodes() {
+  if (!state.wf) return;
+  const d = state.wf.definition;
+  document.querySelectorAll("#nodes .node").forEach((row, i) => {
+    if (!d.nodes[i]) d.nodes[i] = { id: "", agentCode: "", outputKey: "" };
+    d.nodes[i].id = row.querySelector(".n-id").value.trim();
+    d.nodes[i].agentCode = row.querySelector(".n-agent").value;
+    d.nodes[i].outputKey = row.querySelector(".n-key").value.trim();
+  });
+  const tpl = $("w_tpl");
+  if (tpl) d.inputTemplate = tpl.value;
+  const pv = $("w_preview");
+  if (pv) pv.textContent = JSON.stringify(buildDefinition(), null, 2);
+}
+
+/** 从 state 组装要提交的 definition：边就是相邻节点之间的链。 */
+function buildDefinition() {
+  const d = state.wf.definition;
+  const nodes = d.nodes.filter(n => n.id);
+  return {
+    entry: nodes.length ? nodes[0].id : "",
+    nodes: nodes.map(n => ({ id: n.id, agentCode: n.agentCode, outputKey: n.outputKey })),
+    edges: nodes.slice(1).map((n, i) => ({ from: nodes[i].id, to: n.id })),
+    inputTemplate: d.inputTemplate || "",
+  };
+}
+
+async function saveWorkflow() {
+  await guard(async () => {
+    syncNodes();
+    const def = buildDefinition();
+    if (!def.nodes.length) throw new Error("至少需要一个节点");
+    const missing = def.nodes.filter(n => !n.agentCode).map(n => n.id);
+    if (missing.length) throw new Error("这些节点还没选 Agent：" + missing.join("、"));
+
+    const payload = {
+      name: $("w_name").value.trim(),
+      description: $("w_desc").value.trim(),
+      enabled: $("w_on").checked,
+      definition: def,
+    };
+    const w = state.wf;
+    if (w.isNew) {
+      payload.code = $("w_code").value.trim();
+      state.wf = await api("/api/workflows", { method: "POST", body: payload });
+    } else {
+      state.wf = await api("/api/workflows/" + encodeURIComponent(w.code), { method: "PUT", body: payload });
+    }
+    await loadWorkflows();
+    renderWorkflowForm();
+  }, "已保存");
+}
+
+async function delWorkflow() {
+  const w = state.wf;
+  if (!confirm("删除 Workflow「" + w.code + "」？\n已有的会话会变成悬挂引用。")) return;
+  await guard(async () => {
+    await api("/api/workflows/" + encodeURIComponent(w.code), { method: "DELETE" });
+    state.wf = null;
+    renderWorkflowForm();
+    await loadWorkflows();
+  }, "已删除");
+}
+
+// ------------------------------------------------------------ 会话观测
+
+async function loadConvs() {
+  // 列表接口没有「列全部」，只有按 user_id 过滤（不传则一律落到 anonymous）。
+  // 所以这里必须带上当前输入的 user_id，否则换了用户的会话会永远查不出来。
+  const uid = ($("convUser").value || "anonymous").trim();
+  state.convs = await api("/api/conversations?limit=200&user_id=" + encodeURIComponent(uid));
+  const el = $("convList");
+  if (!state.convs.length) {
+    el.innerHTML = '<div class="muted" style="padding:14px">该 user_id 下没有会话</div>';
+    return;
+  }
+  el.innerHTML = state.convs.map(c => `
+    <div data-act="conv" data-id="${c.id}" class="${state.conv && state.conv.id === c.id ? "sel" : ""}">
+      <div style="min-width:0">
+        <div class="nm">${esc(c.title || "（无标题）")}</div>
+        <div class="sub">#${c.id} · ${esc(c.user_id)} · ${fmtTime(c.updated_at)}</div>
+      </div>
+      <span class="tag ${c.status === "active" ? "ok" : ""}">${esc(c.status)}</span>
+    </div>`).join("");
+}
+
+function newConv() {
+  if (!state.wfs.length) { toast("先建一个 Workflow 再开会话", "bad"); return; }
+  const code = prompt("绑定哪个 Workflow？\n可用：" + state.wfs.map(w => w.code).join(", "), state.wfs[0].code);
+  if (!code) return;
+  const uid = ($("convUser").value || "anonymous").trim();
+  guard(async () => {
+    const c = await api("/api/conversations", { method: "POST", body: { workflow_code: code, user_id: uid } });
+    await loadConvs();
+    await openConv(c.id);
+  }, "会话已创建");
+}
+
+async function openConv(id) {
+  await guard(async () => {
+    state.conv = state.convs.find(c => c.id === id);
+    await renderConvDetail();
+    await loadConvs();
+  });
+}
+
+async function renderConvDetail() {
+  const c = state.conv, box = $("convDetail");
+  if (!c) { box.innerHTML = '<div class="muted">选择左侧会话。</div>'; return; }
+  $("convTitle").textContent = "会话 #" + c.id;
+  box.innerHTML = '<div class="muted">加载中…</div>';
+
+  const msgs = await api("/api/conversations/" + c.id + "/messages?limit=200");
+  const active = await api("/api/conversations/" + c.id + "/active-run");
+
+  let html = '<div class="row" style="margin-bottom:12px">' +
+    '<span class="muted">' + esc(c.title || "（无标题）") + " · user=" + esc(c.user_id) + " · " + fmtTime(c.created_at) + "</span>" +
+    '<span style="margin-left:auto"></span>' +
+    (active
+      ? '<span class="tag warn">run ' + active.run_id + " " + esc(active.status) + " · " + esc(active.current_node || "—") + " · seq " + active.last_seq + "</span>"
+      : '<span class="tag ok">无进行中 run</span>') +
+    "</div>";
+
+  html += msgs.length
+    ? msgs.map(m =>
+        '<div class="msg ' + (m.role === "user" ? "user" : "") + '">' +
+        '<div class="who"><span>' + esc(m.role) + (m.agent_code ? " · " + esc(m.agent_code) : "") + "</span><span>" + fmtTime(m.created_at) + "</span></div>" +
+        '<div class="txt">' + esc(m.content || "") + "</div></div>").join("")
+    : '<div class="muted">这个会话还没有消息。</div>';
+  box.innerHTML = html;
+}
+
+// ---------------------------------------------------------------- 事件绑定
+
+document.querySelectorAll("nav button").forEach(b => {
+  b.addEventListener("click", () => switchTab(b.dataset.tab));
+});
+$("btnRefresh").addEventListener("click", () => refreshAll());
+$("btnNewAgent").addEventListener("click", newAgent);
+$("btnNewWf").addEventListener("click", newWorkflow);
+$("btnNewConv").addEventListener("click", newConv);
+$("btnLoadConvs").addEventListener("click", () => guard(() => loadConvs()));
+
+// 三个列表都用委托：item 是 innerHTML 重绘出来的，绑一次就够。
+function delegateList(id, handlers) {
+  $(id).addEventListener("click", e => {
+    const el = e.target.closest("[data-act]");
+    if (el && $(id).contains(el)) handlers(el);
+  });
+}
+
+delegateList("agentList", el => {
+  if (el.dataset.act === "agent") editAgent(el.dataset.code);
+});
+
+delegateList("wfList", el => {
+  if (el.dataset.act === "wf") editWorkflow(el.dataset.code);
+});
+
+delegateList("convList", el => {
+  if (el.dataset.act === "conv") openConv(parseInt(el.dataset.id, 10));
+});
+
+// 两个编辑区共用一套：表单内的按钮带 data-act，节点区的输入框变更即时同步。
+function wireEditor(id, map) {
+  $(id).addEventListener("click", e => {
+    const el = e.target.closest("[data-act]");
+    if (!el || !$(id).contains(el)) return;
+    const fn = map[el.dataset.act];
+    if (fn) fn(el);
+  });
+}
+
+wireEditor("agentForm", {
+  "save-agent": saveAgent,
+  "del-agent": delAgent,
+});
+
+wireEditor("wfForm", {
+  "save-wf": saveWorkflow,
+  "del-wf": delWorkflow,
+  "node-add": addNode,
+  "node-up": el => moveNode(parseInt(el.dataset.i, 10), -1),
+  "node-down": el => moveNode(parseInt(el.dataset.i, 10), 1),
+  "node-del": el => rmNode(parseInt(el.dataset.i, 10)),
+});
+
+// 编排输入框是 innerHTML 重绘的，委托到容器上统一同步，顺便刷新 JSON 预览。
+$("wfForm").addEventListener("input", e => {
+  if (e.target.closest("#nodes") || e.target.id === "w_tpl") syncNodes();
+});
+$("wfForm").addEventListener("change", e => {
+  if (e.target.classList.contains("n-agent")) syncNodes();
+});
+
+// ---------------------------------------------------------------- 启动
+
+/** 首次进来自动选中第一项，免得右侧是一片「选择左侧…」的落屏空态。
+
+    刻意单独兜住：它只是锦上添花，失败绝不能连带把下面已经渲染好的表单也弄没。
+ */
+async function selectFirst() {
+  try {
+    if (!state.agent && state.agents.length) {
+      state.agent = await api("/api/agents/" + encodeURIComponent(state.agents[0].code));
+      renderAgentForm();
+      await loadAgents();
+    }
+    if (!state.wf && state.wfs.length) {
+      state.wf = await api("/api/workflows/" + encodeURIComponent(state.wfs[0].code));
+      renderWorkflowForm();
+    }
+  } catch (e) {
+    console.warn("自动选中第一项失败，列表仍可用", e);
+  }
+}
+
+async function refreshAll() {
+  await guard(async () => {
+    const h = await api("/api/health");
+    $("hdot").className = "dot " + (h.status === "ok" ? "on" : "off");
+    $("hmeta").textContent = "db " + h.db + " · 活跃 run " + h.active_runs;
+  });
+
+  await guard(async () => {
+    // Workflow 的编辑器要从 Agent 列表取下拉选项，所以两者都要先拉。
+    await loadAgents();
+    await Promise.all([loadWorkflows(), loadConvs()]);
+    renderAgentForm();
+    renderWorkflowForm();
+    if (state.conv) await renderConvDetail();
+  });
+
+  await selectFirst();
+}
+
+refreshAll();
+</script>
+</body>
+</html>

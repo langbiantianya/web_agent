@@ -119,9 +119,11 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router)
 
-    # ------------------------------------------------- 功能验证台（静态页）
+    # ------------------------------------------------- 静态页（验证台 / 后台）
     # 单文件、无构建步骤；同源提供，方便直接验证 SSE 续传等行为。
-    web_index = Path(__file__).resolve().parents[1] / "web" / "index.html"
+    web_dir = Path(__file__).resolve().parents[1] / "web"
+    web_index = web_dir / "index.html"
+    web_admin = web_dir / "admin.html"
     if web_index.exists():
 
         @app.get("/", include_in_schema=False)
@@ -136,6 +138,18 @@ def create_app() -> FastAPI:
             ``include_in_schema=False``：内部验证工具，不属于对外 API 契约。
             """
             return FileResponse(web_index)
+
+    if web_admin.exists():
+
+        @app.get("/admin", include_in_schema=False)
+        async def admin_page() -> FileResponse:
+            """后台管理页：Agent / Workflow 的增删改，以及会话观测。
+
+            同样零依赖单文件，只调用既有 REST 接口——它不新增任何服务端能力，
+            所以和验证台一样按「存在才注册」处理，生产镜像不带 web/ 目录时
+            访问 /admin 走默认 404 而不是启动报错。
+            """
+            return FileResponse(web_admin)
 
     # ------------------------------------------------------ 统一异常处理
 
