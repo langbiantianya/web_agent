@@ -90,6 +90,21 @@
   .caret::after { content: "▋"; color: var(--yellow); animation: blink .8s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0 } }
 
+  /* 工具调用（V3.2）：模型要了什么工具、服务端调出了什么结果。
+     工具行插在节点的输出流里，位置就是它发生的时刻——模型先问工具、拿到
+     结果才继续答，这条因果链在流里才看得出来。 */
+  .tool-line {
+    display: block; margin: 6px 0; padding: 5px 8px; border-radius: 6px;
+    background: var(--panel2); border-left: 2px solid var(--purple);
+    font-size: 12px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .tool-line .t-tag { color: var(--purple); font-weight: 600; margin-right: 6px; }
+  .tool-line .t-arg { color: var(--dim); }
+  .tool-line.err { border-left-color: var(--red); }
+  .tool-line.err .t-tag { color: var(--red); }
+  .tool-line.ok .t-tag { color: var(--green); }
+
   /* 审批卡片（V3.1）：流程挂起等人决策时插在对话流里。
      它不是一条消息而是一块**可交互**的面板——人得在这里给出决策。 */
   .approval { margin-bottom: 12px; border: 1px solid var(--yellow); border-radius: 8px; overflow: hidden; }
@@ -320,8 +335,42 @@ function openNode(node, agentCode, model) {
 
 function appendToken(node, content) {
   const bd = openNode(node);
-  bd.textContent += content;
+  // 文本与工具行**混排在同一条流里**：末尾还是文本节点就接着写，否则新起一个
+  // 文本节点。这样「模型先问工具、拿到结果才继续答」的先后顺序不会乱。
+  const last = bd.lastChild;
+  if (last && last.nodeType === Node.TEXT_NODE) last.data += content;
+  else bd.appendChild(document.createTextNode(content));
   S.tokens++;
+  $('chat').scrollTop = $('chat').scrollHeight;
+}
+
+/** 在节点的输出流里插一条工具行。
+
+    工具行不是消息也不是节点产出，是「这个节点中途调了什么工具」的痕迹。
+    插在流里（而不是另开一块）才能看出它发生在哪两段文字之间。
+
+    @param {string} node 节点 id
+    @param {string} tag 行首标签，如「⚙ 调用」「↩ 返回」
+    @param {string} name 工具名
+    @param {string} detail 补充信息（参数 / 结果摘要）
+    @param {boolean} isErr 是否是失败结果
+    @param {boolean} isOk 是否是成功结果
+*/
+function addToolLine(node, tag, name, detail, isErr, isOk) {
+  const bd = openNode(node);
+  const el = document.createElement('div');
+  el.className = 'tool-line' + (isErr ? ' err' : (isOk ? ' ok' : ''));
+  const t = document.createElement('span');
+  t.className = 't-tag';
+  t.textContent = `${tag} ${name}`;
+  el.appendChild(t);
+  if (detail) {
+    const d = document.createElement('span');
+    d.className = 't-arg';
+    d.textContent = detail;
+    el.appendChild(d);
+  }
+  bd.appendChild(el);
   $('chat').scrollTop = $('chat').scrollHeight;
 }
 
@@ -434,6 +483,20 @@ function handle(ev, seq, data) {
     case 'reasoning':
       appendToken(data.node, data.content || '');
       break;
+    case 'tool_call':
+      // 模型要调工具了：把调了什么、参数是什么显示出来
+      (data.toolCalls || []).forEach(tc => {
+        const fn = tc.function || {};
+        addToolLine(data.node, '⚙ 调用', fn.name || '?', fn.arguments || '', false, false);
+      });
+      break;
+    case 'tool_result':
+      // 服务端执行完了：成功给结果，失败把错误也亮出来（模型据此自我纠正）
+      addToolLine(
+        data.node, data.ok ? '↩ 返回' : '✗ 失败',
+        data.tool || '?', data.summary || '', !data.ok, !!data.ok
+      );
+      break;
     case 'node_end':
       closeNode(data.node);
       break;
@@ -501,7 +564,8 @@ async function connect() {
 
   // approval_* 也要订阅：审批是「人要做决定」的时刻，卡片靠这些事件亮起/结算
   for (const ev of ['node_start', 'node_end', 'token', 'reasoning', 'tool_call',
-                    'approval_required', 'approved', 'rejected', 'error', 'done']) {
+                    'tool_result', 'approval_required', 'approved', 'rejected',
+                    'error', 'done']) {
     S.es.addEventListener(ev, e => {
       let data = {};
       try { data = JSON.parse(e.data); } catch {}
