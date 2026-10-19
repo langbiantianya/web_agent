@@ -31,11 +31,17 @@ class FakeLLM:
 
     ``texts`` 按调用序依次返回；``chunk_delay`` 控制吐字速度，方便在流中途
     触发「客户端断开 / 重连续传」这类时序测试。
+
+    ``tool_calls_plan`` 让某一次调用**不要文本、改为请求工具**（V3.2）：第 N 项
+    对应第 N 次调用，值为一个工具调用列表，每项形如
+    ``{"id": "call_1", "name": "calc", "arguments": '{"expression": "1+1"}'}``。
+    没配到的调用照常返回 ``texts``。
     """
 
     texts: list[str] = field(default_factory=lambda: ["你好", "，", "世界"])
     chunk_delay: float = 0.0
     include_reasoning: str = ""
+    tool_calls_plan: list[list[dict]] = field(default_factory=list)
     port: int = field(default_factory=_free_port)
     calls: list[dict] = field(default_factory=list)
     _server: uvicorn.Server | None = None
@@ -63,6 +69,11 @@ class FakeLLM:
 
             index = len(self.calls) - 1
             text = self.texts[index] if index < len(self.texts) else "默认回复"
+            planned = (
+                self.tool_calls_plan[index]
+                if index < len(self.tool_calls_plan)
+                else None
+            )
 
             async def gen():
                 """按 OpenAI 顺序吐帧：reasoning → content → finish → usage → [DONE]。
@@ -74,12 +85,20 @@ class FakeLLM:
                 if self.include_reasoning:
                     yield _chunk(cid, created, reasoning=self.include_reasoning)
 
-                for piece in _split(text):
-                    if self.chunk_delay:
-                        await asyncio.sleep(self.chunk_delay)
-                    yield _chunk(cid, created, content=piece)
+                if planned:
+                    # 这一轮模型不要文本，改成请求工具
+                    for piece in _tool_call_frames(cid, created, planned):
+                        if self.chunk_delay:
+                            await asyncio.sleep(self.chunk_delay)
+                        yield piece
+                else:
+                    for piece in _split(text):
+                        if self.chunk_delay:
+                            await asyncio.sleep(self.chunk_delay)
+                        yield _chunk(cid, created, content=piece)
 
-                yield _chunk(cid, created, content="", finish="stop")
+                finish = "tool_calls" if planned else "stop"
+                yield _chunk(cid, created, content="", finish=finish)
                 # include_usage 的尾包：choices 为空 + usage
                 yield (
                     "data: "
@@ -129,6 +148,40 @@ def _split(text: str) -> list[str]:
     return [text[i : i + 2] for i in range(0, len(text), 2)] or [""]
 
 
+def _tool_call_frames(cid: str, created: int, calls: list[dict]) -> list[str]:
+    """把工具调用摊成 OpenAI 的**分片**格式（V3.2）。
+
+    真实端点不会把一次 tool_call 整块发下来：``id`` 与 ``function.name`` 通常
+    只在首片，``arguments`` 是逐片拼接的 JSON 字符串。假服务必须照着这个形状
+    发，否则「分片累积」那段代码在测试里永远走不到——一个只发整块的假服务，
+    会让分片处理写错了也没人发现。
+
+    Args:
+        cid: 本次会话的 id。
+        created: Unix 时间戳。
+        calls: 工具调用列表，每项含 ``id`` / ``name`` / ``arguments``。
+
+    Returns:
+        SSE 帧字符串列表。
+    """
+    frames: list[str] = []
+    for index, call in enumerate(calls):
+        args = call.get("arguments") or "{}"
+        # arguments 劈成两片：验证「逐片拼接」而不是「后片覆盖前片」
+        cut = max(1, len(args) // 2)
+        for piece, is_first in ((args[:cut], True), (args[cut:], False)):
+            delta: dict = {
+                "index": index,
+                "type": "function",
+                "function": {"arguments": piece},
+            }
+            if is_first:
+                delta["id"] = call.get("id") or f"call_{index}"
+                delta["function"]["name"] = call.get("name") or ""
+            frames.append(_raw_chunk(cid, created, {"tool_calls": [delta]}))
+    return frames
+
+
 def _chunk(
     cid: str, created: int, content: str | None = None, reasoning: str | None = None,
     finish: str | None = None,
@@ -145,5 +198,26 @@ def _chunk(
         "created": created,
         "model": "fake-model",
         "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+    }
+    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+
+
+def _raw_chunk(cid: str, created: int, delta: dict) -> str:
+    """拼一个指定 ``delta`` 内容的 chunk（用于 tool_calls 这种非文本增量）。
+
+    Args:
+        cid: 会话 id。
+        created: Unix 时间戳。
+        delta: 直接放进 ``choices[0].delta`` 的字典。
+
+    Returns:
+        SSE 帧字符串。
+    """
+    payload = {
+        "id": cid,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": "fake-model",
+        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
     }
     return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
