@@ -18,7 +18,9 @@ class AgentBase(BaseModel):
     api_key: str = Field(default="", description="明文 api_key，落库前加密")
     temperature: float = Field(default=0.70, ge=0.0, le=2.0)
     max_tokens: int = Field(default=2048, ge=1, le=1_000_000)
-    tools: list[dict] | None = None
+    # 工具名列表（V3.2）。**不是** OpenAI 的 function schema——填的是注册表里
+    # 的工具名，schema 与执行器都由服务端从同一张表取。
+    tools: list[str] | None = None
     extra_params: dict | None = None
     enabled: bool = True
 
@@ -38,7 +40,7 @@ class AgentUpdate(BaseModel):
     api_key: str | None = None
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
-    tools: list[dict] | None = None
+    tools: list[str] | None = None
     extra_params: dict | None = None
     enabled: bool | None = None
 
@@ -53,7 +55,7 @@ class AgentOut(ORMBase):
     base_url: str
     temperature: float
     max_tokens: int
-    tools: list[dict] | None = None
+    tools: list[str] | None = None
     extra_params: dict | None = None
     enabled: bool
     version: int

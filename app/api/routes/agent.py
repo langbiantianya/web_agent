@@ -8,6 +8,7 @@ from app.api.deps import DbSession
 from app.cache import agent_cache
 from app.core.crypto import encrypt
 from app.core.errors import ConflictError, NotFoundError
+from app.core.tools import known_tool_names, normalize_tool_names
 from app.repo.agent_repo import agent_repo
 from app.schemas.agent import AgentCreate, AgentOut, AgentUpdate
 
@@ -30,8 +31,9 @@ def _to_out(agent) -> AgentOut:
         agent: ORM ``Agent`` 实例（来自 repo 查询或 ``agent_cache`` 缓存）。
 
     Returns:
-        ``AgentOut``。``tools`` / ``extra_params`` 是 JSON 列，原样透传，
-        不在此处做语义解释。
+        ``AgentOut``。``tools`` 只保留**已注册**的工具名（V3.2）——读的时候
+        宽容，脏数据不至于让整个列表接口 500；``extra_params`` 是 JSON 列，
+        原样透传，不在此处做语义解释。
     """
     return AgentOut(
         id=agent.id,
@@ -43,7 +45,7 @@ def _to_out(agent) -> AgentOut:
         base_url=agent.base_url,
         temperature=float(agent.temperature or 0.7),
         max_tokens=agent.max_tokens or 2048,
-        tools=agent.tools,
+        tools=known_tool_names(agent.tools),
         extra_params=agent.extra_params,
         enabled=bool(agent.enabled),
         version=agent.version or 1,
@@ -53,7 +55,11 @@ def _to_out(agent) -> AgentOut:
 
 @router.post("", response_model=AgentOut, status_code=201)
 async def create_agent(payload: AgentCreate, db: DbSession) -> AgentOut:
-    """创建 Agent。配置即数据——新增 Agent 无需改代码、无需发版。"""
+    """创建 Agent。配置即数据——新增 Agent 无需改代码、无需发版。
+
+    ``tools`` 存的是**工具名**，未注册的名字在这里就拒（400）——配置根本进不了
+    库，也就不会有「模型能调、服务端执行不了」的工具。
+    """
     if await agent_repo.get_by_code(db, payload.code):
         raise ConflictError(f"Agent code 已存在：{payload.code}")
     agent = await agent_repo.create(
@@ -67,7 +73,7 @@ async def create_agent(payload: AgentCreate, db: DbSession) -> AgentOut:
         api_key_cipher=encrypt(payload.api_key),
         temperature=payload.temperature,
         max_tokens=payload.max_tokens,
-        tools=payload.tools,
+        tools=normalize_tool_names(payload.tools),
         extra_params=payload.extra_params,
         enabled=1 if payload.enabled else 0,
     )
@@ -106,10 +112,15 @@ async def get_agent(code: str, db: DbSession) -> AgentOut:
 
 @router.put("/{code}", response_model=AgentOut)
 async def update_agent(code: str, payload: AgentUpdate, db: DbSession) -> AgentOut:
-    """更新 Agent：version+1，缓存键随之失效，下个 run 自动用新配置。"""
+    """更新 Agent：version+1，缓存键随之失效，下个 run 自动用新配置。
+
+    ``tools`` 传了就校验（未注册的工具名 → 400），传 ``null`` 则清空工具。
+    """
     fields = payload.model_dump(exclude_unset=True)
     if "api_key" in fields:
         fields["api_key_cipher"] = encrypt(fields.pop("api_key"))
+    if "tools" in fields:
+        fields["tools"] = normalize_tool_names(fields["tools"])
     if "enabled" in fields and fields["enabled"] is not None:
         fields["enabled"] = 1 if fields["enabled"] else 0
     agent = await agent_repo.update(db, code, fields, bump_version=True)
