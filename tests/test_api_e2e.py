@@ -267,15 +267,12 @@ async def test_workflow_update_partial_keeps_other_fields(
     assert body["definition"]["nodes"] == original["nodes"]
 
 
-async def test_workflow_rejects_dag_definition(client: httpx.AsyncClient):
-    """API 层也要挡一次分叉图：不能只靠服务层校验。
-
-    校验漏在别的入口（脚本、直调 repo）时，错误会推迟到编排中途才炸。
-    """
+async def test_workflow_accepts_dag_definition(client: httpx.AsyncClient):
+    """V3 起 API 层接受分叉图：a 分出 b/c，b 再汇入 c。"""
     r = await client.post(
         "/api/workflows",
         json={
-            "code": "bad_dag",
+            "code": "ok_dag",
             "name": "dag",
             "definition": {
                 "nodes": [
@@ -291,8 +288,38 @@ async def test_workflow_rejects_dag_definition(client: httpx.AsyncClient):
             },
         },
     )
-    assert r.status_code == 400  # 配置非法：V1 不支持 DAG
-    assert r.json()["code"] == "bad_request"
+    assert r.status_code == 201, r.text
+    assert r.json()["version"] == 1
+
+
+async def test_workflow_rejects_orphan_node(client: httpx.AsyncClient):
+    """孤立节点（从 entry 走不到）仍必须在 API 层被拒。
+
+    这条曾经是「DAG 被拒」，V3 放开 DAG 后换成了真正该拒的图——配置期挡不住的
+    错误只会推迟到编排中途才炸，那时 token 和钱已经花出去了。
+    """
+    r = await client.post(
+        "/api/workflows",
+        json={
+            "code": "bad_orphan",
+            "name": "orphan",
+            "definition": {
+                "entry": "a",
+                "nodes": [
+                    {"id": "a", "agentCode": "a"},
+                    {"id": "lost", "agentCode": "lost"},
+                ],
+                "edges": [],
+            },
+        },
+    )
+    assert r.status_code == 400
+    body = r.json()
+    assert body["code"] == "bad_request"
+    # 顶层 message 是统一的「请求参数校验失败」，具体原因在 data.errors 里——
+    # 后台页把那条 msg 直接展示给用户，所以它必须自带可读信息。
+    detail = body["data"]["errors"][0]["msg"]
+    assert "孤立节点" in detail, detail
 
 
 async def test_full_pipeline_streams_and_persists(

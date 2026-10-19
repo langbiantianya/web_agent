@@ -1,4 +1,4 @@
-"""用 LangGraph 表达 workflow 的执行图（设计文档 §6.2，V2）。
+"""用 LangGraph 表达 workflow 的执行图（设计文档 §6.2，V2 起）。
 
 V1 的编排是一个手写循环：``for node in definition.linear_order()``。它在 V1 的
 「线性流水线」约束下是对的，但一旦要做条件路由、DAG、人工审批，就得重写这个循环
@@ -13,7 +13,8 @@ V1 的编排是一个手写循环：``for node in definition.linear_order()``。
 
 若再挂 LangGraph 的 checkpointer，就会出现**两个真相来源**：节点状态存一份、
 事件序列存一份，两者可能不一致，而且续传要同时读两个地方。LangGraph 换来的
-是控制流表达力，不是持久化需求，所以这里只要控制流。
+是控制流表达力，不是持久化需求，所以这里只要控制流。（人工审批需要
+checkpointer，那是 V4 的事，届时它只负责「暂停在哪」，不碰对外事件。）
 
 ## 为什么仍然保留节点内的重试与取消检查
 
@@ -24,25 +25,64 @@ V1 的编排是一个手写循环：``for node in definition.linear_order()``。
 - **取消检查**每个节点开头做一次。``hub.is_cancelled`` 只读进程内布尔字段，不 await，
   在这里检查的代价可以忽略；而放到图外面就没有「进入下一个节点前」的统一拦截点了。
 
-## 为 V3 留的口子
+## V3：DAG 与条件边
 
-图的连线由 ``definition`` 的 ``edges`` 生成，路由函数也单独抽出来。将来要做条件边
-或 DAG 时，改的是 :func:`build_run_graph` 的连线部分和配置期校验，**节点执行逻辑
-一行都不用动**。
+两条扩展线都落在本文件与 :mod:`app.core.workflow_def` 里，
+:meth:`NodeRunner.execute_node` 一行都没动——这正是 V2-b 拆分时要的效果：
+
+- **DAG**：无条件出边逐条 ``add_edge``（并行分叉），多入边自动汇聚。
+- **条件边**：整组交给 ``add_conditional_edges``，路由函数在
+  :func:`_make_router` 里逐条求值。
+- **状态合并器**：并行分支的多个节点会在同一超步返回增量，
+  :class:`RunState` 上的 reducer 是硬性要求，缺了会静默丢产出。
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol, TypedDict
+from typing import Annotated, Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
 from app.core.errors import RunCancelled
+from app.core.expr import evaluate
 from app.core.workflow_def import WorkflowDefinition, WorkflowNode
 from app.models.enums import EventType
 
 logger = logging.getLogger(__name__)
+
+
+def _merge_context(left: list[dict], right: list[dict]) -> list[dict]:
+    """``context`` 的 reducer：拼接两段对话。
+
+    DAG 的并行分支会同时返回状态增量，没有 reducer 的话后写的会覆盖先写的——
+    表现为「一条分支的产出凭空消失」。串行时这个 reducer 退化成 append，行为与
+    V2 完全一致。
+    """
+    return (left or []) + (right or [])
+
+
+def _merge_upstream(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
+    """``upstream`` 的 reducer：按 key 合并。
+
+    并行分支产出不同的 outputKey（配置期已保证 id 唯一），所以正常情况下不会撞
+    key。真撞了时以 ``right`` 为准——它是最新的写入。
+    """
+    merged = dict(left or {})
+    merged.update(right or {})
+    return merged
+
+
+def _merge_usage(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
+    """``usage`` 的 reducer：逐 key 相加。
+
+    并行分支各花各的 token，直接相加才是总量；串行时等价于原来在
+    :meth:`NodeRunner.execute_node` 里手工累加的写法。
+    """
+    merged = dict(left or {})
+    for k, v in (right or {}).items():
+        merged[k] = merged.get(k, 0) + v
+    return merged
 
 
 class RunState(TypedDict):
@@ -52,13 +92,15 @@ class RunState(TypedDict):
     状态：它们由闭包持有，进状态只会让类型签名变脏，还会在每次节点返回时被整体
     复制一遍。
 
-    字段用「整体替换」而非追加语义——每个节点返回自己那一份完整的新值，逻辑最直白，
-    也不需要给 list 配 ``Annotated`` reducer。
+    三个字段都带 **reducer**，这是 DAG 的硬性要求：并行分支的多个节点会在同一个
+    超步里各自返回一份状态增量，没有 reducer 时 LangGraph 只能「后者覆盖前者」，
+    表现为一条分支的产出凭空消失，而 run 仍以 done 正常收尾——这种丢失极难察觉。
+    串行执行时 reducer 退化成原来的「整体替换」，行为不变。
     """
 
-    context: list[dict]
-    upstream: dict[str, str]
-    usage: dict[str, int]
+    context: Annotated[list[dict], _merge_context]
+    upstream: Annotated[dict[str, str], _merge_upstream]
+    usage: Annotated[dict[str, int], _merge_usage]
 
 
 class NodeOps(Protocol):
@@ -162,17 +204,7 @@ class NodeRunner:
             rendered_input=rendered,
         )
 
-        usage = dict(state["usage"])
-        usage["prompt_tokens"] = usage.get("prompt_tokens", 0) + result.usage.get(
-            "prompt_tokens", 0
-        )
-        usage["completion_tokens"] = usage.get("completion_tokens", 0) + result.usage.get(
-            "completion_tokens", 0
-        )
-
         output_key = node.outputKey or node.id
-        upstream = dict(state["upstream"])
-        upstream[output_key] = result.text
 
         await self.hub.emit(
             self.run_id,
@@ -183,9 +215,16 @@ class NodeRunner:
         await self.ops.persist_message(
             self.run_id, self.conversation_id, node.agentCode, result.text
         )
-        context = state["context"] + [{"role": "assistant", "content": result.text}]
 
-        return {"context": context, "upstream": upstream, "usage": usage}
+        # 返回的是**增量**而不是「基于当前 state 累加后的全量」——这是 reducer 的
+        # 契约。全量 + reducer 会重复计数：串行下两个节点就把 usage 加了两轮，
+        # 且数字随节点数线性膨胀；并行下更糟，两条分支各自返回全量会互相叠加。
+        # 实测 2 节点各花 10/5 时，全量写法得到 30/15（应为 20/10）。
+        return {
+            "context": [{"role": "assistant", "content": result.text}],
+            "upstream": {output_key: result.text},
+            "usage": dict(result.usage),
+        }
 
     def make_node_fn(self, node: WorkflowNode):
         """为一个 workflow 节点生成 LangGraph 节点函数（闭包绑住 ``node``）。"""
@@ -199,10 +238,17 @@ class NodeRunner:
 
 
 def build_run_graph(definition: WorkflowDefinition, runner: NodeRunner):
-    """按 definition 连线，编译出本次 run 的执行图。
+    """按 definition 连线，编译出本次 run 的执行图（V3：支持 DAG + 条件边）。
 
-    连线直接来自 ``edges``（而不是假设「按 nodes 顺序串起来」），这样将来换成
-    分叉或条件边时，改的只有这一个函数——``execute_node`` 一行都不用动。
+    两种连线方式，按节点分开处理：
+
+    - **无条件出边**：逐条 ``add_edge``。多个出边就是并行分叉，多个入边就是汇聚
+      ——LangGraph 会把入度已满足的节点放进同一个超步并发跑。
+    - **条件出边**：整组交给 ``add_conditional_edges``，由路由函数逐条求值决定
+      去哪儿。一条都不成立时返回 ``END``，否则这条分支会悬着不结束。
+
+    同一节点的出边不会条件与无条件混用——那是 :meth:`WorkflowDefinition.
+    _check_outgoing_uniform` 在配置期就拒掉的，所以这里不用处理混合情况。
 
     节点名用 ``node.id``，它同时是事件里的 ``node`` 字段、``upstream`` 的键和
     ``run_step`` 的外键，用它当图节点名能让日志里的图和业务数据对得上。
@@ -218,54 +264,70 @@ def build_run_graph(definition: WorkflowDefinition, runner: NodeRunner):
     for node in definition.nodes:
         builder.add_node(node.id, runner.make_node_fn(node))
 
-    # entry 优先，否则按拓扑序的第一个。走 ``linear_order()`` 而不是内部的
-    # ``_topo_order()``：它会再挡一次分叉，作为纵深防御——万一某条路径绕过配置期
-    # 校验把 DAG 塞了进来，这里就会失败，而不是安静地只跑一条分支。
-    order = definition.linear_order()
+    order = definition.topo_order()
     entry = definition.entry_id
     builder.add_edge(START, entry)
 
-    # 只为「确实有上游边」的节点连边：单节点流程没有任何 edge，
-    # 若按 nodes 顺序硬连反而会造出一条 definition 里并不存在的依赖。
-    linked = {e.to for e in definition.edges}
-    for node in order[1:]:
-        if node.id in linked:
-            builder.add_edge(_predecessor(node.id, definition), node.id)
+    outgoing: dict[str, list] = {n.id: [] for n in definition.nodes}
+    for e in definition.edges:
+        outgoing[e.from_].append(e)
 
-    # 链尾节点连到 END。线性流水线里「没有下游边」即为链尾。
-    has_downstream = {e.from_ for e in definition.edges}
-    for node in order:
-        if node.id not in has_downstream:
-            builder.add_edge(node.id, END)
+    for node_id, edges in outgoing.items():
+        if not edges:
+            # 链尾：没有下游边，直接结束。
+            builder.add_edge(node_id, END)
+        elif edges[0].when:
+            targets = [e.to for e in edges]
+            builder.add_conditional_edges(
+                node_id,
+                _make_router(edges, runner.user_input),
+                [*targets, END],
+            )
+        else:
+            # 无条件出边。逐条 add_edge 而非 add_edge(list)：后者是「全部满足才
+            # 走」，前者才是并行分叉——两者语义完全相反，这里要的是后者。
+            for target in edges:
+                builder.add_edge(node_id, target.to)
 
     compiled = builder.compile()
     logger.info(
-        "run 图已构建：entry=%s，%s 个节点，%s 条边，顺序 %s",
+        "run 图已构建：entry=%s，%s 个节点，%s 条边（其中条件边 %s 条），拓扑序 %s",
         entry,
         len(order),
         len(definition.edges),
+        sum(1 for e in definition.edges if e.when),
         " -> ".join(n.id for n in order),
     )
     return compiled
 
 
-def _predecessor(node_id: str, definition: WorkflowDefinition) -> str:
-    """返回一个节点的唯一上游节点 id。
+def _make_router(edges: list, user_input: str):
+    """为一个节点的条件出边生成路由函数。
 
-    配置期已拒绝分叉，所以入度最多为 1，这里取第一条即可。找不到上游时返回它自己，
-    交由 LangGraph 报「节点不存在」这种更直白的错。
+    路由函数在节点跑完之后被 LangGraph 调用，拿到最新 state，返回下一个节点名
+    的列表。返回空列表会让图卡住，所以这里兜底成 ``[END]``——条件全不成立
+    就是「这条路不用走了」，而不是出错。
+
+    条件表达式在配置期已做过语法与变量校验（见
+    :meth:`WorkflowDefinition._validate_conditions`），运行期再抛
+    :class:`~app.core.expr.ExprError` 就意味着校验漏了，让它原样冒泡比静默走
+    else 分支好排查得多。
     """
-    for e in definition.edges:
-        if e.to == node_id:
-            return e.from_
-    return node_id
+
+    async def router(state: RunState) -> list[str]:
+        """逐条求值出边条件，返回命中的下游节点。"""
+        scope = {"upstream": state.get("upstream") or {}, "user_input": user_input}
+        chosen = [e.to for e in edges if evaluate(e.when, scope)]
+        return chosen if chosen else [END]
+
+    return router
 
 
 def recursion_limit(definition: WorkflowDefinition) -> int:
     """给 ``ainvoke`` 的 ``recursion_limit``。
 
-    LangGraph 按「超步」计数，线性链每节点一超步，所以节点数 + 余量足够。留 10 的
-    余量是为了将来加条件边时不必回来改这里——触发这个上限意味着图里出现了环，
-    早失败比跑出重复执行要好。
+    LangGraph 按「超步」计数。DAG 下每个节点最多跑一次，超步数不会超过节点数，
+    所以仍是 ``len(nodes) + 余量``。留 10 的余量是为了将来加循环/审批时不必回来
+    改——触发这个上限意味着图里出现了环，早失败比跑出重复执行要好。
     """
     return len(definition.nodes) + 10

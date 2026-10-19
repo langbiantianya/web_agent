@@ -18,6 +18,8 @@
 | **归属租约（V2）** | 生成方持带 TTL 的租约并续期；新实例启动只回收**无主**的 run，不会误杀别人正在跑的 |
 | **跨实例取消（V2）** | 取消信号走控制频道，在 B 实例点「停止」能真的停掉 A 实例上的生成 |
 | **LangGraph 编排（V2）** | 控制流交给 `StateGraph`，连线来自 `definition.edges`；**刻意不挂 checkpointer**，事件流唯一权威（见下） |
+| **DAG + 条件边（V3）** | Workflow 不再是一条链：无条件出边**并行分叉**、多条入边**汇聚**；带 `when` 的边按表达式**分支**。环、孤立节点、汇聚形状等**全部在保存时拒绝** |
+| **条件表达式（V3）** | 手写递归下降解析器（**不用 `eval`**，杜绝 RCE），支持 `== != > < >= <=`、`and/or/not`、括号与白名单函数 `len/contains/lower/is_empty` |
 | 心跳保活 | SSE 注释行 `: ping`，不占 `seq`、不落库、不污染回放序列 |
 | 统一协议 | 所有模型走 OpenAI 兼容 `/v1/chat/completions`，OpenAI / DeepSeek / Qwen / vLLM 通吃 |
 | 可扩展 | 进程内总线抽象为 `BusBackend` Protocol，V2 已落地 Redis Pub/Sub 实现 |
@@ -248,20 +250,108 @@ location /api/ {
 | 标签页 | 能做什么 |
 | --- | --- |
 | **Agent 配置** | 增删改查 Agent：system_prompt / model / base_url / api_key / temperature / max_tokens / 启用开关 / tools 与 extra_params |
-| **Workflow 编排** | 增删改查 Workflow。**节点用表单编排**（id、选 Agent、outputKey、上下移），`edges` 按顺序自动串成链，并实时预览将要提交的 definition JSON |
+| **Workflow 编排** | 增删改查 Workflow。**节点用表单编排**（id、选 Agent、outputKey），**连线显式添加**（from → to → 可选 `when` 条件），实时预览将要提交的 definition JSON |
 | **会话观测** | 按 `user_id` 查会话，看消息历史与进行中的 run（run_id / 状态 / 当前节点 / last_seq） |
 
 几个刻意的设计：
 
 - **api_key 不回填、不回显**。列表接口只给 `has_api_key` 布尔值，编辑时该框留空表示
   「不修改」——直接带上空值等于把已存的 key 抹掉。
-- **edges 不让手工填**。手工连边十有八九会连成 DAG 或成环，而服务端在配置期就会拒绝；
-  让页面按顺序自动成链，把「填错了」这件事消灭在提交之前。
+- **连线改成显式添加**。V1/V2 时代页面按节点顺序自动成链，理由是「手工连边十有八九会
+  连成 DAG 或成环」。V3 支持 DAG 之后这个理由不成立了——分叉、汇聚、条件边**根本没法
+  用一条链表达**，于是改成显式连线：一条边一行，可填 `when`。
+- **条件表达式有语法提示**。输入 `when` 时页面会提示可用的 `upstream.<outputKey>` 与
+  保留变量 `user_input`；写错在保存时就会被服务端拒绝并说明原因。
 - **首次进入自动选中第一项**，右侧不会是一片「请选择」。
 - **事件一律 `addEventListener` + 委托**，不用 inline `onclick`，与验证台一致，
   将来加 CSP 也不会整片失效。
 - 会话列表接口按 `user_id` 过滤（不传即 `anonymous`），所以页面上给了 `user_id` 输入框——
   演示数据的会话属于 `demo`，不切用户就只会看到空列表。
+
+---
+
+## Workflow 定义格式（V3：DAG + 条件边）
+
+Workflow 的 `definition` 是一张图。`nodes` 声明节点，`edges` 声明连线，`entry` 指定入口
+（不写就取第一个节点）。
+
+```json
+{
+  "entry": "root",
+  "nodes": [
+    {"id": "root",  "agentCode": "planner",   "outputKey": "plan"},
+    {"id": "left",  "agentCode": "researcher","outputKey": "left_out"},
+    {"id": "right", "agentCode": "researcher","outputKey": "right_out"},
+    {"id": "join",  "agentCode": "writer",    "outputKey": "final"}
+  ],
+  "edges": [
+    {"from": "root", "to": "left"},
+    {"from": "root", "to": "right"},
+    {"from": "left", "to": "join"},
+    {"from": "right", "to": "join"}
+  ],
+  "inputTemplate": "问：{{user_input}}\n计划：{{plan}}\n左：{{left_out}}\n右：{{right_out}}"
+}
+```
+
+上面这张图的意思是：**root 之后 left 与 right 并行跑**，两条都结束后 **join 才开始**。
+事件流里能直接看出这个结构——两个分支的 `node_start` 连着出现，token 交错，
+`join` 的 `node_start` 排在两个分支的 `node_end` 之后。
+
+### 边的两种形态
+
+| 边 | 含义 |
+| --- | --- |
+| 不带 `when` | 无条件走。同一节点的**多条**无条件出边 = 并行分叉；**多条**无条件入边 = 汇聚 |
+| 带 `when` | 表达式成立才走。同一节点的**多条**条件出边 = 分支（互斥选择） |
+
+```json
+{"from": "root", "to": "deep",  "when": "len(upstream.plan) > 0"},
+{"from": "root", "to": "quick", "when": "false"}
+```
+
+### 条件表达式
+
+手写递归下降解析器（`app/core/expr.py`），**不用 `eval`**——条件来自用户配置，
+`eval` 等于把 RCE 暴露给任何能编辑工作流的人。
+
+| 类别 | 支持 |
+| --- | --- |
+| 比较 | `==` `!=` `>` `<` `>=` `<=` |
+| 逻辑 | `and` `or` `not`，可加括号 |
+| 字面量 | 字符串、数字、`true` / `false` / `null` |
+| 变量 | `user_input`、`upstream.<outputKey>` |
+| 函数 | `len()` `contains()` `lower()` `is_empty()` |
+
+**只认两种变量写法**：`user_input` 与 `upstream.<outputKey>`。裸写 `plan` 会在保存时被
+拒绝并提示 `upstream.plan`——因为求值期的作用域只有这两个根，裸名会**静默求值成
+`None`**，条件恒假、走错分支还不报错。
+
+### 模板变量
+
+`inputTemplate` 支持三类占位符：
+
+| 占位符 | 内容 |
+| --- | --- |
+| `{{user_input}}` | 本次用户输入 |
+| `{{upstream}}` | 全部上游产出的 Markdown 摘要（按 outputKey 分块） |
+| `{{outputKey}}` | **某个**上游产出，例如 `{{left_out}}` |
+
+DAG 下逐个引用是刚需：并行分支同时产出多份内容，用 `{{upstream}}` 一把全塞进 prompt，
+模型分不清哪段对应哪个分支。未知变量在保存时就会被拒绝。
+
+### 保存时会被拒绝的配置
+
+能在运行前静态判定的问题，一律挡在保存时——跑一半才发现编排不了，token 和钱已经花出去了：
+
+| 拒绝 | 原因 |
+| --- | --- |
+| 存在环 | 执行顺序无法确定 |
+| 有从 entry 走不到的节点 | 死配置：保存不报错，但那个节点永远不跑 |
+| 汇聚节点的入边里混了条件边 | LangGraph 会等齐所有入边才触发，条件跳过一条就永远等不到 |
+| 同一节点的出边条件与无条件混用 | 语义不明确 |
+| `when` 语法错误 / 引用了不存在的 outputKey | 运行期会安静求值成 `None`，**走错分支且不报错** |
+| `inputTemplate` 引用了不存在的变量 | 会把 `{{xxx}}` 原样发给模型看 |
 
 ---
 
@@ -418,15 +508,19 @@ location /api/ {
 pytest -q
 ```
 
-**102 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
-Redis 连不上时这 19 个会自动 skip，其余照跑），9 个是图构建测试（`tests/test_run_graph.py`，
-含「执行顺序按 edges 而非 nodes 声明顺序」）。覆盖设计文档里最容易写错的两处：
+**129 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
+Redis 连不上时这 19 个会自动 skip，其余照跑），6 个是 Redis 降级测试
+（`tests/test_redis_degradation.py`，用假件模拟抖动，不需要真实 Redis），
+15 个是图构建与执行测试（`tests/test_run_graph.py`，含「执行顺序按 edges 而非 nodes
+声明顺序」、并行分支的 reducer 合并、条件边的分支选择）。覆盖设计文档里最容易写错的
+几处：
 
 - `run_event` 批量落库不丢事件、seq 严格递增唯一、并发 emit 不产生重复 seq
 - 「先订阅 → 冲刷 → 回放 → 按 seq 合并」在断线重连时不漏字、不重复、不乱序
 - **跨实例续传**：A 实例生成、B 实例收流，B 侧 `hub.flush()` 是空操作也能收全
 - **跨实例取消**：B 实例点取消，A 实例上的生成收到信号并停止
 - **归属租约**：启动恢复只回收无主的 run，不误杀其它实例正在跑的
+- **Redis 抖动降级**：租约拿不到、Stream 写不进去、广播发不出去时，**run 不能夭折**
 
 端到端用例会起一个**真实的 OpenAI 兼容 HTTP 服务**当假模型（`tests/fake_llm.py`），
 走完整网络栈验证 SSE 吐字、取消、重试、断线续传。另有双实例端到端（两个独立
@@ -446,7 +540,7 @@ python scripts/check_docstrings.py            # 全量
 python scripts/check_docstrings.py app/core   # 指定目录/文件/模块路径
 ```
 
-当前状态：**450 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
+当前状态：**539 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
 默认扫描范围含根目录的 `run.py`，新增根目录脚本记得加进 `DEFAULT_TARGETS`。
 
 ---
@@ -464,6 +558,7 @@ app/
 ├── core/
 │   ├── bus.py              # BusBackend Protocol + InMemory / Redis Pub-Sub 两种实现
 │   ├── event_log.py        # EventLog Protocol + Db / Redis Stream 两种回放源
+│   ├── expr.py             # 条件表达式解析与求值（手写递归下降，不用 eval，V3）
 │   ├── lease.py            # RunLease Protocol + Noop / Redis 两种归属租约与取消频道
 │   ├── redis_client.py     # Redis 连接生命周期 + 实例标识 + 键布局（V2）
 │   ├── run_hub.py          # seq 分配 + 事件广播 + 取消信号

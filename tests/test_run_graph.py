@@ -264,3 +264,180 @@ async def test_recursion_limit_exceeds_node_count():
     graph = build_run_graph(definition, _runner(definition, ops))
     await graph.ainvoke(_initial(), {"recursion_limit": recursion_limit(definition)})
     assert ops.ran == [f"n{i}" for i in range(6)]
+
+
+# ------------------------------------------------------------------ V3 DAG
+
+
+def _dag_definition(spec: dict):
+    """按完整 dict 造 definition——DAG 用例需要 outputKey 与 when，原地拼太啰嗦。"""
+    return WorkflowDefinition.model_validate(spec)
+
+
+def _graph(definition: WorkflowDefinition, ops: FakeOps):
+    """构图并执行，返回最终状态。"""
+    graph = build_run_graph(definition, _runner(definition, ops))
+    return graph
+
+
+async def test_parallel_fanout_runs_both_branches_and_keeps_both_outputs():
+    """并行分叉的两个分支都要跑，且**两条产出都得留下**。
+
+    这是 V3 最关键的一条：并行节点在同一超步各自基于同一份 base state 返回增量，
+    没有 reducer 时 LangGraph 只保留后写的那个——一条分支的产出凭空消失，而 run
+    仍以 done 正常收尾。这种丢失极难察觉，所以必须钉死。
+    """
+    definition = _dag_definition({
+        "entry": "root",
+        "nodes": [
+            {"id": "root", "agentCode": "a1", "outputKey": "plan"},
+            {"id": "left", "agentCode": "a2", "outputKey": "left_out"},
+            {"id": "right", "agentCode": "a3", "outputKey": "right_out"},
+        ],
+        "edges": [
+            {"from": "root", "to": "left"},
+            {"from": "root", "to": "right"},
+        ],
+    })
+    ops = FakeOps()
+    graph = _graph(definition, ops)
+
+    out = await graph.ainvoke(_initial(), {"recursion_limit": recursion_limit(definition)})
+
+    assert set(ops.ran) == {"root", "left", "right"}
+    # 两条分支的产出都必须在
+    assert out["upstream"]["left_out"] == "输出-left"
+    assert out["upstream"]["right_out"] == "输出-right"
+    assert out["upstream"]["plan"] == "输出-root"
+
+
+async def test_fanin_node_sees_outputs_of_both_parents():
+    """汇聚节点要能看到两条分支的全部产出，且只跑一次。"""
+    definition = _dag_definition({
+        "entry": "root",
+        "nodes": [
+            {"id": "root", "agentCode": "a1", "outputKey": "plan"},
+            {"id": "left", "agentCode": "a2", "outputKey": "left_out"},
+            {"id": "right", "agentCode": "a3", "outputKey": "right_out"},
+            {"id": "join", "agentCode": "a4"},
+        ],
+        "edges": [
+            {"from": "root", "to": "left"},
+            {"from": "root", "to": "right"},
+            {"from": "left", "to": "join"},
+            {"from": "right", "to": "join"},
+        ],
+    })
+    ops = FakeOps()
+    graph = _graph(definition, ops)
+
+    out = await graph.ainvoke(_initial(), {"recursion_limit": recursion_limit(definition)})
+
+    assert ops.ran.count("join") == 1, "汇聚节点必须只跑一次"
+    # join 的渲染输入里应同时出现两条分支的产出
+    join_input = ops.rendered[-1]
+    assert "输出-left" in join_input
+    assert "输出-right" in join_input
+
+
+async def test_usage_accumulates_once_per_node_even_in_parallel():
+    """并行分支的 usage 要**相加**，不能各带全量被重复叠加。
+
+    回归价值极高：节点函数早期返回的是「基于当前 state 累加后的全量」，
+    配上 reducer 就会双倍计数（2 节点各 10/5 时得到 30/15 而不是 20/10），
+    且数字随节点数线性膨胀——线上只会表现为成本统计悄悄偏高。
+    """
+    definition = _dag_definition({
+        "entry": "root",
+        "nodes": [
+            {"id": "root", "agentCode": "a1", "outputKey": "plan"},
+            {"id": "left", "agentCode": "a2", "outputKey": "left_out"},
+            {"id": "right", "agentCode": "a3", "outputKey": "right_out"},
+        ],
+        "edges": [
+            {"from": "root", "to": "left"},
+            {"from": "root", "to": "right"},
+        ],
+    })
+    ops = FakeOps()
+    graph = _graph(definition, ops)
+
+    out = await graph.ainvoke(_initial(), {"recursion_limit": recursion_limit(definition)})
+
+    # 3 个节点，每节点 10 prompt / 5 completion
+    assert out["usage"] == {"prompt_tokens": 30, "completion_tokens": 15}
+
+
+async def test_conditional_edge_takes_only_the_matching_branch():
+    """条件成立时只走命中的那条分支，另一条完全不执行。"""
+    definition = _dag_definition({
+        "entry": "root",
+        "nodes": [
+            {"id": "root", "agentCode": "a1", "outputKey": "plan"},
+            {"id": "deep", "agentCode": "a2", "outputKey": "deep_out"},
+            {"id": "shallow", "agentCode": "a3", "outputKey": "shallow_out"},
+        ],
+        "edges": [
+            {"from": "root", "to": "deep", "when": 'contains(upstream.plan, "深入")'},
+            {"from": "root", "to": "shallow", "when": "true"},
+        ],
+    })
+    ops = FakeOps()
+    graph = _graph(definition, ops)
+
+    out = await graph.ainvoke(_initial(), {"recursion_limit": recursion_limit(definition)})
+
+    # plan = "输出-root"，不含「深入」，所以只走 shallow
+    assert set(ops.ran) == {"root", "shallow"}
+    assert "deep_out" not in out["upstream"]
+    assert out["upstream"]["shallow_out"] == "输出-shallow"
+
+
+async def test_conditional_edge_all_false_terminates_branch():
+    """条件全不成立时要走到 END，不能把 run 悬死。"""
+    definition = _dag_definition({
+        "entry": "root",
+        "nodes": [
+            {"id": "root", "agentCode": "a1", "outputKey": "plan"},
+            {"id": "deep", "agentCode": "a2", "outputKey": "deep_out"},
+            {"id": "shallow", "agentCode": "a3", "outputKey": "shallow_out"},
+        ],
+        "edges": [
+            {"from": "root", "to": "deep", "when": 'contains(upstream.plan, "深入")'},
+            {"from": "root", "to": "shallow", "when": 'contains(upstream.plan, "快速")'},
+        ],
+    })
+    ops = FakeOps()
+    graph = _graph(definition, ops)
+
+    out = await graph.ainvoke(_initial(), {"recursion_limit": recursion_limit(definition)})
+
+    assert ops.ran == ["root"]
+    assert out["upstream"] == {"plan": "输出-root"}
+
+
+async def test_conditional_branch_can_feed_downstream_unconditionally():
+    """条件分支的后继可以是无条件边——「选中哪条都要往下走」。"""
+    definition = _dag_definition({
+        "entry": "root",
+        "nodes": [
+            {"id": "root", "agentCode": "a1", "outputKey": "plan"},
+            {"id": "deep", "agentCode": "a2", "outputKey": "deep_out"},
+            {"id": "shallow", "agentCode": "a3", "outputKey": "shallow_out"},
+            {"id": "final", "agentCode": "a4", "outputKey": "final_out"},
+        ],
+        "edges": [
+            {"from": "root", "to": "deep", "when": 'contains(upstream.plan, "深入")'},
+            {"from": "root", "to": "shallow", "when": "true"},
+            {"from": "deep", "to": "final"},
+            {"from": "shallow", "to": "final"},
+        ],
+    })
+    ops = FakeOps()
+    graph = _graph(definition, ops)
+
+    await graph.ainvoke(_initial(), {"recursion_limit": recursion_limit(definition)})
+
+    assert "shallow" in ops.ran
+    assert "final" in ops.ran, "选中的分支必须继续往下走"
+    assert "deep" not in ops.ran

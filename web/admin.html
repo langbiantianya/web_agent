@@ -105,7 +105,11 @@
     display: flex; align-items: center; gap: 6px;
   }
   .node .ord::after { content: ""; flex: 1; height: 1px; background: var(--border); }
-  @media (max-width: 700px) { .node { grid-template-columns: 1fr; } }
+  /* 连线行：起点 → 终点 + when 条件 */
+  .edge { display: grid; grid-template-columns: 1fr 18px 1fr 2.2fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .edge .arrow { text-align: center; color: var(--dim); }
+  .edge .e-when { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  @media (max-width: 700px) { .node, .edge { grid-template-columns: 1fr; } .edge .arrow { display: none } }
 
   pre {
     background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
@@ -402,7 +406,14 @@ async function loadWorkflows() {
 function newWorkflow() {
   state.wf = {
     isNew: true,
-    definition: { entry: "", nodes: [], edges: [], inputTemplate: "用户问题：{{user_input}}\n上游产出：{{upstream}}" },
+    definition: {
+      entry: "",
+      nodes: [],
+      // V3 起边由用户自己列；不再按节点顺序自动成链——DAG 的分叉/汇聚/条件边
+      // 表达不了「一条链」。
+      edges: [],
+      inputTemplate: "用户问题：{{user_input}}\n上游产出：{{upstream}}",
+    },
   };
   renderWorkflowForm();
 }
@@ -420,10 +431,8 @@ function nodeRow(n, i) {
     '<option value="' + esc(a.code) + '"' + (a.code === n.agentCode ? " selected" : "") + '>' +
     esc(a.name) + " (" + esc(a.code) + ')</option>'
   ).join("");
-  const arrow = i === 0 ? "入口" : "↑ 上一个节点";
   return `
     <div class="node">
-      <div class="ord">${arrow}</div>
       <input type="text" class="n-id" value="${esc(n.id || "")}" placeholder="节点 id">
       <select class="n-agent">${opts ? '<option value="">选择 Agent…</option>' + opts : '<option value="">（还没有 Agent）</option>'}</select>
       <input type="text" class="n-key" value="${esc(n.outputKey || "")}" placeholder="outputKey">
@@ -435,6 +444,22 @@ function nodeRow(n, i) {
     </div>`;
 }
 
+/** 一行边：起点 / 终点 / 条件。``when`` 留空即无条件边。 */
+function edgeRow(e, i) {
+  const names = state.wf.definition.nodes.map(n => n.id).filter(Boolean);
+  const opt = (sel) => '<option value="">（选择节点）</option>' +
+    names.map(n => '<option value="' + esc(n) + '"' + (n === sel ? " selected" : "") + ">" + esc(n) + "</option>").join("");
+  return `
+    <div class="edge">
+      <select class="e-from">${opt(e.from)}</select>
+      <span class="arrow">→</span>
+      <select class="e-to">${opt(e.to)}</select>
+      <input type="text" class="e-when" value="${esc(e.when || "")}"
+             placeholder='when 条件，留空=无条件' spellcheck="false">
+      <button class="sm danger" data-act="edge-del" data-i="${i}" title="删除这条边">✕</button>
+    </div>`;
+}
+
 function renderWorkflowForm() {
   const w = state.wf, box = $("wfForm");
   if (!w) { box.innerHTML = '<div class="muted">选择左侧 Workflow，或新建一个。</div>'; return; }
@@ -442,6 +467,9 @@ function renderWorkflowForm() {
   const d = w.definition;
   if (!Array.isArray(d.nodes)) d.nodes = [];
   if (!Array.isArray(d.edges)) d.edges = [];
+  const names = d.nodes.map(n => n.id).filter(Boolean);
+  const entryOpts = '<option value="">（默认用第一个节点）</option>' +
+    names.map(n => '<option value="' + esc(n) + '"' + (n === d.entry ? " selected" : "") + ">" + esc(n) + "</option>").join("");
 
   box.innerHTML = `
     <div class="grid2">
@@ -456,13 +484,23 @@ function renderWorkflowForm() {
       <button class="sm" data-act="node-add">+ 添加节点</button></span></h2>
     <div id="nodes">${d.nodes.map(nodeRow).join("") || '<div class="muted">还没有节点，先添加一个。</div>'}</div>
 
+    <label style="margin-top:12px"><span>entry <span class="hint">（不选则用列表里的第一个节点）</span></span>
+      <select id="w_entry">${entryOpts}</select></label>
+
+    <h2 style="border:none;padding:8px 0">连线 <span class="sp">
+      <button class="sm" data-act="edge-add">+ 添加连线</button></span></h2>
+    <div id="edges">${d.edges.map(edgeRow).join("") || '<div class="muted">还没有连线。单节点流程可以没有连线。</div>'}</div>
+    <div class="muted" style="margin:8px 0 14px">
+      留空 <code>when</code> = 无条件边：多个出边是<b>并行分叉</b>，多个入边是<b>汇聚</b>。<br>
+      填 <code>when</code> = 条件边，同一节点的出边要么全填要么全空。表达式支持
+      <code>== != &gt; &lt; &gt;= &lt;=</code>、<code>and or not</code>，以及
+      <code>contains(文本,子串)</code> / <code>len(x)</code> / <code>lower(x)</code> / <code>is_empty(x)</code>；
+      变量写 <code>upstream.&lt;outputKey&gt;</code>。例：<code>contains(upstream.plan, "深入")</code>
+    </div>
+
     <label><span>inputTemplate <span class="hint">可用 {{user_input}} / {{upstream}} / {{上游outputKey}}</span></span>
       <textarea class="prompt" id="w_tpl" rows="3">${esc(d.inputTemplate || "")}</textarea></label>
 
-    <div class="muted" style="margin-bottom:10px">
-      edges 按上面的顺序<b>自动串成一条链</b>，不需要手工填。当前版本只支持线性流水线，
-      分叉（DAG）会在保存时被服务端拒绝。
-    </div>
     <pre id="w_preview"></pre>
 
     <div class="row" style="margin-top:12px">
@@ -470,6 +508,21 @@ function renderWorkflowForm() {
       ${w.isNew ? "" : '<button class="danger" data-act="del-wf">删除</button>'}
     </div>`;
   syncNodes();
+}
+
+function addEdge() {
+  syncNodes();
+  const d = state.wf.definition;
+  const names = d.nodes.map(n => n.id).filter(Boolean);
+  d.edges = d.edges || [];
+  d.edges.push({ from: names[0] || "", to: names[1] || "", when: "" });
+  renderWorkflowForm();
+}
+
+function rmEdge(i) {
+  syncNodes();
+  state.wf.definition.edges.splice(i, 1);
+  renderWorkflowForm();
 }
 
 function addNode() {
@@ -491,32 +544,55 @@ function moveNode(i, delta) {
   renderWorkflowForm();
 }
 
-/** 把 DOM 里的节点行读回 state.wf.definition，并顺手刷新预览。 */
+/** 从 state 组装要提交的 definition。
+
+    V3 起 edges 是**用户自己列的**，不再是「按节点顺序自动串成链」——DAG 需要分叉、
+    汇聚和条件边，自动成链表达不了它们。节点的声明顺序只影响列表显示与同层顺序。
+ */
+function buildDefinition() {
+  const d = state.wf.definition;
+  const nodes = d.nodes.filter(n => n.id);
+  const edges = (d.edges || [])
+    .filter(e => e.from && e.to)
+    .map(e => (e.when ? { from: e.from, to: e.to, when: e.when } : { from: e.from, to: e.to }));
+  return {
+    entry: d.entry && d.entry ? d.entry : (nodes.length ? nodes[0].id : ""),
+    nodes: nodes.map(n => ({ id: n.id, agentCode: n.agentCode, outputKey: n.outputKey })),
+    edges: edges,
+    inputTemplate: d.inputTemplate || "",
+  };
+}
+
+/** 把节点区与边区的输入框读回 state.wf.definition，并刷新预览。 */
 function syncNodes() {
   if (!state.wf) return;
   const d = state.wf.definition;
+
   document.querySelectorAll("#nodes .node").forEach((row, i) => {
     if (!d.nodes[i]) d.nodes[i] = { id: "", agentCode: "", outputKey: "" };
     d.nodes[i].id = row.querySelector(".n-id").value.trim();
     d.nodes[i].agentCode = row.querySelector(".n-agent").value;
     d.nodes[i].outputKey = row.querySelector(".n-key").value.trim();
   });
-  const tpl = $("w_tpl");
-  if (tpl) d.inputTemplate = tpl.value;
-  const pv = $("w_preview");
-  if (pv) pv.textContent = JSON.stringify(buildDefinition(), null, 2);
-}
 
-/** 从 state 组装要提交的 definition：边就是相邻节点之间的链。 */
-function buildDefinition() {
-  const d = state.wf.definition;
-  const nodes = d.nodes.filter(n => n.id);
-  return {
-    entry: nodes.length ? nodes[0].id : "",
-    nodes: nodes.map(n => ({ id: n.id, agentCode: n.agentCode, outputKey: n.outputKey })),
-    edges: nodes.slice(1).map((n, i) => ({ from: nodes[i].id, to: n.id })),
-    inputTemplate: d.inputTemplate || "",
-  };
+  // 边：先按行重建。节点可能刚被改名，按 id 匹配而不是按下标。
+  const names = d.nodes.map(n => n.id).filter(Boolean);
+  const rows = Array.from(document.querySelectorAll("#edges .edge"));
+  d.edges = rows.map(row => ({
+    from: row.querySelector(".e-from").value,
+    to: row.querySelector(".e-to").value,
+    when: row.querySelector(".e-when").value.trim(),
+  }));
+  if (!names.length) d.edges = [];
+
+  const ent = document.getElementById("w_entry");
+  if (ent) d.entry = ent.value;
+
+  const tpl = document.getElementById("w_tpl");
+  if (tpl) d.inputTemplate = tpl.value;
+
+  const pv = document.getElementById("w_preview");
+  if (pv) pv.textContent = JSON.stringify(buildDefinition(), null, 2);
 }
 
 async function saveWorkflow() {
@@ -526,6 +602,11 @@ async function saveWorkflow() {
     if (!def.nodes.length) throw new Error("至少需要一个节点");
     const missing = def.nodes.filter(n => !n.agentCode).map(n => n.id);
     if (missing.length) throw new Error("这些节点还没选 Agent：" + missing.join("、"));
+    const halfEdge = def.edges.filter(e => !e.from || !e.to).length;
+    if (halfEdge) throw new Error("有 " + halfEdge + " 条连线还没选全起点或终点");
+    if (def.edges.length && def.nodes.length < 2) {
+      throw new Error("单节点流程不需要连线，请先删除连线");
+    }
 
     const payload = {
       name: $("w_name").value.trim(),
@@ -677,14 +758,19 @@ wireEditor("wfForm", {
   "node-up": el => moveNode(parseInt(el.dataset.i, 10), -1),
   "node-down": el => moveNode(parseInt(el.dataset.i, 10), 1),
   "node-del": el => rmNode(parseInt(el.dataset.i, 10)),
+  "edge-add": addEdge,
+  "edge-del": el => rmEdge(parseInt(el.dataset.i, 10)),
 });
 
 // 编排输入框是 innerHTML 重绘的，委托到容器上统一同步，顺便刷新 JSON 预览。
 $("wfForm").addEventListener("input", e => {
-  if (e.target.closest("#nodes") || e.target.id === "w_tpl") syncNodes();
+  if (e.target.closest("#nodes") || e.target.closest("#edges") || e.target.id === "w_tpl") syncNodes();
 });
 $("wfForm").addEventListener("change", e => {
-  if (e.target.classList.contains("n-agent")) syncNodes();
+  if (e.target.classList.contains("n-agent")
+      || e.target.classList.contains("e-from")
+      || e.target.classList.contains("e-to")
+      || e.target.id === "w_entry") syncNodes();
 });
 
 // ---------------------------------------------------------------- 启动
