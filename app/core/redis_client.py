@@ -154,6 +154,11 @@ async def connect_redis(attempts: int = 3, backoff: float = 0.5) -> Redis:
             decode_responses=True,
             health_check_interval=30,
             socket_connect_timeout=5,
+            # 读也必须有上限：``socket_connect_timeout`` 只管「连不连得上」，
+            # 连上之后的读**默认无限等**。Redis 所在网段一抖，XADD / PUBLISH
+            # 里的一个读就能把整条生成流程冻住——外部看是「服务没反应了」，
+            # 日志里却什么都看不出来。宁可 5 秒后报个错重试，也不要无限期挂死。
+            socket_timeout=settings.redis_socket_timeout,
             socket_keepalive=True,
         )
         client = Redis(connection_pool=pool)

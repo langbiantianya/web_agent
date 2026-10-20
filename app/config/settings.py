@@ -102,6 +102,14 @@ class Settings(BaseSettings):
     # 正在进行的 Redis 读，让连接锁状态不一致，后续关闭操作会永久挂起），
     # 所以这个值直接决定退订的快慢，1 秒是个平衡点。
     redis_poll_interval: float = 1.0
+    # 单次 Redis 读写的**超时**（秒）。刻意与 ``socket_connect_timeout`` 分开：
+    # 建连超时只管「连不连得上」，连上之后的读**默认没有上限**——对端只要不
+    # 回包，这条协程就永远挂着。实测踩过：Redis 所在网段抖动时，XADD / PUBLISH
+    # 里的一个读把整个生成流程冻住，外部看就是「服务不响应了」。
+    # 5 秒对局域网里的 Redis 绰绰有余，而挂死的代价高得多。
+    # 注意不影响 Pub/Sub：``get_message(timeout=...)`` 自己带超时，
+    # ``parse_response(block=True)`` 显式传 ``math.inf``，都不受这个值影响。
+    redis_socket_timeout: float = 5.0
 
 
 @lru_cache
