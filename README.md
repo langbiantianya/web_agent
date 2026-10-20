@@ -603,7 +603,7 @@ location /api/ {
 pytest -q
 ```
 
-**171 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
+**175 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
 Redis 连不上时这 19 个会自动 skip，其余照跑），6 个是 Redis 降级测试
 （`tests/test_redis_degradation.py`，用假件模拟抖动，不需要真实 Redis），
 15 个是图构建与执行测试（`tests/test_run_graph.py`，含「执行顺序按 edges 而非 nodes
@@ -637,7 +637,7 @@ python scripts/check_docstrings.py            # 全量
 python scripts/check_docstrings.py app/core   # 指定目录/文件/模块路径
 ```
 
-当前状态：**690 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
+当前状态：**703 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
 默认扫描范围含根目录的 `run.py`，新增根目录脚本记得加进 `DEFAULT_TARGETS`。
 
 ---
@@ -674,7 +674,7 @@ python scripts/bench.py --label saturated --chunk-delay 0
 python scripts/bench.py --label realistic --chunk-delay 0.02
 ```
 
-### 压测带出来的两个真问题（已修）
+### 压测带出来的三个真问题（已修）
 
 1. **SQLite 并发写直接 500**（`database is locked`）。修法是 WAL + busy_timeout
    （`app/config/db.py`）。**试过 `BEGIN IMMEDIATE` 并放弃**——它把「报错」变成
@@ -683,6 +683,10 @@ python scripts/bench.py --label realistic --chunk-delay 0.02
    而 SSE 响应一直开着——每条开着的流都占住连接池里的一个连接。MySQL 默认池
    `pool_size=10 + max_overflow=20`，也就是**整个服务最多 30 条并发流**。
    修法：SSE 路由取完数据后**在返回流之前就 `await db.rollback()`**。
+3. **Redis 读的默认超时是「无限」**。`socket_connect_timeout` 只管「连不连得上」，
+   连上之后的读没有上限——对端不回包，协程就永远挂着，外部看是「服务没反应」。
+   修法：连接池补 `socket_timeout`（默认 5 秒，`REDIS_SOCKET_TIMEOUT` 可调），
+   抖动时**明确报错**而不是挂死。
 
 ---
 
