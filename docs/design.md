@@ -1823,7 +1823,7 @@ URL 形如 `postgresql+psycopg://user:pass@host:5432/agentdb`。
 
 ### 19.5 验证方式（不需要 PG 服务器）
 
-`tests/test_postgres_compat.py`（11 条）覆盖四层：
+`tests/test_postgres_compat.py`（12 条）覆盖五层：
 
 1. **DDL 编译**：把同一套模型按三种方言各渲染一遍。PG 侧不得出现
    `AUTO_INCREMENT`、反引号、`DATETIME(` 等 MySQL 写法，且必须出现
@@ -1836,6 +1836,9 @@ URL 形如 `postgresql+psycopg://user:pass@host:5432/agentdb`。
    专属类型这类问题当场就暴露。
 4. **引擎装配**：时区启动参数、连接池参数、URL 已带 `options` 时不重复下发、
    MySQL 与 SQLite 的参数不被波及。
+5. **配置项映射**：`DB_PG_TIMEZONE` 这个环境变量名必须真的落到配置项上。
+   名字写错的话配置项一直保持默认值，功能看着「正常」，用户怎么改环境变量
+   都不起作用——这种坑要到部署到别的时区时才暴露。
 
 ### 19.6 已知限制
 

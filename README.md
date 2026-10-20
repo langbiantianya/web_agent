@@ -613,7 +613,7 @@ location /api/ {
 pytest -q
 ```
 
-**186 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
+**187 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
 Redis 连不上时这 19 个会自动 skip，其余照跑），6 个是 Redis 降级测试
 （`tests/test_redis_degradation.py`，用假件模拟抖动，不需要真实 Redis），
 15 个是图构建与执行测试（`tests/test_run_graph.py`，含「执行顺序按 edges 而非 nodes
@@ -647,7 +647,7 @@ python scripts/check_docstrings.py            # 全量
 python scripts/check_docstrings.py app/core   # 指定目录/文件/模块路径
 ```
 
-当前状态：**715 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
+当前状态：**716 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
 默认扫描范围含根目录的 `run.py`，新增根目录脚本记得加进 `DEFAULT_TARGETS`。
 
 ---
