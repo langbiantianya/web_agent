@@ -6,6 +6,7 @@ import logging
 from collections.abc import AsyncIterator
 
 from sqlalchemy import event
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -24,16 +25,28 @@ def _engine_kwargs() -> dict:
 
     SQLite 一律用 NullPool——异步场景下 SQLite 连接跨事件循环复用会导致
     "attached to a different loop"，且 SQLite 本身也不需要连接池。
+
+    PostgreSQL 额外带一个 ``options`` 启动参数把**会话时区**钉成 UTC：
+    PG 的 ``now()`` 返回带时区的时间，落到 ``TIMESTAMP``（无时区）列时按会话
+    时区折算，不钉住的话中国本机写出来的时间戳会差 8 小时。走启动参数而不是
+    连接后执行 ``SET``，是因为 PG 的裸 ``SET`` 是**事务性**的——连接池归还连接
+    时的 ROLLBACK 会把它撤销，下次取用这条连接时区又变回本地时区了。
+    启动参数在连接建立时由服务端生效，没有回滚这回事。
     """
     url = settings.database_url
     if url.startswith("sqlite"):
         return {"poolclass": NullPool}
-    return {
+    kwargs = {
         "pool_size": settings.db_pool_size,
         "max_overflow": settings.db_max_overflow,
         "pool_pre_ping": True,
         "pool_recycle": settings.db_pool_recycle,
     }
+    if url.startswith("postgresql") and settings.db_pg_timezone:
+        # URL 里已经自带 options 时不重复下发——否则 psycopg 会收到两个同名参数。
+        if "options" not in make_url(url).query:
+            kwargs["connect_args"] = {"options": f"-c timezone={settings.db_pg_timezone}"}
+    return kwargs
 
 
 engine = create_async_engine(
@@ -67,6 +80,14 @@ def _pin_session_timezone(dbapi_connection, connection_record) -> None:
     **只对 MySQL 生效**：判据取 ``engine.dialect.name`` 而不是 dbapi 连接的类名
     ——异步 SQLite 的驱动包叫 ``aiosqlite``，按类名判断会漏掉它，然后对着
     SQLite 发一条 ``SET time_zone`` 直接语法错误（``near "SET": syntax error``）。
+
+    **PostgreSQL 走的是另一条路**（见 :func:`_engine_kwargs`）：它的会话时区通过
+    libpq 的 ``options`` 启动参数下发。原因是 PG 的裸 ``SET TIME ZONE`` 是
+    **事务性**的——连接池归还连接时执行的 ROLLBACK 会把它撤销，这条连接下次
+    被取用时又变回服务器本地时区，等于钉了个寂寞。启动参数在连接建立时由服务端
+    生效，不存在回滚。
+    PG 的 ``SET TIME ZONE 'UTC'`` 与 MySQL 的 ``SET time_zone = '+00:00'`` 语义
+    相同：都只影响**本会话**，而且都接受裸时区名之外的固定偏移。
 
     已有数据不会被这一步修正——历史上按服务器本地时间写入的行仍需一次性
     ``CONVERT_TZ``，见设计文档 §15.3。

@@ -20,13 +20,22 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # ---- 数据库 ----
-    # 生产建议：mysql+asyncmy://user:pass@host:3306/agentdb?charset=utf8mb4
-    # 本地开发可用 sqlite+aiosqlite:///./web_agent.db
+    # 三种方言都支持，靠 DATABASE_URL 里的驱动名区分：
+    #   MySQL      mysql+asyncmy://user:pass@127.0.0.1:3306/agentdb?charset=utf8mb4
+    #   PostgreSQL postgresql+psycopg://user:pass@127.0.0.1:5432/agentdb
+    #   SQLite     sqlite+aiosqlite:///./web_agent.db（仅开发）
     database_url: str = "sqlite+aiosqlite:///./web_agent.db"
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_pool_recycle: int = 1800
     db_echo: bool = False
+    # PostgreSQL 的**会话时区**。PG 的 ``now()`` 返回带时区的时间，落到
+    # ``TIMESTAMP``（无时区）列时按**会话时区**折算——不钉成 UTC，中国本机写的
+    # 时间戳会整整差 8 小时。它通过 libpq 的 ``options`` 启动参数下发：那是
+    # **连接建立时**生效的，不受事务回滚影响（PG 里裸 ``SET`` 是事务性的，
+    # ROLLBACK 会把它撤销，见 app/config/db.py 的说明）。
+    # 置空则不下发该参数（自己保证服务器时区是 UTC 时才需要）。
+    db_pg_timezone: str = "UTC"
 
     # ---- 安全 ----
     # 用于 api_key 的 Fernet 加解密 + SSE ticket 签发。
