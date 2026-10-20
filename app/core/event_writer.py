@@ -85,24 +85,26 @@ class EventWriter:
         ``flush_interval`` 兜住低频 run，避免尾部零星几个 token 长时间压在内存
         里，让 SSE 续传读不到最新状态。
 
-        退出条件是「已 close **且** 批次已空」，而不是只判 ``_closed``：关停的
-        瞬间就退出，会把还躺在 ``_batch`` 里的尾部事件丢掉，SSE 续传就会漏掉
-        最后几个字。
+        退出条件是「已 close」：关停时再冲**最后一批**就收工。这里不再要求
+        「批次也空」——写失败时批次会被放回队首（见 :meth:`_flush`），由
+        :meth:`close` 的重试负责收尾；留在循环里死磕只会把关停拖到超时。
 
         单个事件写失败由 ``_flush`` 自行处理并重排，这里不退出循环——一次 DB
         抖动不该让整个 run 的事件永久停止落库。
         """
         while True:
-            if self._closed and not self._batch:
-                return
+            if self._closed:
+                break
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=self.flush_interval)
             except asyncio.TimeoutError:
                 pass
             self._wake.clear()
-            if self._closed and not self._batch:
-                return
+            if self._closed:
+                break
             await self._flush()
+        # 关停：把还躺在内存里的尾部事件冲掉（失败留给 close() 重试）
+        await self._flush()
 
     async def _flush(self) -> None:
         """把当前批次写进 DB。
@@ -111,6 +113,10 @@ class EventWriter:
         到本轮写完之后才执行，从而一定能拿到「最新」的批次。若只锁住取出批次的
         那一瞬间，``flush()`` 可能在写入尚未提交时看到空批次就直接返回，调用方
         （SSE 回放）就会读到一份还缺尾部事件的 DB。
+
+        **写失败时一定要把批次放回队首**，哪怕已经关停。丢事件的后果是「续传
+        读不到那几段」——前端看到的是回复少了一截，而不是明确的错误，比丢事件
+        本身更难查。
         """
         async with self._lock:
             if not self._batch:
@@ -131,10 +137,12 @@ class EventWriter:
                     await db.commit()
             except Exception:  # pragma: no cover - DB 抖动
                 logger.exception(
-                    "run_event 批量写入失败，事件将重试一次 (run=%s)", self.run_id
+                    "run_event 批量写入失败，事件将重试 (run=%s，%s 条)",
+                    self.run_id,
+                    len(batch),
                 )
-                if not self._closed:
-                    self._batch = batch + self._batch
+                # 放回队首：未关停时后台循环会重试；已关停时由 close() 重试。
+                self._batch = batch + self._batch
 
     # -------------------------------------------------------------- 关闭
 
@@ -143,7 +151,15 @@ class EventWriter:
         await self._flush()
 
     async def close(self) -> None:
-        """停止后台任务并保证最后一批落库。"""
+        """停止后台任务并保证最后一批落库。
+
+        最后一批要**重试**：DB 抖一下（SQLite 的 ``database is locked``、MySQL
+        的连接被回收）就把尾部事件丢掉的话，续传会永远读不到那几段，前端看到
+        的是「回复少了一截」——没有任何报错，比直接失败更难定位。
+
+        重试仍有上限：重试耗尽后**大声**记一条 error（带丢失条数），让人知道
+        出了事；绝不静默吞掉。
+        """
         self._closed = True
         self._wake.set()
         if not self._task.done():
@@ -151,7 +167,17 @@ class EventWriter:
                 await asyncio.wait_for(self._task, timeout=5)
             except (asyncio.TimeoutError, asyncio.CancelledError):  # pragma: no cover
                 self._task.cancel()
-        await self._flush()
+        for attempt in range(1, 4):
+            await self._flush()
+            if not self._batch:
+                return
+            if attempt < 3:
+                await asyncio.sleep(0.1 * attempt)
+        logger.error(
+            "run %s 的最后 %s 条事件未能落库，已丢失（续传会缺这一段）",
+            self.run_id,
+            len(self._batch),
+        )
 
     @property
     def pending(self) -> int:
