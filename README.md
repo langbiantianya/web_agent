@@ -1,6 +1,6 @@
 # 多 Agent 协作 Web 服务
 
-基于 **Python + FastAPI + MySQL** 的多 Agent 协作服务。Agent 与 Workflow 全部以数据形式存在 MySQL 里，**新增/调整 Agent 不需要改代码、不需要发版**；多个 Agent 按 Workflow 协作产出结果，前端通过 SSE 接收流式输出，**断线可续传**。
+基于 **Python + FastAPI + MySQL / PostgreSQL** 的多 Agent 协作服务。Agent 与 Workflow 全部以数据形式存在数据库里，**新增/调整 Agent 不需要改代码、不需要发版**；多个 Agent 按 Workflow 协作产出结果，前端通过 SSE 接收流式输出，**断线可续传**。
 
 完整设计见 [`docs/design.md`](docs/design.md)。
 
@@ -10,7 +10,7 @@
 
 | 特性 | 说明 |
 | --- | --- |
-| 配置即数据 | Agent / Workflow 存 MySQL，运行期热加载，PUT 更新自动 `version+1` 让缓存失效 |
+| 配置即数据 | Agent / Workflow 存数据库（MySQL / PostgreSQL / SQLite），运行期热加载，PUT 更新自动 `version+1` 让缓存失效 |
 | 生成与连接解耦 | `POST /messages` 立即返回 `runId`，生成在后台 `asyncio.Task` 中跑，**连接断开不影响生成** |
 | 断线续传 | 事件带单调递增 `seq` 并全量落库；重连用 `Last-Event-ID` 或 `last_seq` 回放，**不漏字、不重复、不乱序** |
 | 批量落库 | `run_event` 每 20 条或每 50ms 批量 INSERT，绝不每 token 一次写库 |
@@ -71,11 +71,14 @@ copy .env.example .env          # Windows
 python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"
 ```
 
-数据库二选一：
+数据库三选一：
 
 ```dotenv
 # 生产：MySQL（推荐 asyncmy，Cython 实现，大批量查询更快）
 DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/agentdb?charset=utf8mb4
+
+# 生产：PostgreSQL（psycopg3，SQLAlchemy 官方推荐驱动）
+DATABASE_URL=postgresql+psycopg://user:pass@127.0.0.1:5432/agentdb
 
 # 本地开发：SQLite，零依赖直接跑
 DATABASE_URL=sqlite+aiosqlite:///./web_agent.db
@@ -85,6 +88,13 @@ MINIMAX_BASE_URL=https://api.minimaxi.com/v1
 MINIMAX_MODEL=MiniMax-M2.7
 MINIMAX_API_KEY=sk-xxxxxxxx
 ```
+
+> **PostgreSQL 适配**（V3.3）：业务代码一行没改，差异全收敛在
+> `app/config/db.py` 的引擎参数上。PG 的会话时区通过 libpq 的 `options` 启动
+> 参数钉成 UTC（`SET TIME ZONE` 是事务性的，连接池回滚会撤销它）——不钉住
+> 的话时间戳会差 8 小时。设计细节见 [design.md §19](docs/design.md#19-postgresql-适配)。
+> **注意**：适配**未在真 PG 服务器上端到端跑过**（本机无实例），上线前请先在
+> 真实 PG 上跑一遍迁移与测试。
 
 ### 3. 建表
 
@@ -223,7 +233,7 @@ location /api/ {
 | 区块 | 能验证什么 |
 | --- | --- |
 | ① 会话 | 列出已启用的 Workflow、创建会话、**恢复进度**（会话级别恢复：拉历史 + 找 active-run + 重新订阅回放） |
-| ② 已配置 Agent | 展示 MySQL 里的 Agent 配置，证明「配置即数据」：改库即生效，无需发版 |
+| ② 已配置 Agent | 展示数据库里的 Agent 配置，证明「配置即数据」：改库即生效，无需发版 |
 | ③ 工作流 | 展示 definition 的节点链路 |
 | ④ 对话与流式输出 | 按节点分卡片实时吐字；发送 / 取消 / 断开并重连 |
 | ⑤ 事件日志 | 逐条列出 `event` / `id`(=seq) / `data` |
@@ -603,7 +613,7 @@ location /api/ {
 pytest -q
 ```
 
-**175 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
+**186 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
 Redis 连不上时这 19 个会自动 skip，其余照跑），6 个是 Redis 降级测试
 （`tests/test_redis_degradation.py`，用假件模拟抖动，不需要真实 Redis），
 15 个是图构建与执行测试（`tests/test_run_graph.py`，含「执行顺序按 edges 而非 nodes
@@ -637,7 +647,7 @@ python scripts/check_docstrings.py            # 全量
 python scripts/check_docstrings.py app/core   # 指定目录/文件/模块路径
 ```
 
-当前状态：**703 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
+当前状态：**715 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
 默认扫描范围含根目录的 `run.py`，新增根目录脚本记得加进 `DEFAULT_TARGETS`。
 
 ---
@@ -653,7 +663,7 @@ python scripts/check_docstrings.py app/core   # 指定目录/文件/模块路径
 | --- | --- | --- |
 | CPU | 2000–3750 字/s ≈ **40–75 人**（每用户 50 字/s） | 实测每字（≈1 个 model token）耗 0.8–1.5 ms CPU，4 核留 25% 给系统 |
 | 内存 | 约 **9700 条**并发流 | 实测基线 155 MB + 每条流约 0.3 MB（保守） |
-| 数据库 | SQLite 约 **64 条**；MySQL 不限 | 实测 64 并发 0 失败，128 并发 28–30 个 500 |
+| 数据库 | SQLite 约 **64 条**；MySQL / PostgreSQL 不限 | 实测 64 并发 0 失败，128 并发 28–30 个 500 |
 | 模型配额 | 取决于供应商 | 一条流至少要一个模型请求——**这通常是真正的天花板** |
 
 中文分词器 1 token ≈ 1～1.5 字，按 50 **model** token/s 的用户折算，
@@ -709,7 +719,7 @@ app/
 │   ├── lease.py            # RunLease Protocol + Noop / Redis 两种归属租约与取消频道
 │   ├── redis_client.py     # Redis 连接生命周期 + 实例标识 + 键布局（V2）
 │   ├── run_hub.py          # seq 分配 + 事件广播 + 取消信号
-│   ├── event_writer.py     # run_event 批量落库（MySQL 长期归档）
+│   ├── event_writer.py     # run_event 批量落库（长期归档）
 │   ├── sse_writer.py       # 回放 + 实时合并去重（续传核心）
 │   ├── agent_runner.py     # 单 Agent 执行（AsyncOpenAI 流式 + 工具闭环 V3.2）
 │   ├── run_graph.py        # LangGraph 图构建 + NodeRunner + 审批节点（V2-b / V3.1）
@@ -738,4 +748,5 @@ alembic/  tests/  docs/design.md  docs/performance.md
 - **V3**（已完成）：Workflow 支持 DAG + 条件边
 - **V3.1**（已完成）：人工审批节点（`interrupt()` + checkpointer 暂停点，批准继续、驳回终止）
 - **V3.2**（已完成）：Agent 工具调用闭环（内置工具注册表 + 执行 → 回灌 → 继续；工具名即契约，配置期校验）
+- **V3.3**（已完成）：PostgreSQL 适配（改一行 `DATABASE_URL` 即可切库，业务代码零改动；PG 会话时区用 libpq `options` 启动参数钉成 UTC）
 - **V4**：MCP 工具（把 V3.2 的工具来源从「代码内置」换成「MCP 服务器」，闭环本身不改）；可观测性（OpenTelemetry 链路追踪、token 成本统计）

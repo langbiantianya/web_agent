@@ -1,6 +1,6 @@
-# 多 Agent 协作 Web 服务设计文档（Python + MySQL）
+# 多 Agent 协作 Web 服务设计文档（Python + MySQL / PostgreSQL）
 
-> 版本：V3.1　|　状态：已实现　|　技术基础：Python 3.11+ / FastAPI / SQLAlchemy 2.0 async / MySQL 8
+> 版本：V3.3　|　状态：已实现　|　技术基础：Python 3.11+ / FastAPI / SQLAlchemy 2.0 async / MySQL 8 / PostgreSQL 13+
 
 ---
 
@@ -22,6 +22,9 @@
 14. [V2-b：用 LangGraph 替换自研编排器](#14-v2-b用-langgraph-替换自研编排器)
 15. [V3：DAG + 条件边](#15-v3dag--条件边)
 16. [V3.1：人工审批](#16-v31人工审批)
+17. [V3.2：Agent 工具调用闭环](#17-v32agent-工具调用闭环)
+18. [性能与容量](#18-性能与容量)
+19. [PostgreSQL 适配](#19-postgresql-适配)
 ---
 
 ## 1. 项目目标与设计原则
@@ -382,6 +385,11 @@ async def get_db():
 ```
 
 **要点**：使用 `mysql+asyncmy://` 方言；`expire_on_commit=False` 避免异步上下文中意外触发懒加载；所有数据库访问必须通过 `AsyncSession`。
+
+> **同一段代码支持三种方言**（MySQL / PostgreSQL / SQLite），差异全部收敛在
+> `app/config/db.py` 的 `_engine_kwargs()` 里：SQLite 用 NullPool 且带 WAL
+> pragma；PostgreSQL 额外下发会话时区的启动参数（原因见 §19.3）；MySQL 则在
+> 连接事件里 `SET time_zone = '+00:00'`。详见 §19。
 
 ### 4.4 会话历史加载与上下文拼装
 
@@ -1734,6 +1742,108 @@ schema。服务端从注册表（`app/core/tools.py`）里取 schema 展开给�
 压测客户端、假模型、服务端**同机抢 4 核**：实测的服务端 CPU 占用是**下界**，
 延迟数据被大幅放大（瓶颈在假模型，不在服务端）。MySQL 路径**未实测**（本机没有
 凭据）。完整的偏差清单见 `docs/performance.md` §8。
+
+---
+
+## 19. PostgreSQL 适配
+
+### 19.1 目标与边界
+
+让 PostgreSQL 成为与 MySQL **平级**的生产数据库：改一行 `DATABASE_URL` 就能切，
+业务代码一行不动。
+
+**边界先说清楚**：本机没有 PG 实例，所以这套适配**没有在真 PG 服务器上端到端
+跑过**。验证做到的是「方言编译 + 离线迁移 SQL + 引擎装配」这一层——它能盖住
+「写出来的 DDL 在 PG 上根本执行不了」这类致命问题，但盖不住「约束行为、
+JSON 往返、并发写」这些只有真库才暴露的差异。上线前必须在真实 PG 上跑一遍
+`alembic upgrade head` 与全套测试。
+
+### 19.2 为什么几乎不用改代码
+
+repo 层（`app/repo/`）**全是 ORM**，没有一句方言专属的 SQL；模型层只用
+`with_variant` 表达类型差异。所以适配面收敛在三处：引擎参数、连接事件、
+类型变体。
+
+| 维度 | MySQL | PostgreSQL | SQLite |
+| --- | --- | --- | --- |
+| 自增主键 | `BIGINT AUTO_INCREMENT` | `BIGSERIAL` | `INTEGER PRIMARY KEY`（rowid 别名） |
+| 时间列 | `DATETIME(3)` | `TIMESTAMP WITHOUT TIME ZONE` | `DATETIME` |
+| JSON 列 | `JSON` | `JSON` | `JSON`（SQLite 里是 NUMERIC 亲和性，只用于开发） |
+| 布尔 | `SMALLINT` | `SMALLINT` | `SMALLINT` |
+
+主键那条**不需要为 PG 加变体**：SQLAlchemy 的 PG 方言会把自增的 `BigInteger`
+主键渲染成 `BIGSERIAL`（自带序列），已实测确认。
+
+时间精度上 PG 是微秒、MySQL 是毫秒。本项目排序从不信时间（靠自增 id 与
+`run_event.seq`），Python 侧写入也一律截断到毫秒，所以这个差异无害。
+
+### 19.3 会话时区：PG 为什么走启动参数而不是 `SET`
+
+这是本次适配里唯一需要动脑子的地方。
+
+**问题**：PG 的 `now()` 返回带时区的 `timestamptz`，落进无时区的
+`TIMESTAMP` 列时按**会话时区**折算。会话时区是本地时区的话，中国本机写的
+时间戳会整整差 8 小时——而且**不报错**，只是时间线错乱。
+
+**为什么不能沿用 MySQL 那套「连接后 `SET`」**：
+
+- MySQL 的 `SET time_zone = '+00:00'` 是**非事务性**的，连接池归还连接时的
+  `ROLLBACK` 撤销不了它，钉得住。
+- PG 的裸 `SET TIME ZONE 'UTC'` 是**事务性**的。连接池归还连接时执行
+  `ROLLBACK`，这条 `SET` 一起被撤销——下次取用同一条连接时，时区又变回
+  服务器本地时区了。等于钉了个寂寞。
+
+**采用的方案**：libpq 的 `options` **启动参数**，即
+`options=-c timezone=UTC`。它在**连接建立时**由服务端生效，不属于任何事务，
+`ROLLBACK` 撤销不了它 ✓。落地方式是 psycopg 的 `connect_args`，不需要用户改
+URL：
+
+```python
+# config/db.py
+if url.startswith("postgresql") and settings.db_pg_timezone:
+    if "options" not in make_url(url).query:
+        kwargs["connect_args"] = {"options": f"-c timezone={settings.db_pg_timezone}"}
+```
+
+**为什么还要检查 URL 里有没有 `options`**：用户可能自己带了
+`?options=-c timezone=Asia/Shanghai`。psycopg 收到两个同名 `options` 会直接
+`TypeError`，连接都建不起来——所以带了就不重复下发。
+
+`DB_PG_TIMEZONE` 置空则完全不下发（服务器时区本来就是 UTC 时的省事写法）。
+
+### 19.4 驱动选型：psycopg3
+
+| 方案 | 结论 |
+| --- | --- |
+| `asyncpg` | 性能最好，但**没有 Python 3.14 的 Windows 轮子**，装它要源码编译（要 C 编译器）。 |
+| `psycopg2` | 没有异步支持，与「全异步纪律」冲突。 |
+| **`psycopg3`** | 纯 Python 部分 + `psycopg[binary]` 二进制轮子（cp314 有），同一套代码同时支持同步与异步，且是 SQLAlchemy 2.0 之后的官方推荐。 |
+
+URL 形如 `postgresql+psycopg://user:pass@host:5432/agentdb`。
+
+### 19.5 验证方式（不需要 PG 服务器）
+
+`tests/test_postgres_compat.py`（11 条）覆盖四层：
+
+1. **DDL 编译**：把同一套模型按三种方言各渲染一遍。PG 侧不得出现
+   `AUTO_INCREMENT`、反引号、`DATETIME(` 等 MySQL 写法，且必须出现
+   `BIGSERIAL` / `JSON` / `TIMESTAMP WITHOUT TIME ZONE`。
+2. **结构等价**：三种方言的**表与列必须完全一致**（列名归一化掉引号后比较）。
+   差异只允许出现在类型渲染上——少一列、改个名这类问题在单库测试里永远
+   看不见。
+3. **离线迁移**：`alembic upgrade head --sql` 在 PG 方言下生成 DDL。不连库、
+   不建表，却能把三个迁移脚本连同方言分支一起验一遍——迁移脚本里写了 MySQL
+   专属类型这类问题当场就暴露。
+4. **引擎装配**：时区启动参数、连接池参数、URL 已带 `options` 时不重复下发、
+   MySQL 与 SQLite 的参数不被波及。
+
+### 19.6 已知限制
+
+1. **未在真 PG 服务器上实测**（本机无 PG 实例）。上线前必须跑一遍真库的
+   迁移与测试。
+2. PG 的 `TIMESTAMP` 是微秒精度，MySQL 是毫秒（本项目不依赖时间排序）。
+3. 走 PgBouncer **事务池**模式时，`options` 启动参数可能被中间件忽略——那种
+   部署下需要 DBA 在库/角色层面设好 `timezone`。
 
 ---
 
