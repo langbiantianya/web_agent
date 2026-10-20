@@ -140,6 +140,34 @@ async def _make_run_row(run_id: int, status: str, last_seq: int = 0) -> None:
         await db.commit()
 
 
+async def _dump_hang_state(run_id: int) -> None:
+    """流挂住时把现场打出来：协程栈 + 事件落库情况 + run 行状态。
+
+    pytest-timeout 的 thread 模式只能看到「事件循环停在 select」——那只是**表象**，
+    真正卡在哪个 await 上看不出来。这里用 ``Task.print_stack()`` 把每个在跑的任务
+    的协程栈打出来，再把「事件到底落库了没」「run 是不是终态」一并打出来，
+    三样一对照就能定位到具体原因。
+
+    Args:
+        run_id: 目标 run id。
+    """
+    from app.repo.run_event_repo import run_event_repo
+    from app.repo.run_repo import run_repo
+
+    print(f"\n===== 流挂住：run {run_id} 的现场 =====")
+    for t in asyncio.all_tasks():
+        if t is asyncio.current_task():
+            continue
+        print(f"--- pending task: {t.get_name()} ---")
+        t.print_stack()
+    async with SessionLocal() as db:
+        rows = await run_event_repo.list_after(db, run_id, 0)
+        print(f"run_event 行数 = {len(rows)}，seq = {[r.seq for r in rows]}")
+        run = await run_repo.get_by_id(db, run_id)
+        print(f"run 行：status={run.status if run else None} last_seq={run.last_seq if run else None}")
+    print("===== 现场结束 =====\n")
+
+
 # ------------------------------------------------------- 基础设施与键布局
 
 
@@ -414,10 +442,26 @@ async def test_cross_instance_resume_after_disconnect(redis_client):
     # 重连，带 last_seq=3
     second = SSEStream(RedisHubStub())
     resumed: list[int] = []
-    async for evt in second.stream(run_id, resume_from=3):
-        resumed.append(evt.seq)
-        if evt.terminal:
-            break
+
+    async def _resubscribe() -> None:
+        """把重连后的流读完。
+
+        单独跑成一个任务，是为了外面能给它加超时——**这条流有可能永远不结束**。
+        它的收尾只有两条路：回放里带终止事件，或 run 行变成终态。两条都没兑现
+        时它会一直等下去，把整个测试会话挂住。挂死比失败难查得多，所以这里
+        必须有兜底超时。
+        """
+        async for evt in second.stream(run_id, resume_from=3):
+            resumed.append(evt.seq)
+            if evt.terminal:
+                break
+
+    task = asyncio.create_task(_resubscribe())
+    try:
+        await asyncio.wait_for(task, timeout=10)
+    except asyncio.TimeoutError:
+        await _dump_hang_state(run_id)
+        raise
 
     assert got == [1, 2, 3]
     assert resumed == [4, 5, 6, 7, 8, 9, 10, 11]  # 从 4 接上，一个不漏
