@@ -56,6 +56,21 @@ class GoneError(AppError):
     code = "gone"
 
 
+class SensitiveContentError(AppError):
+    """提示词被敏感词前置过滤拦下。
+
+    刻意用 **422** 而不是 400：400 在这套约定里表示「请求参数/请求体不合法」
+    （格式错误、字段缺失），而 422 表示「格式没问题，但内容本身不被接受」。
+    前端可以据此区分「你参数写错了」和「你这句话我们不接」。
+
+    ``data`` 里带上命中的片段，让用户知道大概哪里需要改写——过滤器本身
+    不算严，用户改一两个字就能过的体验，远好过一句「内容违规」。
+    """
+
+    status_code = 422
+    code = "sensitive_content"
+
+
 class RunCancelled(Exception):
     """内部信号：用户主动取消生成。"""
 

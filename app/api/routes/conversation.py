@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Query
 
 from app.api.deps import DbSession
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import ConflictError, NotFoundError, SensitiveContentError
 from app.core.orchestrator import get_orchestrator
+from app.core.sensitive import screen_text
 from app.models.enums import MessageRole, MessageStatus, RunStatus
 from app.repo.conversation_repo import conversation_repo
 from app.repo.message_repo import message_repo
@@ -22,6 +24,8 @@ from app.schemas.conversation import (
     SendMessageIn,
     SendMessageOut,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -121,6 +125,23 @@ async def send_message(
 
     同一个会话不允许并发两个 run（409），避免两个 run 交叉写事件流。
     """
+    # 敏感词前置过滤（V3.4）：拦在**最前面**。被拦下的消息不进库、不建 run、
+    # 不消耗任何 token——拦在后面就等于「先跑完模型再把结果扔掉」，白烧一次
+    # 模型调用，还把敏感内容送到了模型那里。
+    verdict = screen_text(payload.content)
+    if verdict is not None and verdict.hit:
+        # 只记分数和位置，**不记命中词**：把敏感词写进日志，等于给日志库
+        # 造了一份敏感词副本，审计与合规都成了笑话。
+        logger.info(
+            "提示词被敏感词过滤拦下：分数 %.3f，位置 %d",
+            verdict.score,
+            verdict.position,
+        )
+        raise SensitiveContentError(
+            "内容包含不被允许的请求，请调整措辞后重试",
+            data={"score": verdict.score, "excerpt": verdict.excerpt},
+        )
+
     # 行锁把「查进行中 run → 建 run」串行化，堵住并发窗口
     conv = await conversation_repo.lock_by_id(db, conversation_id)
     if conv is None:
