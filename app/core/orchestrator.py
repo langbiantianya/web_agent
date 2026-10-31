@@ -38,7 +38,7 @@ from app.core.checkpoint import (
     delete_thread,
     get_checkpointer,
 )
-from app.core.errors import RunCancelled, ToolLoopExceeded
+from app.core.errors import RunCancelled, SensitiveContentError, ToolLoopExceeded
 from app.core.run_graph import NodeRunner, RunRejected, build_run_graph, recursion_limit
 from app.core.run_hub import RunHub, get_hub
 from app.core.workflow_def import WorkflowDefinition, WorkflowNode
@@ -513,6 +513,15 @@ class Orchestrator:
 
             except RunCancelled:
                 await self._finish_step(run_id, node.id, StepStatus.ERROR, None, "已取消")
+                raise
+            except SensitiveContentError as exc:
+                # 内容被前置过滤拦下：**不重试**。重试同一段内容只会得到同样的
+                # 判定，纯属白等两轮退避。与工具死循环同理——不可恢复的错误要
+                # 立刻失败，而不是拿重试次数去赌。
+                await self._finish_step(
+                    run_id, node.id, StepStatus.ERROR, None, str(exc)
+                )
+                logger.warning("run %s 节点 %s 内容被敏感词过滤拦下", run_id, node.id)
                 raise
             except ToolLoopExceeded as exc:
                 # 工具死循环**不重试**：重试同一个节点，模型大概率还是同样地陷住，

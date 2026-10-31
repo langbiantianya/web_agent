@@ -18,8 +18,9 @@ from openai import APIError, AsyncOpenAI, NOT_GIVEN
 
 from app.config.settings import settings
 from app.core.crypto import decrypt
-from app.core.errors import RunCancelled, ToolLoopExceeded
+from app.core.errors import RunCancelled, SensitiveContentError, ToolLoopExceeded
 from app.core.run_hub import RunEventDTO, RunHub
+from app.core.sensitive import screen_messages
 from app.core.tools import build_openai_tools, execute_tool
 from app.models.agent import Agent
 from app.models.enums import EventType
@@ -155,7 +156,13 @@ class AgentRunner:
         Raises:
             RunCancelled: 用户取消，或编排器在重试间隙置了取消标志。
             APIError: 端点返回错误且重试次数耗尽（由编排器决定是否重试）。
+            SensitiveContentError: 消息里命中敏感内容（LLM 边界兜底）。
         """
+        # LLM 边界的最后一道过滤。API 层已经拦过一遍，这里再拦一次，是为了让
+        # 「进入 LLM 的内容一定被过滤过」这条不变量对**所有路径**成立——历史
+        # 消息、绕开 API 的内部调用、别的服务复用本模块，都逃不掉这一关。
+        self._guard_sensitive(messages)
+
         client = _client_factory.get(self.agent)
         result = AgentResult()
         stream = None
@@ -326,6 +333,37 @@ class AgentRunner:
         raise ToolLoopExceeded(max_rounds)
 
     # ------------------------------------------------------------- 内部
+
+    def _guard_sensitive(self, messages: list[dict]) -> None:
+        """发送前的敏感词兜底检查。
+
+        API 层（``POST /api/conversations/{id}/messages``）已经拦过一遍了，
+        这里再拦一次不是重复劳动，而是补上那条**兜底缝**：历史消息是早于过滤
+        功能入库的，绕开 API 的内部调用、以及复用本模块的别的服务，都不会
+        走 API 层那道检查。有了这一关，「进入 LLM 的内容一定被过滤过」才是
+        一条对所有路径成立的**不变量**，而不是一句约定。
+
+        只查 ``role == "user"`` 的消息：system 提示词是我们自己写的，tool
+        消息是模型自己的产出——把它们也判一遍，等于让模型自己把自己绊倒。
+
+        Raises:
+            SensitiveContentError: 命中敏感内容。
+        """
+        hit = screen_messages(messages)
+        if hit is None:
+            return
+        index, verdict = hit
+        # 只记分数和位置，不记命中词——把敏感词写进日志等于给日志库造一份副本。
+        logger.warning(
+            "LLM 边界拦下敏感内容：消息下标 %s，分数 %.3f，位置 %d",
+            index,
+            verdict.score,
+            verdict.position,
+        )
+        raise SensitiveContentError(
+            "内容包含不被允许的请求，请调整措辞后重试",
+            data={"score": verdict.score, "excerpt": verdict.excerpt},
+        )
 
     def _build_kwargs(self, messages: list[dict], want_usage: bool) -> dict[str, Any]:
         """拼 ``chat.completions.create`` 的参数。
