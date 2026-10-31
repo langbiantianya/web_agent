@@ -33,6 +33,12 @@ redis>=5.0
 pydantic-settings>=2.4
 cryptography>=42.0
 
+# ---- 敏感词前置过滤（V3.4）----
+# 刻意只用 numpy：不加载任何模型框架、不起任何外部服务。
+# 训练与推理都只用它，几十秒就能重训一次模型。
+numpy>=1.26
+
 # ---- 测试 ----
 pytest>=8.0
 pytest-asyncio>=0.24
+pytest-timeout>=2.3   # 文档里的测试命令带 --timeout，卡死的用例要能被砍掉

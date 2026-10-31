@@ -31,6 +31,7 @@ from app.core.redis_client import (
     instance_id,
     redis_is_enabled,
 )
+from app.core.sensitive import init_filter
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -43,9 +44,9 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """应用生命周期钩子（FastAPI lifespan）：启动善后 + 关闭收尾。
 
-    **启动**：启用 Redis 时先建立连接（连不上直接启动失败，不静默降级）
-    → 调 :func:`recover_stale_runs` 把上次进程遗留的 running/pending run
-    统一标成 error。
+    **启动**：先把敏感词过滤模型加载好（读不出来直接启动失败）→ 启用 Redis 时
+    建立连接（连不上直接启动失败，不静默降级）→ 调 :func:`recover_stale_runs` 把
+    上次进程遗留的 running/pending run 统一标成 error。
 
     **关闭**：先 ``orchestrator.shutdown()``（取消后台 run 任务并等待收尾、
     冲刷内存里尚未落库的事件、关闭 LLM 客户端与 hub），再 ``disconnect_redis()``，
@@ -54,10 +55,19 @@ async def lifespan(app: FastAPI):
 
     易踩的坑：启动阶段的恢复失败只记日志、不阻塞启动。数据库暂时不可用（例如
     迁移还没跑完）不应该让整个服务起不来，否则就是「恢复逻辑本身制造了新的启动
-    故障」。**Redis 不可用则相反**——必须让启动失败，否则各实例会静默退回进程内
-    总线，症状是「服务能跑但跨实例收不到事件」，比启动失败难查得多。
+    故障」。**Redis 不可用、敏感词模型缺失则相反**——必须让启动失败，否则会出现
+    「服务能跑但内容没被过滤」或「跨实例收不到事件」这类**症状正常、行为已错**
+    的分裂状态，比启动失败难查得多。
     """
     logger.info("%s v%s 启动中…", settings.app_name, __version__)
+
+    # 敏感词前置过滤（V3.4）放在最前面：它只读一个本地模型文件，是所有启动
+    # 检查里最便宜的一个——模型缺失就别急着连 Redis 了。
+    try:
+        init_filter()
+    except Exception as exc:
+        logger.error("敏感词过滤模型加载失败：%s", exc)
+        raise
 
     # Redis 连接放在最前面：总线与回放源的单例在第一次使用前必须已就绪，
     # 否则会在某个请求里才炸，错误现场和真正的病因隔得很远。

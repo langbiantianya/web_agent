@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -119,6 +120,27 @@ class Settings(BaseSettings):
     # 注意不影响 Pub/Sub：``get_message(timeout=...)`` 自己带超时，
     # ``parse_response(block=True)`` 显式传 ``math.inf``，都不受这个值影响。
     redis_socket_timeout: float = 5.0
+
+    # ---- 敏感词前置过滤（V3.4）----
+    # 总开关，默认开。这是「提示词进 LLM 之前」的那道前置，关掉它等于没有。
+    # 显式关掉是有记录、可审计的：配置里留痕，启动日志里也有一行说明。
+    sensitive_enabled: bool = True
+    # 判定阈值。留 0 表示用**模型自带**的推荐阈值——那是训练时按「误报率不超过
+    # 目标」挑出来的，比手填一个数靠谱。显式给值则覆盖它：调高更严（漏得多），
+    # 调低更松（误杀多）。
+    sensitive_threshold: float = 0.0
+    # 模型文件路径。默认指向仓库里那份，路径按**项目根**解析而不是相对工作
+    # 目录——服务从哪个目录启动都能找到模型，少一类「本地能跑、部署找不到」。
+    sensitive_model_path: str = str(
+        Path(__file__).resolve().parents[2] / "app" / "core" / "sensitive_model.npz"
+    )
+    # 滑窗参数。0 表示用模型 meta 里记录的值。重训换了窗口，推理必须跟着换，
+    # 所以默认值来自模型而不是写死在代码里；这两项只给「临时调参、不重训」用。
+    sensitive_window: int = 0
+    sensitive_stride: int = 0
+    # 单条提示词最多扫描多少字符。超长的只扫前面这段——敏感内容几乎总在开头，
+    # 而这一步是为了**控住资源占用**。
+    sensitive_max_chars: int = 4000
 
 
 @lru_cache
