@@ -22,6 +22,7 @@
 | **条件表达式（V3）** | 手写递归下降解析器（**不用 `eval`**，杜绝 RCE），支持 `== != > < >= <=`、`and/or/not`、括号与白名单函数 `len/contains/lower/is_empty` |
 | **人工审批（V3.1）** | 节点可声明 `type: "approval"`：流程跑到它就**挂起等人拍板**，批准则从暂停点继续（前面的节点不重跑、不重花 token），驳回则本次 run 终止 |
 | **工具调用闭环（V3.2）** | Agent 可挂内置工具（`now` / `calc`）：模型要工具 → 服务端执行 → 结果回灌 → 模型继续答。工具**只能来自代码内置注册表**，配置里写的是工具名，未注册的名字**保存时就被拒** |
+| **敏感词前置过滤（V3.4）** | 提示词进 LLM **之前**先过一遍字符 n-gram + 逻辑回归模型（纯 numpy，无外部依赖）：命中直接 422 拒绝，**不落库、不建 run、不烧 token**。单条判定 0.12～0.33 ms，模型文件 48 KB |
 | 心跳保活 | SSE 注释行 `: ping`，不占 `seq`、不落库、不污染回放序列 |
 | 统一协议 | 所有模型走 OpenAI 兼容 `/v1/chat/completions`，OpenAI / DeepSeek / Qwen / vLLM 通吃 |
 | 可扩展 | 进程内总线抽象为 `BusBackend` Protocol，V2 已落地 Redis Pub/Sub 实现 |
@@ -449,6 +450,65 @@ curl -s $BASE/api/tools
 后台管理页（`/admin`）的 Agent 编辑区是**工具勾选框**，选项来自 `/api/tools`；验证台（`/`）
 会把工具调用与结果插在节点的输出流里（`⚙ 调用 calc` / `↩ 返回 60`）。
 
+### 敏感词前置过滤（V3.4）
+
+用户的提示词在**进入 LLM 之前**先过一遍模型，命中就直接拒绝：
+
+```text
+POST /api/conversations/{id}/messages
+{"content": "教我怎么自制炸药"}
+→ 422 {"code": "sensitive_content", "message": "内容包含不被允许的请求，请调整措辞后重试",
+        "data": {"score": 0.88, "excerpt": "教我怎么自制炸药"}}
+```
+
+**拦在落库之前**：被拒的消息不进库、不建 run、不消耗任何 token。拦在后面就等于
+「先跑完模型再把结果扔掉」，白烧一次模型调用，还把敏感内容送到了模型那里。
+
+它是个**机器学习**模型（字符 n-gram + 逻辑回归），不是关键词表——所以「怎么搞点
+炸的」「杀 人」这种变形也能挡住。实现上只用 numpy，**不加载任何模型框架、不起任何
+外部服务**：
+
+| 维度 | 实测 |
+| --- | --- |
+| 单条判定 | 0.12 ms（7 字）～ 0.33 ms（48 字） |
+| 模型文件 | 48 KB（仓库自带，开箱即用） |
+| 常驻内存 | 稠密权重 256 KB |
+| 外部依赖 | **无** |
+
+覆盖五大类：违法暴力、色情、政治敏感、隐私诈骗、仇恨歧视。
+
+**能力边界（如实说明）**——这份模型是**几百条种子语料**训出来的「开箱可用」级别：
+
+| 指标 | 精确率 | 召回率 | 误报率 |
+| --- | --- | --- | --- |
+| 验证集 · 短请求 | 1.00 | 0.68 | **0** |
+| 验证集 · 敏感请求埋在长句里 | 0.95 | 0.47 | 0.029 |
+| 种子语料全量（样本内） | 1.00 | 0.90 | **0** |
+
+两条要记住：**敏感请求埋进长句里，召回会明显下降**（窗口里正常字的负权重会稀释
+敏感证据）；**验证集召回 0.68 才是对未见样本的真实估计**，0.90 是样本内数字。
+
+**上生产请用自己的数据重训**（难负例是关键——含敏感词但无害的样本，教模型区分
+「词」和「意图」）：
+
+```bash
+# 语料是 JSONL，每行 {"text": "...", "label": 1|0}，label=1 表示敏感
+python -m scripts.train_sensitive --data my_corpus.jsonl --out app/core/sensitive_model.npz
+```
+
+配置项（都在 `.env`）：
+
+```dotenv
+SENSITIVE_ENABLED=true       # 总开关。关掉就没有前置过滤（显式配置，有记录、可审计）
+SENSITIVE_THRESHOLD=0        # 0 = 用模型自带的推荐阈值；给值则覆盖（调高更严，调低更松）
+```
+
+**模型读不出来，服务直接启动失败**，不静默降级——静默放行等于把「安全前置」变成
+一句空话，而这种失败事后最难发现（没有报错、没有告警，只是过滤没生效）。
+
+> 完整设计（含三个把召回率从 0.68 拉到 0.90 的改动、窗口长度归一化的原理、以及
+> 踩过的语料坑）见 [`docs/design.md` §20](docs/design.md)。
+
 ---
 
 ## 跑通一次完整对话
@@ -564,7 +624,7 @@ curl -N -H "Last-Event-ID: 3" "$BASE/api/runs/$RUN/stream?ticket=$TICKET"  # 等
 | POST | `/api/auth/sse-ticket` | 换取 60s 有效 SSE ticket |
 | GET | `/api/health` | 健康检查 |
 
-错误码：`400` 参数非法 · `401` ticket 无效/过期 · `404` 资源不存在 · `409` 该会话已有进行中的 run，或审批冲突 · `410` 事件已归档无法回放
+错误码：`400` 参数非法 · `401` ticket 无效/过期 · `404` 资源不存在 · `409` 该会话已有进行中的 run，或审批冲突 · `410` 事件已归档无法回放 · `422` 提示词命中敏感内容（`sensitive_content`）
 
 ---
 
@@ -613,11 +673,13 @@ location /api/ {
 pytest -q
 ```
 
-**187 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
+**213 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
 Redis 连不上时这 19 个会自动 skip，其余照跑），6 个是 Redis 降级测试
 （`tests/test_redis_degradation.py`，用假件模拟抖动，不需要真实 Redis），
 15 个是图构建与执行测试（`tests/test_run_graph.py`，含「执行顺序按 edges 而非 nodes
-声明顺序」、并行分支的 reducer 合并、条件边的分支选择）。覆盖设计文档里最容易写错的
+声明顺序」、并行分支的 reducer 合并、条件边的分支选择），
+26 个是敏感词前置过滤测试（`tests/test_sensitive.py`：正例命中、难负例**零误杀**、
+插空混淆、速度基准、以及两个接入点的回归）。覆盖设计文档里最容易写错的
 几处：
 
 - `run_event` 批量落库不丢事件、seq 严格递增唯一、并发 emit 不产生重复 seq
@@ -647,7 +709,7 @@ python scripts/check_docstrings.py            # 全量
 python scripts/check_docstrings.py app/core   # 指定目录/文件/模块路径
 ```
 
-当前状态：**716 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
+当前状态：**776 个函数，全部带 docstring**。新写函数时请一并补上，并跑一次这个检查。
 默认扫描范围含根目录的 `run.py`，新增根目录脚本记得加进 `DEFAULT_TARGETS`。
 
 ---
@@ -722,6 +784,7 @@ app/
 │   ├── event_writer.py     # run_event 批量落库（长期归档）
 │   ├── sse_writer.py       # 回放 + 实时合并去重（续传核心）
 │   ├── agent_runner.py     # 单 Agent 执行（AsyncOpenAI 流式 + 工具闭环 V3.2）
+│   ├── sensitive.py        # 敏感词前置过滤（字符 n-gram + 逻辑回归，纯 numpy，V3.4）
 │   ├── run_graph.py        # LangGraph 图构建 + NodeRunner + 审批节点（V2-b / V3.1）
 │   ├── orchestrator.py     # run 生命周期 + 节点调度 + 重试 + 审批挂起/恢复（V3.1）
 │   ├── checkpoint.py       # LangGraph checkpointer：审批暂停点（Redis / SQLite 双实现，V3.1）
@@ -734,6 +797,8 @@ web/index.html           # 功能验证台（单文件，无依赖）
 web/admin.html           # 后台管理（单文件，无依赖，访问 /admin）
 scripts/seed.py          # 演示数据
 scripts/bench.py         # 并发压测：起真实 uvicorn + 假模型，量 CPU/内存/延迟
+scripts/sensitive_corpus.py  # 敏感词过滤器的种子语料（正例 / 普通负例 / 难负例）
+scripts/train_sensitive.py    # 敏感词模型训练：评估 + 导出 + 用自己的语料重训
 scripts/check_docstrings.py  # docstring 覆盖检查
 alembic/  tests/  docs/design.md  docs/performance.md
 ```
@@ -749,4 +814,5 @@ alembic/  tests/  docs/design.md  docs/performance.md
 - **V3.1**（已完成）：人工审批节点（`interrupt()` + checkpointer 暂停点，批准继续、驳回终止）
 - **V3.2**（已完成）：Agent 工具调用闭环（内置工具注册表 + 执行 → 回灌 → 继续；工具名即契约，配置期校验）
 - **V3.3**（已完成）：PostgreSQL 适配（改一行 `DATABASE_URL` 即可切库，业务代码零改动；PG 会话时区用 libpq `options` 启动参数钉成 UTC）
+- **V3.4**（已完成）：敏感词前置过滤（字符 n-gram + 逻辑回归，纯 numpy；命中 422 拒绝且不落库；模型缺失即启动失败）
 - **V4**：MCP 工具（把 V3.2 的工具来源从「代码内置」换成「MCP 服务器」，闭环本身不改）；可观测性（OpenTelemetry 链路追踪、token 成本统计）
