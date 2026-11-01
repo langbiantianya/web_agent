@@ -160,6 +160,17 @@ class SSEStream:
                     if refreshed is not None and refreshed.terminal:
                         yield self._synthetic_done(refreshed, run_id)
                         return
+                    # **从回放源补读**：Pub/Sub 是 fire-and-forget，连接抖动期间
+                    # 发布的事件永久丢失（pump 挂了之后更是再没有东西进队列）。
+                    # 事件流的第一条不变量是「不漏字」，所以这里不能只靠订阅：
+                    # 空闲时按 max_sent+1 从回放源补一段，补齐为止。
+                    for evt in await self._replay_events(run_id, max_sent):
+                        if evt.seq <= max_sent:
+                            continue
+                        yield evt
+                        max_sent = evt.seq
+                        if evt.terminal:
+                            return
                     continue
 
                 if evt.seq <= max_sent:
@@ -187,6 +198,23 @@ class SSEStream:
                 first_seq=None,
             )
 
+    async def _replay_events(self, run_id: int, after_seq: int) -> list[RunEventDTO]:
+        """从回放源补读 ``seq > after_seq`` 的事件。
+
+        给「实时流空闲」时用：Pub/Sub 掉包/连接断开时，订阅队列里就再也不会
+        出现那些事件了，只能从回放源（Redis Stream / MySQL 归档）补。
+        """
+        try:
+            result = await self._log.replay(run_id, after_seq)
+        except Exception:  # pragma: no cover - 回放源暂时不可用不该打断流
+            logger.exception("run %s 补读回放源失败", run_id)
+            return []
+        if result.truncated:
+            logger.error(
+                "run %s 的回放超过总量上限，本次补读不完整（客户端会缺一段）", run_id
+            )
+        return result.events
+
     async def _replay(self, run_id: int, resume_from: int):
         """回放历史事件 + 取 run 终态快照。
 
@@ -210,6 +238,14 @@ class SSEStream:
             if run is None:
                 return [], None
         replayed = await self._log.replay(run_id, resume_from)
+        if replayed.truncated:
+            # 回放被总量上限截断：这段流中间缺了一块，客户端会看到 seq 跳变。
+            # 「不漏字」是第一不变量，所以这里必须**大声**记下来，而不是静默。
+            logger.error(
+                "run %s 的回放超过总量上限（共取到 %s 条），这段流不连续",
+                run_id,
+                len(replayed.events),
+            )
         return replayed.events, RunSnapshot(
             status=run.status,
             last_seq=run.last_seq or 0,

@@ -236,10 +236,23 @@ class RedisPubSubBackend:
 
         pubsub 连接在 ``subscribe`` 里创建好再交给 pump，这样 pump 启动时不必
         重新建连，也就不会有「任务刚起来、连接还没握手」的第二段空窗。
+
+        **订阅失败必须显式关掉 pubsub**：``pubsub()`` 已经从连接池里取走了一条
+        连接，而 redis-py 的 ``PubSub.__del__`` 只注销回调、**不归还连接**——
+        只有 ``aclose()`` 才会 release。Redis 抖动时前端每几秒自动重连一次，
+        每失败一次就漏一条连接，池子又没设上限，于是连接数单调增长、恢复后
+        也不释放。
         """
         sub = Subscription(channel)
         pubsub = (await self._redis()).pubsub(ignore_subscribe_messages=True)
-        await pubsub.subscribe(self._key(channel))
+        try:
+            await pubsub.subscribe(self._key(channel))
+        except Exception:
+            try:
+                await pubsub.aclose()
+            except Exception:  # pragma: no cover - 清理失败不影响判定
+                logger.debug("关闭失败的 Redis 订阅时出错", exc_info=True)
+            raise
         task = asyncio.create_task(
             self._pump(sub, pubsub), name=f"redis-bus-{channel}"
         )

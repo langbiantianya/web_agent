@@ -32,6 +32,11 @@ if TYPE_CHECKING:  # 仅供类型检查；运行时一律局部导入，避免�
 
 logger = logging.getLogger(__name__)
 
+# 单次回放的总量上限。分页取完之前不会撞到它；撞上了说明这条 run 的事件数
+# 极其夸张（一次回放不该把内存打满）。撞上限时置 ``ReplayResult.truncated``，
+# 让调用方知道这段流不连续——「不漏字」是这套设计最硬的不变量，不能静默破。
+REPLAY_TOTAL_LIMIT = 50000
+
 
 @dataclass(frozen=True, slots=True)
 class ReplayResult:
@@ -40,10 +45,15 @@ class ReplayResult:
     ``first_seq`` 是**现存事件的最小 seq**，缺口检测靠它判断「客户端要的那段是不是
     已经被裁掉了」。只在续传（``after_seq > 0``）时才有意义——首次连接不存在缺口，
     多查一次纯浪费。
+
+    ``truncated`` 表示回放**没有取完**：后面还有事件，但已经撞上总量上限。
+    这时客户端拿到的流是**不连续**的（中间缺了一段），必须让调用方知道——
+    「不漏字」是这套设计最硬的不变量，静默截断等于把它悄悄破了。
     """
 
     events: list["RunEventDTO"]
     first_seq: int | None = None
+    truncated: bool = False
 
 
 @runtime_checkable
@@ -97,15 +107,37 @@ class DbEventLog:
     async def replay(self, run_id: int, after_seq: int) -> ReplayResult:
         """从 ``run_event`` 表回放 ``seq > after_seq`` 的行。
 
+        **分页取完，不截断**：以前这里是 ``ORDER BY seq ASC LIMIT 5000``——一次
+        只取**最旧**的 5000 条。run 的事件数超过 5000 之后（每个 token delta 一
+        条，长回答就到），后面那截就永远取不到：它既不在回放里，也不在实时队列
+        里（实时队列只装「订阅之后发布的事件」），于是客户端拿到的是一段中间
+        缺了一截、seq 跳变的回答，而且**没有任何告警**。
+
+        现在按页取、直到取完或撞上总量上限；撞上限时置 ``truncated``，让调用方
+        知道这段流不连续。
+
         ``first_seq`` 只在续传时才查：它是缺口检测的输入，首次连接不需要。
         """
         from app.config.db import SessionLocal
-        from app.repo.run_event_repo import run_event_repo
+        from app.repo.run_event_repo import REPLAY_LIMIT, run_event_repo
 
+        events: list[RunEventDTO] = []
+        truncated = False
+        cursor = after_seq
         async with SessionLocal() as db:
-            events = await run_event_repo.list_after(db, run_id, after_seq)
-            first_seq = await run_event_repo.first_seq(db, run_id) if after_seq > 0 else None
-        return ReplayResult(events=events, first_seq=first_seq)
+            while True:
+                page = await run_event_repo.list_after(db, run_id, cursor)
+                events.extend(page)
+                if len(page) < REPLAY_LIMIT:
+                    break
+                cursor = page[-1].seq
+                if len(events) >= REPLAY_TOTAL_LIMIT:
+                    truncated = True
+                    break
+            first_seq = (
+                await run_event_repo.first_seq(db, run_id) if after_seq > 0 else None
+            )
+        return ReplayResult(events=events, first_seq=first_seq, truncated=truncated)
 
     async def finalize(self, run_id: int) -> None:
         """空操作：MySQL 里的事件由 ``RUN_EVENT_RETENTION_DAYS`` 定期清理。"""
@@ -177,8 +209,13 @@ class RedisEventLog:
     async def replay(self, run_id: int, after_seq: int) -> ReplayResult:
         """``XRANGE`` 回放 ``seq > after_seq`` 的条目。
 
-        上限与 MySQL 路径对齐（``run_event_repo.REPLAY_LIMIT``），避免超长 run 在
-        一次 ``XRANGE`` 里把内存打满。
+        **分页取完，不截断**：一次 ``XRANGE`` 的 count 只能取到一段，剩下的就
+        丢了——而丢掉的正好是**最新**的那一段（Redis 返回的是从小到大的顺序），
+        它不在 MySQL 归档里（归档是批量落库的，滞后），也不在实时队列里
+        （实时队列只装「订阅之后发布的事件」）。于是长 run 的续传会拿到一段
+        缺了一截的流，且毫无告警。
+
+        上限取 ``REPLAY_TOTAL_LIMIT``；撞上限时置 ``truncated``。
 
         **Stream 里什么都没有时回落到 MySQL**。这不是可选兜底而是必需的：Stream
         有 TTL、MySQL 保留 7 天，而启用 Redis 之前产生的 run 压根没有 Stream。
@@ -190,14 +227,13 @@ class RedisEventLog:
         而且是「越靠后的越容易漏」，因为缺的是尾部。只读 MySQL 也不对：归档是批量
         落库的，生成方还没 flush 时它是滞后的，跨实例续传恰恰是靠 Stream 才拿到
         最新事件的。取并集，两边各自缺的部分正好互补。
+
+        **``first_seq`` 取并集后的最小 seq**，不是 Stream 自己的最小 seq：Redis
+        抖动导致 Stream 缺了前段时，MySQL 里那些事件其实**还在**。曾经这里报的是
+        Stream 的最小 seq，缺口检测据此判成「缺了 699 条」→ 整段 history 一条都
+        不发——明明 MySQL 里有，却被当成归档清理掉了。
         """
-        from app.repo.run_event_repo import REPLAY_LIMIT
-
-        from app.core.redis_client import run_stream
-
-        entries = await (await self._redis()).xrange(
-            run_stream(run_id), min=f"({after_seq}-0", max="+", count=REPLAY_LIMIT
-        )
+        entries = await self._xrange_all(run_id, after_seq)
         if not entries:
             return await DbEventLog().replay(run_id, after_seq)
 
@@ -219,8 +255,39 @@ class RedisEventLog:
             archived = ReplayResult(events=[])
         for e in archived.events:
             merged.setdefault(e.seq, e)
-        ordered = [merged[seq] for seq in sorted(merged)][:REPLAY_LIMIT]
-        return ReplayResult(events=ordered, first_seq=_seq_of(entries[0][0]))
+        ordered = [merged[seq] for seq in sorted(merged)]
+        truncated = len(ordered) > REPLAY_TOTAL_LIMIT
+        if truncated:
+            ordered = ordered[:REPLAY_TOTAL_LIMIT]
+        # 并集里最小的那条 seq ——「现存事件里最早的一条」，缺口检测要的就是它
+        first_seq = ordered[0].seq if ordered else None
+        return ReplayResult(events=ordered, first_seq=first_seq, truncated=truncated)
+
+    async def _xrange_all(self, run_id: int, after_seq: int) -> list[tuple[str, dict]]:
+        """分页 XRANGE，直到取完或撞上总量上限。
+
+        每页用上一页最后一条的 seq 作为下界。XRANGE 的 ``min`` 是**闭区间**，
+        所以要用 ``(seq-0`` 这种「排他」写法才不会把边界那条重复拿到。
+        """
+        from app.repo.run_event_repo import REPLAY_LIMIT
+
+        from app.core.redis_client import run_stream
+
+        redis = await self._redis()
+        key = run_stream(run_id)
+        out: list[tuple[str, dict]] = []
+        cursor = f"({after_seq}-0"
+        while True:
+            page = await redis.xrange(key, min=cursor, max="+", count=REPLAY_LIMIT)
+            if not page:
+                break
+            out.extend(page)
+            if len(page) < REPLAY_LIMIT:
+                break
+            cursor = f"({_seq_of(page[-1][0])}-0"
+            if len(out) >= REPLAY_TOTAL_LIMIT:
+                break
+        return out
 
     async def finalize(self, run_id: int) -> None:
         """run 结束后给 Stream 设过期，避免 Redis 里无限堆积。

@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass
 
 from sqlalchemy import insert
+from sqlalchemy.exc import IntegrityError
 
 from app.config.db import SessionLocal
 from app.config.settings import settings
@@ -91,7 +92,11 @@ class EventWriter:
 
         单个事件写失败由 ``_flush`` 自行处理并重排，这里不退出循环——一次 DB
         抖动不该让整个 run 的事件永久停止落库。
+
+        **连续失败要退避**：DB 整个挂掉时，每 50ms 重试一次会把日志刷爆、
+        把连接池也打满。退避让「一直坏着」这件事变成安静的、可观测的。
         """
+        streak = 0
         while True:
             if self._closed:
                 break
@@ -102,11 +107,17 @@ class EventWriter:
             self._wake.clear()
             if self._closed:
                 break
-            await self._flush()
+            ok = await self._flush()
+            if ok:
+                streak = 0
+            else:
+                streak += 1
+                # 指数退避，上限 2 秒
+                await asyncio.sleep(min(2.0, 0.05 * (2 ** min(streak, 6))))
         # 关停：把还躺在内存里的尾部事件冲掉（失败留给 close() 重试）
         await self._flush()
 
-    async def _flush(self) -> None:
+    async def _flush(self) -> bool:
         """把当前批次写进 DB。
 
         整段（含 DB 写）都在 ``self._lock`` 内：这样并发的 ``flush()`` 会排队等
@@ -117,10 +128,20 @@ class EventWriter:
         **写失败时一定要把批次放回队首**，哪怕已经关停。丢事件的后果是「续传
         读不到那几段」——前端看到的是回复少了一截，而不是明确的错误，比丢事件
         本身更难查。
+
+        **失败后降级为逐行插入**：整批重试的粒度太粗——批里只要有一行**永远**
+        写不进去（比如撞了 ``uk_run_seq``，说明 seq 分配出了问题），整批就永远
+        写不进库：事件在内存里越堆越多，这条 run 的归档彻底瘫掉，而日志里只有
+        一条条重复的 exception。逐行插入能把「坏行」（唯一约束冲突，重试无
+        意义，丢弃并大声记 error）与「DB 整体不可用」（整批放回队首重试）区分
+        开来。
+
+        Returns:
+            True 表示这批已经落库（或全部处理完）；False 表示还有待重试的。
         """
         async with self._lock:
             if not self._batch:
-                return
+                return True
             batch, self._batch = self._batch, []
             rows = [
                 {
@@ -135,14 +156,43 @@ class EventWriter:
                 async with SessionLocal() as db:
                     await db.execute(insert(RunEventRow), rows)
                     await db.commit()
+                return True
             except Exception:  # pragma: no cover - DB 抖动
-                logger.exception(
-                    "run_event 批量写入失败，事件将重试 (run=%s，%s 条)",
+                logger.warning(
+                    "run_event 批量写入失败，降级为逐行插入 (run=%s，%s 条)",
                     self.run_id,
                     len(batch),
                 )
-                # 放回队首：未关停时后台循环会重试；已关停时由 close() 重试。
-                self._batch = batch + self._batch
+
+            # 逐行插入：把「永远写不进去的坏行」与「DB 整体不可用」区分开
+            poison: list[PendingEvent] = []
+            failed_at: int | None = None
+            for i, row in enumerate(rows):
+                try:
+                    async with SessionLocal() as db:
+                        await db.execute(insert(RunEventRow), [row])
+                        await db.commit()
+                except IntegrityError:
+                    # 唯一约束冲突：这条重试也没用（多半是 seq 重复分配）。
+                    # 丢弃并大声记出来——它代表 seq 分配出了问题，不能静默。
+                    poison.append(batch[i])
+                except Exception:  # pragma: no cover - DB 整体不可用
+                    failed_at = i
+                    break
+
+            if poison:
+                logger.error(
+                    "run %s 的 %s 条事件写不进库（唯一约束冲突，已丢弃）：seq=%s",
+                    self.run_id,
+                    len(poison),
+                    [e.seq for e in poison][:20],
+                )
+            if failed_at is not None:
+                # DB 整体不可用：剩下的（含失败那条）放回队首重试。
+                # 放回的是 PendingEvent 而不是行字典——队列里装的始终是事件对象。
+                self._batch = batch[failed_at:] + self._batch
+                return False
+            return True
 
     # -------------------------------------------------------------- 关闭
 
