@@ -161,7 +161,7 @@ class AgentRunner:
         # LLM 边界的最后一道过滤。API 层已经拦过一遍，这里再拦一次，是为了让
         # 「进入 LLM 的内容一定被过滤过」这条不变量对**所有路径**成立——历史
         # 消息、绕开 API 的内部调用、别的服务复用本模块，都逃不掉这一关。
-        self._guard_sensitive(messages)
+        await self._guard_sensitive(messages)
 
         client = _client_factory.get(self.agent)
         result = AgentResult()
@@ -334,7 +334,7 @@ class AgentRunner:
 
     # ------------------------------------------------------------- 内部
 
-    def _guard_sensitive(self, messages: list[dict]) -> None:
+    async def _guard_sensitive(self, messages: list[dict]) -> None:
         """发送前的敏感词兜底检查。
 
         API 层（``POST /api/conversations/{id}/messages``）已经拦过一遍了，
@@ -349,7 +349,7 @@ class AgentRunner:
         Raises:
             SensitiveContentError: 命中敏感内容。
         """
-        hit = screen_messages(messages)
+        hit = await screen_messages(messages)
         if hit is None:
             return
         index, verdict = hit
