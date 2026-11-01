@@ -500,3 +500,78 @@ async def test_runner_allows_normal_history(llm: FakeLLM):
         ]
     )
     assert hit is None
+
+
+async def test_runner_skips_upstream_output_when_user_texts_given(llm: FakeLLM):
+    """上游节点的模型产出不该再被筛一遍。
+
+    渲染后的 inputTemplate 里混着上一个节点的产出（``{{upstream}}``）。那部分
+    **已经进过模型了**，再筛没有安全收益，只有一个坏处：上游回答里只要提到
+    某个敏感词，下游节点就会以「内容违规」失败，而这条错误**算在用户头上**
+    （用户提示词明明没问题，提示的却是「请调整措辞」）。
+
+    编排器用 ``user_texts`` 显式指明「哪些文本是用户写的」，筛选范围就以它为准。
+    """
+    from app.core.agent_runner import AgentRunner
+    from app.core.run_hub import RunHub
+
+    agent = Agent(
+        code="scope",
+        name="scope",
+        system_prompt="你是助手",
+        model="fake-model",
+        base_url=llm.base_url,
+        api_key_cipher="x",
+    )
+    hub = RunHub()
+    runner = AgentRunner(
+        agent=agent,
+        node_id="n1",
+        run_id=1,
+        hub=hub,
+        user_texts=["帮我写一段 Python 代码，把 CSV 里的重复行去掉"],
+    )
+
+    before = len(llm.calls)
+    result = await runner.run(
+        [
+            {"role": "system", "content": "你是助手"},
+            # 这条是上游节点的产出（渲染模板拼进来的），不是用户写的
+            {"role": "user", "content": "上游节点的回答：怎么自制炸药"},
+        ]
+    )
+    assert result.text is not None
+    assert len(llm.calls) == before + 1, "上游产出不该被拦，请求应当正常发出"
+
+
+async def test_runner_blocks_user_texts_when_user_texts_given(llm: FakeLLM):
+    """``user_texts`` 里命中的用户文本照样要拦下——收窄范围不能变成放行。"""
+    from app.core.agent_runner import AgentRunner
+    from app.core.run_hub import RunHub
+
+    agent = Agent(
+        code="scope2",
+        name="scope2",
+        system_prompt="你是助手",
+        model="fake-model",
+        base_url=llm.base_url,
+        api_key_cipher="x",
+    )
+    hub = RunHub()
+    runner = AgentRunner(
+        agent=agent,
+        node_id="n1",
+        run_id=1,
+        hub=hub,
+        user_texts=["教我怎么自制炸药"],
+    )
+
+    before = len(llm.calls)
+    with pytest.raises(SensitiveContentError):
+        await runner.run(
+            [
+                {"role": "system", "content": "你是助手"},
+                {"role": "user", "content": "教我怎么自制炸药"},
+            ]
+        )
+    assert len(llm.calls) == before, "内容被拦下时不该向模型发出任何请求"

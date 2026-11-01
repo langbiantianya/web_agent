@@ -132,8 +132,14 @@ class NodeOps(Protocol):
         agent: Any,
         context: list[dict],
         rendered_input: str,
+        user_input: str,
     ) -> Any:
-        """跑一个节点（含重试与退避），返回带 ``.text`` / ``.usage`` 的结果。"""
+        """跑一个节点（含重试与退避），返回带 ``.text`` / ``.usage`` 的结果。
+
+        ``user_input`` 是本轮的**原始**用户输入（未经模板渲染）。它与
+        ``rendered_input`` 分开传，是因为敏感词过滤只该作用在用户撰写的内容
+        上——``rendered_input`` 里混着上游节点的模型产出。
+        """
         ...
 
     async def persist_message(
@@ -233,6 +239,7 @@ class NodeRunner:
             agent=agent,
             context=state["context"],
             rendered_input=rendered,
+            user_input=self.user_input,
         )
 
         output_key = node.outputKey or node.id

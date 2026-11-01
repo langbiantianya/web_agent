@@ -75,10 +75,25 @@ class MessageRepo:
         max_messages: int | None = None,
         exclude_pending: bool = True,
     ) -> list[dict]:
-        """按 token 预算从近到远回溯，装配 LLM messages。
+        """按 token 预算从**近到远**回溯，装配 LLM messages。
 
         ``exclude_pending``：跳过仍在 streaming 的消息（上一个 run 的半成品），
         避免把不完整内容当成事实喂给模型。
+
+        ## 裁剪方向：留最近的不是留最旧的
+
+        查询按 id 倒序（新→旧）取最近 ``max_messages`` 条，然后**从最新往回**
+        累加 token，超预算就停——留下的必然是**最近**的对话。
+
+        曾经这里是反的：拿到的 rows 虽然是倒序，却从最旧的那条开始累加、超预算
+        即 break，等于「预算不够就砍掉最近的、把最老的留着」。实测 10 条消息、
+        预算 350 token 时返回的是 msg01..msg03，最新的 msg08..msg10 全丢；
+        编排器随后还把 msg03 当成「本次用户消息」pop 掉——模型最后拿到的是
+        系统提示 + 两条陈年旧账 + 本轮输入，最近几轮对话一个字都看不见。
+
+        第一条（最新的那条）**无条件保留**：否则一条超长消息会把整段历史清空，
+        而它往往正是本轮的用户输入——被丢掉之后编排器连「pop 掉本轮输入」这一步
+        都做不成。
         """
         max_tokens = max_tokens or settings.context_max_tokens
         max_messages = max_messages or settings.context_max_messages
@@ -95,14 +110,15 @@ class MessageRepo:
         rows = list(await db.scalars(stmt))
         result: list[dict] = []
         used = 0
-        # rows 是 seq 倒序（新→旧），反向遍历即按时间正序回溯。
-        # 注意：此处直接返回 result，不要再 reversed 一次——那会把顺序又翻回去。
-        for m in reversed(rows):
+        # rows 是 id 倒序（新→旧），这里从最新往回取。
+        for m in rows:
             cost = m.token_count or estimate_tokens(m.content)
-            if used + cost > max_tokens:
+            if result and used + cost > max_tokens:
                 break
             result.append({"role": m.role, "content": m.content or ""})
             used += cost
+        # 收集顺序是新→旧，返回时翻回时间正序（模型读历史需要正序）
+        result.reverse()
         return result
 
 

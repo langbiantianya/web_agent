@@ -87,6 +87,61 @@ async def test_load_context_respects_token_budget(conversation_id: int):
         assert ctx[-1]["content"].startswith("内容")
 
 
+async def test_load_context_keeps_newest_when_over_budget(conversation_id: int):
+    """预算不够时，保留的必须是**最近**的几条，最旧的先被丢掉。
+
+    上一条用例 20 条消息的内容完全一样，方向反了也测不出来——断言
+    「content 以『内容』开头」对新旧两种实现都成立。这里给每条消息打上
+    可区分的编号，才能真正钉住「留新的、丢旧的」。
+
+    曾经这里是反的：rows 是 id 倒序（新→旧），代码却从最旧那条开始累加、
+    超预算即 break，等于「预算不够就砍掉最近的、把最老的留着」。实测 10 条
+    消息、预算 350 token 时返回的是第 0～2 号，最近的第 7～9 号全丢。
+    """
+    async with SessionLocal() as db:
+        for i in range(10):
+            await message_repo.add(
+                db,
+                conversation_id=conversation_id,
+                run_id=None,
+                agent_code=None,
+                role=MessageRole.USER.value,
+                content=f"【第{i}号】" + "填充" * 50,  # 每条约 103 token
+                status=MessageStatus.DONE.value,
+            )
+        await db.commit()
+
+        ctx = await message_repo.load_context(db, conversation_id, max_tokens=350)
+        contents = [m["content"] for m in ctx]
+        assert len(contents) <= 3, f"预算只够 3 条，实际 {len(contents)}"
+        assert contents[-1].startswith("【第9号】"), contents
+        assert contents[0].startswith("【第7号】"), contents
+        assert not any("【第0号】" in c for c in contents), contents
+
+
+async def test_load_context_always_keeps_the_newest(conversation_id: int):
+    """最新的一条**无条件保留**，哪怕它自己就超预算。
+
+    它往往正是本轮的用户输入——被丢掉之后，编排器连「pop 掉本轮输入」这一步
+    都做不成，本轮内容会被重复喂给模型。
+    """
+    async with SessionLocal() as db:
+        await message_repo.add(
+            db,
+            conversation_id=conversation_id,
+            run_id=None,
+            agent_code=None,
+            role=MessageRole.USER.value,
+            content="【最新】" + "超长" * 2000,  # 远超预算
+            status=MessageStatus.DONE.value,
+        )
+        await db.commit()
+
+        ctx = await message_repo.load_context(db, conversation_id, max_tokens=100)
+        assert len(ctx) == 1, "单条超预算也不该把历史清空"
+        assert ctx[0]["content"].startswith("【最新】")
+
+
 async def test_load_context_skips_streaming_messages(conversation_id: int):
     """上一个 run 的半成品（streaming）不能被当成事实喂回模型。"""
     async with SessionLocal() as db:

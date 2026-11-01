@@ -67,7 +67,7 @@ class FakeOps:
 
     async def run_with_retry(
         self, run_id: int, node: WorkflowNode, agent: Any,
-        context: list[dict], rendered_input: str,
+        context: list[dict], rendered_input: str, user_input: str = "",
     ) -> FakeResult:
         """模拟跑一个节点；命中 ``fail_on`` 时抛异常。"""
         if node.id == self.fail_on:

@@ -257,6 +257,12 @@ def known_tool_names(raw: Any) -> list[str] | None:
 def build_openai_tools(names: list[str] | None) -> list[dict] | None:
     """把工具名列表展开成 OpenAI 的 ``tools`` 参数。
 
+    **先按字符串过滤**：``tools`` 列是 JSON，V3.2 之前存过 OpenAI 的 function
+    schema（dict）。曾经这里直接 ``TOOL_REGISTRY.get(name)``，遇到 dict 会抛
+    ``TypeError: cannot use 'dict' as a dict key``——而这个异常在运行期被编排器
+    当成「节点失败」重试 3 次，最后 run 以一条看不懂的 TypeError 收尾。
+    读路径上有 :func:`known_tool_names` 做同样的宽容处理，运行期这里也要有。
+
     Args:
         names: 工具名列表。
 
@@ -267,6 +273,11 @@ def build_openai_tools(names: list[str] | None) -> list[dict] | None:
         return None
     specs: list[dict] = []
     for name in names:
+        if not isinstance(name, str):
+            # 脏数据（V3.2 之前的 function schema）：读路径已经宽容过，
+            # 运行期也必须宽容——这里抛出去会让整个节点失败。
+            logger.warning("跳过非法工具配置：%r", name)
+            continue
         spec = TOOL_REGISTRY.get(name)
         if spec is None:
             # 保存期已经拦过；这里仍兜一层，防止直接写库塞进非法配置
@@ -276,7 +287,9 @@ def build_openai_tools(names: list[str] | None) -> list[dict] | None:
     return specs or None
 
 
-async def execute_tool(name: str, arguments: str | dict) -> tuple[bool, str]:
+async def execute_tool(
+    name: str, arguments: str | dict, allowed: list[str] | None = None
+) -> tuple[bool, str]:
     """执行一个工具，返回 ``(是否成功, 给模型看的结果文本)``。
 
     **错误不抛出去，而是作为结果回给模型**：模型看到「参数错了」有机会自己纠正
@@ -286,10 +299,16 @@ async def execute_tool(name: str, arguments: str | dict) -> tuple[bool, str]:
     Args:
         name: 模型要调的工具名。
         arguments: 工具参数。模型给的是 JSON 字符串，这里也接受已解析的 dict。
+        allowed: 该 Agent **被授权**的工具名白名单。给了就只允许调这些——
+            模型只能看到被展开进 ``tools`` 参数的那些工具，但「模型请求的工具名」
+            与「服务端执行的工具名」仍要在这里对齐一次：提示词注入可以让模型
+            报出一个没被授权的名字，那不该被执行。
 
     Returns:
         ``(ok, text)``。``ok`` 为 False 时 ``text`` 是给模型看的错误说明。
     """
+    if allowed is not None and name not in allowed:
+        return False, f"工具「{name}」不在本 Agent 的授权列表里，不能调用。"
     spec = TOOL_REGISTRY.get(name)
     if spec is None:
         return False, (

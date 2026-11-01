@@ -76,7 +76,7 @@ class FakeOps:
 
     async def run_with_retry(
         self, run_id: int, node: WorkflowNode, agent: Any,
-        context: list[dict], rendered_input: str,
+        context: list[dict], rendered_input: str, user_input: str = "",
     ) -> FakeResult:
         """记录跑过哪个节点。"""
         self.ran.append(node.id)

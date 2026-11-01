@@ -207,8 +207,17 @@ class Orchestrator:
                 context = await message_repo.load_context(
                     db, plan["conversation_id"], exclude_pending=False
                 )
-            # 末尾那条就是本次刚写入的用户消息，单独取出用于渲染模板
-            if context and context[-1]["role"] == MessageRole.USER.value:
+            # 去掉本轮那条用户消息：它已经通过 inputTemplate 的 {{user_input}}
+            # 进渲染模板了，再留在历史里模型会看到两遍。
+            #
+            # **按内容比对，不按位置 pop**：预算裁剪之后 context 的最后一条
+            # 未必就是本轮输入（历史被裁掉时就不是了），按位置 pop 会误删一条
+            # 更早的真实对话。比不上就不删——重复一次总比删错历史好。
+            if (
+                context
+                and context[-1]["role"] == MessageRole.USER.value
+                and context[-1]["content"] == user_input
+            ):
                 context.pop()
 
             # 从这里开始，节点怎么串由 LangGraph 决定（V2）。执行逻辑本身仍在
@@ -492,6 +501,7 @@ class Orchestrator:
         agent,
         context: list[dict],
         rendered_input: str,
+        user_input: str,
     ) -> AgentResult:
         """:meth:`_run_node_with_retry` 的图侧入口，行为完全一致。"""
         return await self._run_node_with_retry(
@@ -500,6 +510,7 @@ class Orchestrator:
             agent=agent,
             context=context,
             rendered_input=rendered_input,
+            user_input=user_input,
         )
 
     async def _run_node_with_retry(
@@ -509,6 +520,7 @@ class Orchestrator:
         agent,
         context: list[dict],
         rendered_input: str,
+        user_input: str,
     ) -> AgentResult:
         """指数退避重试（设计文档 §3.3：失败重试 2 次）。"""
         attempts = settings.node_max_retries + 1
@@ -531,6 +543,16 @@ class Orchestrator:
                     run_id=run_id,
                     hub=self.hub,
                     is_cancelled=lambda: self.hub.is_cancelled(run_id),
+                    # **用户撰写的文本**才需要过筛：会话历史里的用户消息 +
+                    # 本轮原始输入。渲染后的 inputTemplate 里混着上游节点的模型
+                    # 产出，那部分已经进过模型了，筛它只会把上游的回答变成下游
+                    # 的「内容违规」，还把责任算到用户头上。
+                    user_texts=[
+                        m["content"]
+                        for m in context
+                        if m.get("role") == MessageRole.USER.value
+                    ]
+                    + [user_input],
                 )
                 result = await runner.run_with_tools(messages)
                 await self._finish_step(

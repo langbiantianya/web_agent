@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 
@@ -128,7 +129,10 @@ async def send_message(
     # 敏感词前置过滤（V3.4）：拦在**最前面**。被拦下的消息不进库、不建 run、
     # 不消耗任何 token——拦在后面就等于「先跑完模型再把结果扔掉」，白烧一次
     # 模型调用，还把敏感内容送到了模型那里。
-    verdict = screen_text(payload.content)
+    #
+    # **放线程里跑**：判定是纯 CPU，但一条长消息要 20 ms 左右，同步跑在事件
+    # 循环里就是整个 worker 停摆——同进程所有 SSE 流、心跳、API 请求一起卡住。
+    verdict = await asyncio.to_thread(screen_text, payload.content)
     if verdict is not None and verdict.hit:
         # 只记分数和位置，**不记命中词**：把敏感词写进日志，等于给日志库
         # 造了一份敏感词副本，审计与合规都成了笑话。
