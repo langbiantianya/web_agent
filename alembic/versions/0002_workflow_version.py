@@ -27,7 +27,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    """加 version 列并把所有既有行回填成 1。"""
+    """加 version 列并把所有既有行回填成 1。
+
+    **先查列是否已存在**：历史版本的 downgrade 是空操作（只把 alembic_version
+    标记退回去，列还留在表里）。从那种状态再 upgrade 到本版时，直接 ADD COLUMN
+    会撞「duplicate column name」。这里先看一眼，避免把用户卡在一个「回滚过就
+    再也升不回来」的版本上。
+    """
+    if _has_column("workflow", "version"):
+        return
     with op.batch_alter_table("workflow") as batch:
         batch.add_column(
             sa.Column("version", sa.Integer(), nullable=False, server_default="1")
@@ -41,9 +49,34 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """只回填值，不删列——理由见模块 docstring。
+    """删掉 version 列。
 
-    保留这一版是为了让「回滚后代码仍能跑」：即使有人手工回滚到这里，
-    workflow 表也是自洽的。
+    早先这里是空操作（理由是「删列在 SQLite 上要重建表」），但那会让
+    ``alembic_version`` 与实际表结构对不上：回退到 0001 之后再 upgrade，
+    0002 会去 ADD 一个已经存在的列，直接报「duplicate column name: version」
+    ——三方言皆然。降级必须让结构与版本标记**重新对齐**，否则这条路径就是死的。
+
+    SQLite 上删列走 batch 重建表；definition 是 JSON 列，batch 会原样搬过去。
     """
-    return None
+    if not _has_column("workflow", "version"):
+        return
+    with op.batch_alter_table("workflow") as batch:
+        batch.drop_column("version")
+
+
+def _has_column(table: str, column: str) -> bool:
+    """列是否已存在。
+
+    用 ``inspect`` 而不是 ``has_table``：升级路径要判断的是「列在不在」，
+    而离线模式（``--sql``）下没有真实连接可查——离线渲染时一律当作「不存在」，
+    按首次升级生成 DDL。
+    """
+    try:
+        bind = op.get_bind()
+        inspector = sa.inspect(bind)
+        if not inspector.has_table(table):
+            return False
+        return column in {c["name"] for c in inspector.get_columns(table)}
+    except Exception:  # pragma: no cover - 离线模式等拿不到真实 schema 的场景
+        return False
+

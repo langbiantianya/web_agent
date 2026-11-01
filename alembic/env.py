@@ -17,7 +17,12 @@ from app.config.settings import settings
 from app.models import Base  # noqa: F401  确保所有表都注册到 metadata
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# **百分号要转义**：alembic 的配置走 configparser 的插值语法，URL 里的 ``%``
+# 会被当成插值占位符。密码里含 ``@ : / %`` 时必须编码成 ``%40`` 之类，于是
+# 这里会直接抛 "invalid interpolation syntax"——**在连库之前**就退出，
+# 服务本身用同一个 URL 却能正常启动：能跑但迁移跑不了。
+# 转义成 ``%%`` 之后，configparser 会把它还原回 ``%``。
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

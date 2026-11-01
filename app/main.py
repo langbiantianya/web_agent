@@ -54,59 +54,91 @@ async def lifespan(app: FastAPI):
     最后 ``dispose_engine()`` 关连接池。顺序不能反：还在写的任务需要连接可用
     来落库，而 Redis 的 pump 任务需要 Redis 还活着才能干净退出。
 
-    易踩的坑：启动阶段的恢复失败只记日志、不阻塞启动。数据库暂时不可用（例如
-    迁移还没跑完）不应该让整个服务起不来，否则就是「恢复逻辑本身制造了新的启动
-    故障」。**Redis 不可用、敏感词模型缺失则相反**——必须让启动失败，否则会出现
-    「服务能跑但内容没被过滤」或「跨实例收不到事件」这类**症状正常、行为已错**
-    的分裂状态，比启动失败难查得多。
+    **每一步关闭都独立 try**：以前这几步是平铺的，任何一步抛异常都会让**后面
+    的步骤全部跳过**——关停时 ``close_checkpointer`` 抛了，Redis 连接与连接池
+    就都泄漏了。关停期的异常不该影响其余资源的释放，所以逐个兜住、逐个记日志。
+
+    **启动失败要回滚**：启动阶段已经建立的资源（Redis 连接、checkpointer）不能
+    因为后面某一步失败就悬着——进程还没退出，那些连接会一直占着。
+
+    易踩的坑：启动阶段的**恢复**失败只记日志、不阻塞启动。数据库暂时不可用
+    （例如迁移还没跑完）不应该让整个服务起不来，否则就是「恢复逻辑本身制造了
+    新的启动故障」。**Redis 不可用、敏感词模型缺失则相反**——必须让启动失败，
+    否则会出现「服务能跑但内容没被过滤」或「跨实例收不到事件」这类**症状正常、
+    行为已错**的分裂状态，比启动失败难查得多。
     """
     logger.info("%s v%s 启动中…", settings.app_name, __version__)
 
-    # 敏感词前置过滤（V3.4）放在最前面：它只读一个本地模型文件，是所有启动
-    # 检查里最便宜的一个——模型缺失就别急着连 Redis 了。
     try:
-        init_filter()
-    except Exception as exc:
-        logger.error("敏感词过滤模型加载失败：%s", exc)
-        raise
-
-    # Redis 连接放在最前面：总线与回放源的单例在第一次使用前必须已就绪，
-    # 否则会在某个请求里才炸，错误现场和真正的病因隔得很远。
-    if redis_is_enabled():
+        # 敏感词前置过滤（V3.4）放在最前面：它只读一个本地模型文件，是所有启动
+        # 检查里最便宜的一个——模型缺失就别急着连 Redis 了。
         try:
-            await connect_redis()
-        except RedisError as exc:
-            logger.error(
-                "Redis 连接失败（%s）：%s。单实例开发请设 REDIS_ENABLED=false。",
-                settings.redis_url,
-                exc,
-            )
+            init_filter()
+        except Exception as exc:
+            logger.error("敏感词过滤模型加载失败：%s", exc)
             raise
-        logger.info("已启用 Redis 后端，实例标识 %s", instance_id())
 
-    # 审批暂停点（V3.1）。连不上就**直接失败**：没有 checkpointer 就没有「暂停」，
-    # 审批节点会卡住不动，用户看到的是「一直在等审批」却永远等不到结果——
-    # 那比启动失败难查得多。
-    try:
-        await init_checkpointer()
-    except Exception as exc:
-        logger.error("审批暂停点初始化失败：%s", exc)
+        # Redis 连接放在最前面：总线与回放源的单例在第一次使用前必须已就绪，
+        # 否则会在某个请求里才炸，错误现场和真正的病因隔得很远。
+        if redis_is_enabled():
+            try:
+                await connect_redis()
+            except RedisError as exc:
+                logger.error(
+                    "Redis 连接失败（%s）：%s。单实例开发请设 REDIS_ENABLED=false。",
+                    redact_url(settings.redis_url),
+                    exc,
+                )
+                raise
+            logger.info("已启用 Redis 后端，实例标识 %s", instance_id())
+
+        # 审批暂停点（V3.1）。连不上就**直接失败**：没有 checkpointer 就没有「暂停」，
+        # 审批节点会卡住不动，用户看到的是「一直在等审批」却永远等不到结果——
+        # 那比启动失败难查得多。
+        try:
+            await init_checkpointer()
+        except Exception as exc:
+            logger.error("审批暂停点初始化失败：%s", exc)
+            raise
+
+        try:
+            n = await recover_stale_runs()
+            if n:
+                logger.warning("已将 %s 个遗留 run 标记为 error", n)
+        except Exception:  # pragma: no cover - 数据库暂时不可用时不阻塞启动
+            logger.exception("启动时恢复遗留 run 失败（数据库可能尚未就绪）")
+    except BaseException:
+        # 启动失败：把已经建立的资源回滚掉，别让它们悬到进程退出
+        logger.exception("启动失败，回滚已建立的资源")
+        await _close_resources()
         raise
 
-    try:
-        n = await recover_stale_runs()
-        if n:
-            logger.warning("已将 %s 个遗留 run 标记为 error", n)
-    except Exception:  # pragma: no cover - 数据库暂时不可用时不阻塞启动
-        logger.exception("启动时恢复遗留 run 失败（数据库可能尚未就绪）")
     yield
     logger.info("正在关闭…")
-    await get_orchestrator().shutdown()
-    await close_checkpointer()
-    if redis_is_enabled():
-        await disconnect_redis()
-    await dispose_engine()
+    await _close_resources()
     logger.info("已关闭")
+
+
+async def _close_resources() -> None:
+    """逐步关闭各项资源，**每一步独立 try**：一步失败不该让后面的步骤被跳过。
+
+    顺序不能反：还在写的任务需要连接可用来落库，而 Redis 的 pump 任务需要
+    Redis 还活着才能干净退出。
+
+    关停期的异常一律吞掉并记日志——关停过程不该把异常抛给 ASGI 服务器，那会
+    在已经准备好的响应上再叠一个错误，掩盖真正的关停问题。
+    """
+    steps = (
+        ("编排器", get_orchestrator().shutdown),
+        ("审批暂停点", close_checkpointer),
+        ("Redis 连接", disconnect_redis),
+        ("数据库连接池", dispose_engine),
+    )
+    for name, closer in steps:
+        try:
+            await closer()
+        except Exception:
+            logger.exception("关闭%s失败（继续关闭其余资源）", name)
 
 
 def create_app() -> FastAPI:

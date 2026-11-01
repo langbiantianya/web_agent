@@ -18,11 +18,17 @@ from __future__ import annotations
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import mysql as mysql_dialect
 
 revision = "c4d8e1f0a927"
 down_revision = "7c1f0a94b2e6"
 branch_labels = None
 depends_on = None
+
+# 与 app.models.base.DATETIME3 保持一致：MySQL 用 fsp=3，其余方言用通用 DateTime。
+# 用裸 sa.DateTime() 的话 MySQL 上落成 DATETIME（fsp=0），审批时间被截到整秒，
+# 且与 ORM 的 DATETIME(3) 对不上——autogenerate 会永远报一条多余的 ALTER 差异。
+DATETIME3 = sa.DateTime().with_variant(mysql_dialect.DATETIME(fsp=3), "mysql")
 
 
 def upgrade() -> None:
@@ -52,11 +58,11 @@ def upgrade() -> None:
         sa.Column("decided_by", sa.String(length=64), nullable=True),
         sa.Column(
             "requested_at",
-            sa.DateTime(),
+            DATETIME3,
             nullable=False,
             server_default=sa.func.now(),
         ),
-        sa.Column("decided_at", sa.DateTime(), nullable=True),
+        sa.Column("decided_at", DATETIME3, nullable=True),
         sa.UniqueConstraint("run_id", "node_id", name="uk_run_approval_node"),
     )
     op.create_index("idx_approval_status", "run_approval", ["status", "requested_at"])

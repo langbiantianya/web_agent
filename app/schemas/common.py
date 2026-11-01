@@ -21,6 +21,8 @@ class HealthOut(BaseModel):
     status: str = "ok"
     app: str
     db: str
+    # Redis 依赖状态：ok / error / disabled（未启用）。
+    redis: str = "disabled"
     active_runs: int = 0
     version: str = ""
 
