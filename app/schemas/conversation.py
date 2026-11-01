@@ -79,6 +79,9 @@ class RunStepOut(ORMBase):
     error_msg: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    # 每次尝试的明细（一条一个尝试）。`status` / `error_msg` 只反映**最近一次**
+    # 尝试；要复盘「第 1 次超时、第 2 次才成功」看这个数组。
+    attempts_json: list[dict] = []
 
 
 class RunOut(ORMBase):

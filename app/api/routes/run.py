@@ -144,8 +144,10 @@ async def submit_approval(
     decided = await run_approval_repo.decide(
         db, approval.id, body.approved, body.comment, body.decidedBy
     )
-    if decided is None or decided.status == "pending":
-        # 并发提交：另一次请求已经决策过了
+    if decided is None:
+        # 并发提交：条件更新没命中，说明另一个请求已经决策过了。
+        # 这里必须拦住——放行就会拉起第二个恢复任务，两个任务并发驱动同一条
+        # LangGraph thread，审批后的节点会跑两遍。
         raise ConflictError("该审批已被决策过")
 
     # 后台恢复执行：批准 → 接着往下跑；驳回 → 图节点抛 RunRejected，run 终止

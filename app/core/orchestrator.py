@@ -246,41 +246,32 @@ class Orchestrator:
                 await self._pause(run_id, paused)
                 return
 
-            last_seq = (
-                await self.hub.emit(
-                    run_id,
-                    EventType.DONE,
-                    {"status": RunStatus.DONE.value, "usage": final_state["usage"]},
-                )
-            ).seq
-            await self._finish(run_id, RunStatus.DONE, last_seq)
+            await self._finish_with(
+                run_id,
+                RunStatus.DONE,
+                {"status": RunStatus.DONE.value, "usage": final_state["usage"]},
+            )
 
         except RunRejected as exc:
             # 审批被驳回：run 就此终止，驳回意见进 error_msg。
-            last_seq = (
-                await self.hub.emit(
-                    run_id,
-                    EventType.DONE,
-                    {
-                        "status": RunStatus.REJECTED.value,
-                        "message": exc.comment or "审批被驳回",
-                    },
-                )
-            ).seq
-            await self._finish(
-                run_id, RunStatus.REJECTED, last_seq, exc.comment or "审批被驳回"
+            await self._finish_with(
+                run_id,
+                RunStatus.REJECTED,
+                {
+                    "status": RunStatus.REJECTED.value,
+                    "message": exc.comment or "审批被驳回",
+                },
+                exc.comment or "审批被驳回",
             )
             logger.info("run %s 因审批驳回而终止", run_id)
 
         except RunCancelled as exc:
-            last_seq = (
-                await self.hub.emit(
-                    run_id,
-                    EventType.DONE,
-                    {"status": RunStatus.CANCELLED.value, "message": str(exc)},
-                )
-            ).seq
-            await self._finish(run_id, RunStatus.CANCELLED, last_seq, "用户取消")
+            await self._finish_with(
+                run_id,
+                RunStatus.CANCELLED,
+                {"status": RunStatus.CANCELLED.value, "message": str(exc)},
+                "用户取消",
+            )
             logger.info("run %s 已取消", run_id)
 
         except asyncio.CancelledError:
@@ -296,12 +287,12 @@ class Orchestrator:
                     EventType.ERROR,
                     {"message": str(exc), "type": type(exc).__name__},
                 )
-                last_seq = (
-                    await self.hub.emit(
-                        run_id, EventType.DONE, {"status": RunStatus.ERROR.value}
-                    )
-                ).seq
-                await self._finish(run_id, RunStatus.ERROR, last_seq, str(exc)[:2000])
+                await self._finish_with(
+                    run_id,
+                    RunStatus.ERROR,
+                    {"status": RunStatus.ERROR.value},
+                    str(exc)[:2000],
+                )
             except Exception:  # pragma: no cover
                 logger.exception("run %s 失败后收尾也失败了", run_id)
 
@@ -355,6 +346,69 @@ class Orchestrator:
 
         恢复可以在**任意实例**上发生：暂停点在共享的 checkpointer 里，图状态与
         事件流分工明确（前者管「停在哪」，后者管「发生过什么」）。
+
+        ## 收尾阶梯与 :meth:`execute` 完全一致
+
+        恢复后的执行**同样会失败**：LLM 端点挂了、用户点了停止、工具陷住了、
+        敏感词兜底命中。任何一条失败路径都必须收敛成 run 的终态——发终止事件、
+        回写 run 状态、冲刷事件、释放租约。
+
+        这里曾经只捕 ``RunRejected``，其余异常直接逃出后台任务：run 永远停在
+        ``running``、不 emit 终止事件（SSE 连接挂死）、租约不释放（别的实例的
+        启动恢复会一直跳过它）。现在与 ``execute`` 共用同一套阶梯。
+        """
+        try:
+            await self._resume_graph(run_id, decision)
+        except RunRejected as exc:
+            await self._finish_with(
+                run_id,
+                RunStatus.REJECTED,
+                {
+                    "status": RunStatus.REJECTED.value,
+                    "message": exc.comment or "审批被驳回",
+                },
+                exc.comment or "审批被驳回",
+            )
+            logger.info("run %s 因审批驳回而终止", run_id)
+        except RunCancelled as exc:
+            await self._finish_with(
+                run_id,
+                RunStatus.CANCELLED,
+                {"status": RunStatus.CANCELLED.value, "message": str(exc)},
+                "用户取消",
+            )
+            logger.info("run %s 已取消", run_id)
+        except asyncio.CancelledError:
+            # 进程退出：尽力收尾后向上抛
+            await self._finish(run_id, RunStatus.ERROR, 0, "服务退出")
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("run %s 恢复执行失败", run_id)
+            try:
+                await self.hub.emit(
+                    run_id,
+                    EventType.ERROR,
+                    {"message": str(exc), "type": type(exc).__name__},
+                )
+                await self._finish_with(
+                    run_id,
+                    RunStatus.ERROR,
+                    {"status": RunStatus.ERROR.value},
+                    str(exc)[:2000],
+                )
+            except Exception:  # pragma: no cover
+                logger.exception("run %s 恢复失败后收尾也失败了", run_id)
+
+    async def _resume_graph(self, run_id: int, decision: dict) -> None:
+        """恢复执行的主体：加载配置 → 续接 seq → 跑图 → 收尾。
+
+        单独拆出来是为了让 :meth:`resume` 的收尾阶梯能包住**全部**失败点，
+        而不是只包住图执行那一段。
+
+        Raises:
+            RunRejected: 审批被驳回。
+            RunCancelled: 用户取消。
+            Exception: 图执行期的任何其他失败，由 :meth:`resume` 统一兜底。
         """
         plan = await self._load_plan(run_id)
         if plan is None:
@@ -380,27 +434,10 @@ class Orchestrator:
             ops=self,
         )
         graph = build_run_graph(definition, runner, checkpointer=get_checkpointer())
-        try:
-            final_state = await graph.ainvoke(
-                Command(resume=decision),
-                checkpoint_config(run_id, recursion_limit(definition)),
-            )
-        except RunRejected as exc:
-            last_seq = (
-                await self.hub.emit(
-                    run_id,
-                    EventType.DONE,
-                    {
-                        "status": RunStatus.REJECTED.value,
-                        "message": exc.comment or "审批被驳回",
-                    },
-                )
-            ).seq
-            await self._finish(
-                run_id, RunStatus.REJECTED, last_seq, exc.comment or "审批被驳回"
-            )
-            logger.info("run %s 因审批驳回而终止", run_id)
-            return
+        final_state = await graph.ainvoke(
+            Command(resume=decision),
+            checkpoint_config(run_id, recursion_limit(definition)),
+        )
 
         # 恢复后理论上不会再挂起（审批已决策）；真挂起说明流程有第二个审批点，
         # 那种情况同样要停下来等人，不能当成跑完了。
@@ -409,14 +446,11 @@ class Orchestrator:
             await self._pause(run_id, paused)
             return
 
-        last_seq = (
-            await self.hub.emit(
-                run_id,
-                EventType.DONE,
-                {"status": RunStatus.DONE.value, "usage": final_state["usage"]},
-            )
-        ).seq
-        await self._finish(run_id, RunStatus.DONE, last_seq)
+        await self._finish_with(
+            run_id,
+            RunStatus.DONE,
+            {"status": RunStatus.DONE.value, "usage": final_state["usage"]},
+        )
 
     # ------------------------------------------------------------- 节点
 
@@ -619,8 +653,11 @@ class Orchestrator:
     async def _start_step(self, run_id: int, node: WorkflowNode, agent, input_json: dict):
         """记录一次节点尝试的开始（run_step 落一行）。
 
-        每次**尝试**都新起一条 step 而不复用上一条：重试是编排器显式控制的，
-        一条 step 只描述一次尝试，事后才能看清「第 1 次超时、第 2 次才成功」。
+        表里是**一个节点一行**（``uk_run_node``），但每次尝试都会往该行的
+        ``attempts_json`` 里追加一项——重试时上一次尝试的记录不会被覆盖，
+        于是「第 1 次超时、第 2 次才成功」在复盘时看得见（设计文档 §14.2
+        「写 run_step 记录每次尝试」）。行上的 ``status`` / ``error_msg`` 始终
+        表示**最近一次尝试**的状态。
         """
         async with SessionLocal() as db:
             await run_repo.start_step(db, run_id, node.id, agent.code, input_json)
@@ -649,16 +686,52 @@ class Orchestrator:
         async with SessionLocal() as db:
             await run_repo.finish_step(db, run_id, node_id, status, output_json, error_msg)
 
+    async def _finish_with(
+        self,
+        run_id: int,
+        status: RunStatus,
+        payload: dict,
+        error_msg: str | None = None,
+    ) -> int:
+        """发终止事件 → 回写 run 终态 → 清理暂停点。
+
+        :meth:`execute` 与 :meth:`resume` 共用的收口。两条路径**必须**走同一个
+        出口：曾经它们各写各的阶梯，``resume`` 那条少了几级，审批恢复后的失败
+        就再也收不了尾——run 永远停在 ``running``，SSE 连接挂死。
+
+        顺序不能调换：先 emit 终止事件、再回写 run 状态。这产生一个
+        「事件已结束、状态仍是 running」的窗口，sse_writer 的 ⑤ 分支正是为它
+        准备的。
+
+        Args:
+            run_id: 要收尾的 run。
+            status: 终态（done / cancelled / rejected / error）。
+            payload: 终止事件的载荷（status、usage 或 message）。
+            error_msg: 落进 ``run.error_msg`` 的说明。
+
+        Returns:
+            终止事件的 seq。
+        """
+        last_seq = (await self.hub.emit(run_id, EventType.DONE, payload)).seq
+        await self._finish(run_id, status, last_seq, error_msg)
+        return last_seq
+
     async def _finish(
         self, run_id: int, status: RunStatus, last_seq: int, error_msg: str | None = None
     ) -> None:
         """冲刷事件 → 回写 run 状态与 last_seq（避免写放大）→ 清理暂停点。"""
+        final_seq = 0
         try:
-            await self.hub.finalize(run_id)
+            final_seq = await self.hub.finalize(run_id)
         except Exception:  # pragma: no cover
             logger.exception("run %s finalize 失败", run_id)
+        # 用 finalize 返回的 seq，而不是调用方手里那个：进程退出那条路径**没有**
+        # 终止事件，调用方传的是 0，写进库里等于把「seq 严格递增」这条全局
+        # 不变量断掉——合成 done 的 SSE id 会回退到 0，续传锚点被重置成 0，
+        # 下次重连从头重放，客户端看到重复内容。
+        seq = final_seq or last_seq
         async with SessionLocal() as db:
-            await run_repo.finish(db, run_id, status, last_seq, error_msg)
+            await run_repo.finish(db, run_id, status, seq, error_msg)
         # run 到终态了，暂停点没有用了：留着只会在 Redis / SQLite 里堆垃圾
         await delete_thread(run_id)
 

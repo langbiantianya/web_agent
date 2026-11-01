@@ -63,6 +63,16 @@ class RunStep(Base):
     error_msg: Mapped[str | None] = mapped_column(sa.Text, default=None)
     started_at: Mapped[object | None] = mapped_column(DATETIME3, default=None)
     finished_at: Mapped[object | None] = mapped_column(DATETIME3, default=None)
+    # **每次尝试**的明细，JSON 数组，一项一个尝试：
+    # ``[{"n":1,"status":"error","error_msg":"...","started_at":"...","finished_at":"..."}]``
+    #
+    # 为什么单独存一份而不是「一个节点一行、重试就覆盖」：重试是编排器显式控制
+    # 的，一次节点失败重试 3 次是常见路径，覆盖掉之后「第 1 次超时、第 2 次才
+    # 成功」就再也查不出来了——而这恰恰是复盘时最想看的东西（设计文档 §14.2
+    # 「写 run_step 记录每次尝试」）。表里仍然是一个节点一行（``uk_run_node``），
+    # 每次尝试作为数组的一项追加进去，于是「重试了几次」与「每次为什么失败」
+    # 都能从同一行读出来。
+    attempts_json: Mapped[list | None] = mapped_column(JSON_COL, default=None)
 
     __table_args__ = (
         sa.UniqueConstraint("run_id", "node_id", name="uk_run_node"),
