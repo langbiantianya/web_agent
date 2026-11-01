@@ -128,7 +128,7 @@ async def send_message(
     # 敏感词前置过滤（V3.4）：拦在**最前面**。被拦下的消息不进库、不建 run、
     # 不消耗任何 token——拦在后面就等于「先跑完模型再把结果扔掉」，白烧一次
     # 模型调用，还把敏感内容送到了模型那里。
-    verdict = await screen_text(payload.content)
+    verdict = screen_text(payload.content)
     if verdict is not None and verdict.hit:
         # 只记分数和位置，**不记命中词**：把敏感词写进日志，等于给日志库
         # 造了一份敏感词副本，审计与合规都成了笑话。

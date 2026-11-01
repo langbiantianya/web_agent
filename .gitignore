@@ -21,12 +21,6 @@ venv/
 # ---- Alembic ----
 alembic/versions/__pycache__/
 
-# ---- 敏感词过滤模型（V3.4）----
-# 四个 int8 ONNX 模型合计约 411 MB，超过 GitHub 单文件 100 MB 的上限，
-# 而且模型是第三方产物、该由上游维护。用
-# `python -m scripts.fetch_sensitive_model` 拉取。
-app/core/sensitive_models/
-
 # ---- 排查脚本 ----
 probe_*.py
 dbg_*.py

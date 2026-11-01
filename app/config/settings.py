@@ -125,77 +125,22 @@ class Settings(BaseSettings):
     # 总开关，默认开。这是「提示词进 LLM 之前」的那道前置，关掉它等于没有。
     # 显式关掉是有记录、可审计的：配置里留痕，启动日志里也有一行说明。
     sensitive_enabled: bool = True
-    # 模型目录。里面是四个 int8 ONNX 模型 + 分词器 + manifest，由
-    # `python -m scripts.fetch_sensitive_model` 生成。模型文件**不进仓库**
-    # （合计约 411 MB，超过 GitHub 单文件 100 MB 上限），部署时拉一次即可。
-    # 路径按**项目根**解析而不是相对工作目录——服务从哪个目录启动都能找到
-    # 模型，少一类「本地能跑、部署找不到」。
-    sensitive_model_dir: str = str(
-        Path(__file__).resolve().parents[2] / "app" / "core" / "sensitive_models"
+    # 判定阈值。留 0 表示用**模型自带**的推荐阈值——那是训练时按「误报率不超过
+    # 目标」挑出来的，比手填一个数靠谱。显式给值则覆盖它：调高更严（漏得多），
+    # 调低更松（误杀多）。
+    sensitive_threshold: float = 0.0
+    # 模型文件路径。默认指向仓库里那份，路径按**项目根**解析而不是相对工作
+    # 目录——服务从哪个目录启动都能找到模型，少一类「本地能跑、部署找不到」。
+    sensitive_model_path: str = str(
+        Path(__file__).resolve().parents[2] / "app" / "core" / "sensitive_model.npz"
     )
-    # 各模型的判定阈值，形如 `politic=0.56,violence=0.72,porn=0.56,insult=0.60`。
-    # 留空 = 用代码里内置的标定值（app/core/sensitive.py::DEFAULT_THRESHOLDS）。
-    # 那些值是**联合标定**出来的：在标定集上贪心搜索四个阈值，在整体误报率
-    # 不超目标的前提下最大化召回。换模型或换语料后必须重新标定——
-    # `python -m scripts.eval_sensitive` 会把新阈值打印出来。
-    sensitive_thresholds: str = ""
-    # 滑窗参数。0 表示用代码内置的默认值。窗口越短证据越集中、召回越高，
-    # 但窗口数变多、耗时线性上涨——这是召回与耗时之间的直接对冲。
+    # 滑窗参数。0 表示用模型 meta 里记录的值。重训换了窗口，推理必须跟着换，
+    # 所以默认值来自模型而不是写死在代码里；这两项只给「临时调参、不重训」用。
     sensitive_window: int = 0
     sensitive_stride: int = 0
-    # 一条文本最多切多少个窗口。超了会拉大步长把窗口摊开到整段（不截断，
-    # 免得漏掉末尾的内容）。窗口数是耗时的唯一线性因子。
-    sensitive_max_windows: int = 8
     # 单条提示词最多扫描多少字符。超长的只扫前面这段——敏感内容几乎总在开头，
-    # 且这一步是为了**控住资源占用**。CPU 上的 int8 推理约 1.5 ms/token，
-    # 所以这个值直接决定了长请求要多等多久。
-    sensitive_max_chars: int = 2000
-    # 每个 ONNX 会话内部的线程数。四个模型**之间**已经并行跑了，这里再给每个
-    # 会话多线程就是超订——默认 1，让并行度落在模型之间。
-    sensitive_num_threads: int = 1
-    # 是否按 manifest 里的 sha256 校验模型文件。模型是「安全前置」的一部分，
-    # 被换掉了却没人知道，比启动慢一秒钟严重得多，所以默认校验。
-    sensitive_verify_checksum: bool = True
-
-    def sensitive_thresholds_parsed(self) -> dict[str, float] | None:
-        """把 :attr:`sensitive_thresholds` 解析成 ``{模型键: 阈值}``。
-
-        解析失败**不**静默退回默认值——阈值写错了却没人知道，等于过滤器悄悄
-        换了一套判定标准。宁可启动时炸掉。
-
-        Returns:
-            阈值字典；配置为空时返回 ``None``（表示用内置默认值）。
-
-        Raises:
-            ValueError: 格式不合法，或键不是已知的模型键。
-        """
-        from app.core.sensitive import MODEL_KEYS
-
-        raw = (self.sensitive_thresholds or "").strip()
-        if not raw:
-            return None
-        known = {key for key, _ in MODEL_KEYS}
-        out: dict[str, float] = {}
-        for part in raw.split(","):
-            item = part.strip()
-            if not item:
-                continue
-            if "=" not in item:
-                raise ValueError(f"SENSITIVE_THRESHOLDS 格式错误：{item!r}（应为 key=value）")
-            key, _, value = item.partition("=")
-            key = key.strip()
-            if key not in known:
-                raise ValueError(
-                    f"SENSITIVE_THRESHOLDS 里有未知模型 {key!r}，可选：{', '.join(sorted(known))}"
-                )
-            try:
-                out[key] = float(value)
-            except ValueError as exc:
-                raise ValueError(f"SENSITIVE_THRESHOLDS 里 {key} 的阈值不是数字：{value!r}") from exc
-        missing = known - set(out)
-        if missing:
-            raise ValueError(f"SENSITIVE_THRESHOLDS 缺了这些模型：{', '.join(sorted(missing))}")
-        return out
+    # 而这一步是为了**控住资源占用**。
+    sensitive_max_chars: int = 4000
 
 
 @lru_cache

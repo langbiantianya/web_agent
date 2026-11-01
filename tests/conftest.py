@@ -57,18 +57,6 @@ os.environ["CHECKPOINT_SQLITE_PATH"] = str(
 # 需要 Redis 的用例（tests/test_redis.py）自己显式建连，不走这个全局开关。
 os.environ["REDIS_ENABLED"] = "false"
 
-# **必须**强制关掉敏感词前置过滤。
-#
-# 过滤器用的模型（四个 int8 ONNX，合计约 413 MB）**不在仓库里**——超过
-# GitHub 单文件 100 MB 的上限，模型是第三方产物、该由上游维护，部署时靠
-# `python -m scripts.fetch_sensitive_model` 拉取。
-#
-# 过滤器是「安全前置」，模型缺失会让服务**启动失败**（见 app/main.py）。那在
-# 缺模型的机器上意味着整个测试套件都起不来——包括跟过滤毫无关系的用例。
-# 所以这里全局关掉，需要它的用例（tests/test_sensitive.py）在自己的 fixture
-# 里显式打开。
-os.environ["SENSITIVE_ENABLED"] = "false"
-
 from app.core.run_hub import get_hub  # noqa: E402
 from app.models import Base  # noqa: E402
 
