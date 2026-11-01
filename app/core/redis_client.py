@@ -184,7 +184,7 @@ async def connect_redis(attempts: int = 3, backoff: float = 0.5) -> Redis:
             continue
 
         _pool, _client = pool, client
-        logger.info("Redis 已连接：%s", _redact(settings.redis_url))
+        logger.info("Redis 已连接：%s", redact_url(settings.redis_url))
         return _client
 
     assert last_error is not None
@@ -215,10 +215,13 @@ async def disconnect_redis() -> None:
     logger.info("Redis 连接已关闭")
 
 
-def _redact(url: str) -> str:
+def redact_url(url: str) -> str:
     """隐藏 URL 里的密码，只留 host:port 便于排查。
 
     ``redis://:secret@host:6379/0`` → ``redis://***@host:6379/0``。
+
+    公开给别的模块用：启动日志、checkpointer 的初始化日志都碰得到这个 URL，
+    而密码进日志等于把凭证抄送给了日志采集系统。
     """
     if "@" not in url:
         return url

@@ -237,14 +237,26 @@ class RedisLease:
             logger.exception("run %s 的归属键删除失败", run_id)
 
     async def is_owned(self, run_id: int) -> bool:
-        """归属键是否还在。键在 = 有人（或曾经有人）在管这个 run。"""
+        """归属键是否还在。键在 = 有人（或曾经有人）在管这个 run。
+
+        **查询失败时返回 True（按「有人在管」处理）**，不是 False。
+
+        这条口径很要紧：两个调用方都把「False」理解成「这条 run 没人管了」——
+        一个是启动恢复（:func:`app.core.orchestrator.recover_stale_runs`）会把
+        没人管的 run 标成 error，另一个是取消接口（``is_active_anywhere``）会把
+        人家正在跑的 run 标成 cancelled。Redis 抖一下就够让这两个动作误伤别的
+        实例正在生成的 run——那正是本模块存在的理由（「多活反而比单活更糟」）。
+
+        所以查不到就往安全的方向偏：**宁可漏回收，也不误杀**。真正的无主 run
+        会等到 Redis 恢复后、或租约 TTL 自然过期再被回收，代价只是晚一点收敛。
+        """
         from app.core.redis_client import run_owner_key
 
         try:
             return bool(await (await self._redis()).exists(run_owner_key(run_id)))
-        except Exception:  # pragma: no cover - Redis 不可用时按「无主」处理
-            logger.exception("查询 run %s 的归属失败", run_id)
-            return False
+        except Exception:  # pragma: no cover - Redis 不可用时按「有人管」处理
+            logger.exception("查询 run %s 的归属失败，按仍有人管处理", run_id)
+            return True
 
     # -------------------------------------------------------------- 取消
 
@@ -272,12 +284,26 @@ class RedisLease:
 
         订阅建立后**立刻补查一次**取消键：这是覆盖「取消发生在对方订阅之前」那个
         窗口的关键。加上这次补查之后，理论上不存在消息丢失的窗口。
+
+        **补查失败不抛异常**：这一步在 ``claim()`` 之后立刻执行，而 ``claim()``
+        已经明确把「Redis 抖动不能杀掉这次生成」写成了设计（SET 失败就降级为
+        无租约运行）。补查这里若把 ConnectionError 抛出去，降级就只剩一半——
+        run 会在第一个节点开始前夭折，用户看到的是「什么都没发生就失败了」。
+        查不到就当作「没被取消」，继续往下走：订阅本身失败由 :meth:`_watch_loop`
+        兜住（降级为「没有跨实例取消监听」），生成照常进行。
         """
         from app.core.redis_client import run_ctl_channel
 
         redis = await self._redis()
         # 先补查：此刻若已有取消键，说明信号在本进程订阅之前就到了
-        if await redis.exists(_cancel_key(run_id)):
+        try:
+            already_cancelled = bool(await redis.exists(_cancel_key(run_id)))
+        except Exception:  # noqa: BLE001 - Redis 抖动不该杀掉这次生成
+            logger.warning(
+                "run %s 补查取消键失败，按未取消处理", run_id, exc_info=True
+            )
+            already_cancelled = False
+        if already_cancelled:
             on_cancel()
             return None
 

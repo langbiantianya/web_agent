@@ -30,6 +30,7 @@ from app.core.redis_client import (
     disconnect_redis,
     instance_id,
     redis_is_enabled,
+    redact_url,
 )
 from app.core.sensitive import init_filter
 

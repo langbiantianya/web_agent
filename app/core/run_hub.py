@@ -302,6 +302,11 @@ class RunHub:
         True/False 的语义也跟着变了——它现在表示「取消请求已被受理」，而不是
         「本地成功置了标志」。
 
+        **跨实例通知失败不影响取消结果**：本地标志在通知之前就已经置上了，
+        本进程正在生成的 run 一定会停下来。Redis 抖动时通知会失败，但把这次
+        取消报成 500 是错的——用户会以为没取消成功而反复点击，而实际上早就
+        停了。通知失败只记一条警告。
+
         Returns:
             True 表示请求已发出；False 表示这个 run 本地和全局都查无此物
             （已经结束了），调用方据此当作「无事发生」，而不是伪装成取消成功。
@@ -309,7 +314,12 @@ class RunHub:
         state = self._states.get(run_id)
         if state is not None:
             state.cancel_requested = True
-        await self._lease.request_cancel(run_id)
+        try:
+            await self._lease.request_cancel(run_id)
+        except Exception:  # noqa: BLE001 - 通知失败不该把取消变成失败
+            logger.warning(
+                "run %s 的跨实例取消通知失败（本地取消已生效）", run_id, exc_info=True
+            )
         if state is None:
             return await self.is_active_anywhere(run_id)
         return True
@@ -343,8 +353,11 @@ class RunHub:
         跨实例靠归属租约判断：键还在就说明有人管着。租约 TTL 到期即视为无主，
         所以实例被 kill -9 之后不需要任何额外清理动作，租约会自己过期。
 
-        租约查询失败时退化为「本实例有状态就算活跃」——宁可漏判也不要把正在
-        生成的 run 误报成已结束。
+        租约查询失败时**按「还活着」处理**——宁可漏判也不要把正在生成的 run
+        误报成已结束。（租约实现那一侧同样偏保守：查不到就返回「有人在管」。）
+        代价是 Redis 抖动的窗口里取消接口会回「正在取消」而实际没取消到别人
+        头上；反过来若在这里报「已结束」，取消接口就会去把别人正在跑的 run
+        在库里标成 cancelled——那个代价比误报大得多。
         """
         if self.is_active(run_id):
             return True

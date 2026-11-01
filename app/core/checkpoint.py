@@ -27,9 +27,11 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from app.config.settings import settings
+from app.core.redis_client import redact_url
 
 logger = logging.getLogger(__name__)
 
@@ -66,21 +68,44 @@ async def init_checkpointer() -> Any | None:
     if settings.redis_enabled:
         from langgraph.checkpoint.redis import AsyncRedisSaver
 
+        # **必须显式传 connection_args**：``from_conn_string`` 不传时用的是
+        # Redis 客户端的默认超时——读**没有上限**。Redis 所在网段一抖，saver 的
+        # 一次读就能把整条 run 冻住，而 saver 就在 run 的执行路径上
+        # （图每次超步都要读写暂停点），于是 run 永久卡死、日志里什么都看不到。
+        # 这正是 settings.redis_socket_timeout 的注释里特意提醒过的场景。
         _saver_cm = AsyncRedisSaver.from_conn_string(
             settings.redis_url,
             checkpoint_prefix=f"{settings.redis_key_prefix}:checkpoint",
             checkpoint_write_prefix=f"{settings.redis_key_prefix}:checkpoint-write",
+            connection_args={
+                "socket_timeout": settings.redis_socket_timeout,
+                "socket_connect_timeout": settings.redis_socket_timeout,
+                "health_check_interval": 30,
+            },
         )
         _saver = await _saver_cm.__aenter__()
-        await _saver.asetup()
-        logger.info("审批暂停点使用 Redis saver：%s", settings.redis_url)
+        try:
+            await _saver.asetup()
+        except Exception as exc:
+            # asetup 会建 RediSearch 索引，普通 redis-server 没有这个模块，
+            # 报错是 "unknown command 'FT.CREATE'" —— 不加这层包装，用户看到
+            # 的是一句与「你装的是普通 Redis，不是 Redis Stack」毫无关系的话。
+            await close_checkpointer()
+            raise RuntimeError(
+                "审批暂停点初始化失败：Redis 侧需要 RediSearch 模块（Redis Stack）。"
+                "若用的是普通 redis-server，请改用 CHECKPOINT_ENABLED=false"
+                "（放弃审批功能）或换 Redis Stack。原始错误：" + str(exc)
+            ) from exc
+        logger.info(
+            "审批暂停点使用 Redis saver：%s", redact_url(settings.redis_url)
+        )
     else:
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
         # **传纯文件路径，不传 SQLAlchemy 风格的 URL**：AsyncSqliteSaver 会把
         # 字符串原样交给 aiosqlite.connect()，后者只认路径或 file: URI，
         # 认不得 "sqlite+aiosqlite:///..."，会直接报 "unable to open database file"。
-        path = settings.checkpoint_sqlite_path
+        path = _resolve_sqlite_path(settings.checkpoint_sqlite_path)
         _saver_cm = AsyncSqliteSaver.from_conn_string(path)
         _saver = await _saver_cm.__aenter__()
         await _saver.setup()
@@ -117,6 +142,21 @@ def thread_id_for(run_id: int) -> str:
     用 run_id 而不是会话 id：一个会话可以有多次 run，暂停点属于**这一次 run**。
     """
     return f"run-{run_id}"
+
+
+def _resolve_sqlite_path(path: str) -> str:
+    """相对路径按**项目根**解析，绝对路径原样返回。
+
+    为什么不用工作目录：``checkpoints.db`` 装的是「图暂停在哪」。用不同的
+    WORKDIR 启动两个实例（systemd、Docker、``uvicorn --app-dir`` 指向不同目录）
+    会各写各的文件，于是 A 实例上挂起的审批，B 实例根本看不到——用户提交了
+    决策却毫无反应。同一个口径在 :attr:`Settings.sensitive_model_path` 上
+    已经用过了。
+    """
+    p = Path(path)
+    if p.is_absolute():
+        return str(p)
+    return str(Path(__file__).resolve().parents[2] / p)
 
 
 def checkpoint_config(run_id: int, recursion_limit: int) -> dict:
