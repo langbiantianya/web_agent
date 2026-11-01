@@ -22,6 +22,7 @@ from app import __version__
 from app.api.router import api_router
 from app.config.db import dispose_engine
 from app.config.settings import settings
+from app.core.body_limit import BodySizeLimitMiddleware
 from app.core.checkpoint import close_checkpointer, init_checkpointer
 from app.core.errors import AppError
 from app.core.orchestrator import get_orchestrator, recover_stale_runs
@@ -162,6 +163,11 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
     )
 
+    # 请求体上限先挂（它在外层），CORS 后挂（它更外层）——这样 413 响应也带得上
+    # CORS 头，前端才读得到错误体而不是一个「跨域失败」。
+    app.add_middleware(
+        BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

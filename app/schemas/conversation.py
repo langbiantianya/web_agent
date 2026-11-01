@@ -34,7 +34,9 @@ class ConversationOut(ORMBase):
 
 
 class SendMessageIn(BaseModel):
-    content: str = Field(min_length=1)
+    # 长度上限：提示词是要整段送进模型的，无上限的话一条 5 MB 的消息会被完整
+    # 受理——进内存、落库、送 LLM。2 万字对正常提示词绰绰有余。
+    content: str = Field(min_length=1, max_length=20_000)
     user_id: str = Field(default="anonymous", max_length=64)
 
 

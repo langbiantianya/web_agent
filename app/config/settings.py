@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # 生产环境必须通过环境变量 SECRET_KEY 覆盖（可用 `python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"` 生成）。
     secret_key: str = "dev-insecure-secret-key-change-me-in-production-0123456789"
     sse_ticket_ttl: int = 60  # 秒。设计文档 §5.1 写 5 分钟，§8 表格写 60s，此处取更严格的 60s。
+    # 请求体上限（字节）。超了直接 413。
+    # 没有这道限制时，一条 5 MB 的 system_prompt 会被完整受理——进内存、落库、
+    # 送 LLM。成本不在这一次请求上，而在它后面那次模型调用上。
+    # 2 MB 对本服务的 JSON 接口足够宽松（提示词与配置都远小于此）。
+    max_request_bytes: int = 2 * 1024 * 1024
 
     # ---- 事件流 ----
     event_batch_size: int = 20       # 累积多少条 flush 一次（设计 §4.5）

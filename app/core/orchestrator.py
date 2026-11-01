@@ -38,7 +38,12 @@ from app.core.checkpoint import (
     delete_thread,
     get_checkpointer,
 )
-from app.core.errors import RunCancelled, SensitiveContentError, ToolLoopExceeded
+from app.core.errors import (
+    RunCancelled,
+    SensitiveContentError,
+    ToolLoopExceeded,
+    redact_error_message,
+)
 from app.core.run_graph import NodeRunner, RunRejected, build_run_graph, recursion_limit
 from app.core.run_hub import RunHub, get_hub
 from app.core.workflow_def import WorkflowDefinition, WorkflowNode
@@ -706,7 +711,9 @@ class Orchestrator:
         这里刻意不 commit——``run_repo.finish_step`` 自行管理事务边界。
         """
         async with SessionLocal() as db:
-            await run_repo.finish_step(db, run_id, node_id, status, output_json, error_msg)
+            await run_repo.finish_step(
+                db, run_id, node_id, status, output_json, redact_error_message(error_msg)
+            )
 
     async def _finish_with(
         self,
@@ -753,7 +760,9 @@ class Orchestrator:
         # 下次重连从头重放，客户端看到重复内容。
         seq = final_seq or last_seq
         async with SessionLocal() as db:
-            await run_repo.finish(db, run_id, status, seq, error_msg)
+            # 错误信息落库前先脱敏：它会被 GET /api/runs/{id} 原样回显，而
+            # LLM SDK 的异常文本里常带着请求 URL、打码后的 key、Authorization 头。
+            await run_repo.finish(db, run_id, status, seq, redact_error_message(error_msg))
         # run 到终态了，暂停点没有用了：留着只会在 Redis / SQLite 里堆垃圾
         await delete_thread(run_id)
 

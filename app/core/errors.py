@@ -2,6 +2,53 @@
 
 from __future__ import annotations
 
+import re
+
+# 错误信息脱敏用的模式。**只认形态、不认具体厂商**——异常文本来自各种第三方
+# SDK，字段名与格式各不相同，与其逐个适配，不如按「像密钥的东西」来遮。
+_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # sk- 开头的 API key（OpenAI / MiniMax 等）
+    (re.compile(r"\bsk-[A-Za-z0-9_\-]{6,}"), "sk-***"),
+    # Authorization / Bearer 头
+    (re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._\-]{6,}"), r"\1 ***"),
+    (re.compile(r"(?i)\b(authorization)(\"?\s*[:=]\s*\"?)[^\s\"',]{6,}"), r"\1\2***"),
+    # api_key / token / secret 之类的赋值
+    (
+        re.compile(r"(?i)\b(api[_-]?key|access[_-]?token|secret|password)(\"?\s*[:=]\s*\"?)[^\s\"',]{4,}"),
+        r"\1\2***",
+    ),
+    # URL 里带的用户名密码
+    (re.compile(r"(?<=://)[^/\s:@]+:[^/\s@]+(?=@)"), "***:***"),
+)
+
+
+def redact_error_message(text: str | None) -> str | None:
+    """把错误信息里的密钥形态内容遮掉。
+
+    ## 为什么需要
+
+    节点的失败原因会落进 ``run.error_msg`` / ``run_step.error_msg``，而
+    ``GET /api/runs/{id}`` 会把它原样回显。LLM SDK 的异常文本里常带着请求 URL、
+    打码后的 key、甚至完整的 Authorization 头——那些一旦进入一个可被读取的
+    响应体，就等于把凭证抄送了出去。
+
+    这里**只做遮蔽、不做删减**：错误信息本身是排障的关键（"connection refused"
+    和 "invalid api key" 是两回事），所以保留原文结构、只把像密钥的部分换成
+    ``***``。
+
+    Args:
+        text: 原始错误信息。
+
+    Returns:
+        脱敏后的文本；``None`` 原样返回。
+    """
+    if not text:
+        return text
+    out = text
+    for pattern, replacement in _SECRET_PATTERNS:
+        out = pattern.sub(replacement, out)
+    return out
+
 
 class AppError(Exception):
     """业务异常基类。"""
