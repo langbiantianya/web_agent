@@ -5,7 +5,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from app.api.deps import DbSession
-from app.cache import workflow_cache
 from app.core.errors import ConflictError, NotFoundError
 from app.repo.workflow_repo import workflow_repo
 from app.schemas.workflow import WorkflowCreate, WorkflowOut, WorkflowUpdate
@@ -26,7 +25,6 @@ async def create_workflow(payload: WorkflowCreate, db: DbSession) -> WorkflowOut
         definition=payload.definition.model_dump(by_alias=True, exclude_none=True),
         enabled=1 if payload.enabled else 0,
     )
-    workflow_cache.put(wf)
     return WorkflowOut.model_validate(wf)
 
 
@@ -87,7 +85,6 @@ async def update_workflow(code: str, payload: WorkflowUpdate, db: DbSession) -> 
     wf = await workflow_repo.update(db, code, fields)
     if wf is None:
         raise NotFoundError(f"Workflow 不存在：{code}")
-    workflow_cache.put(wf)
     return WorkflowOut.model_validate(wf)
 
 
@@ -101,4 +98,3 @@ async def delete_workflow(code: str, db: DbSession) -> None:
     """
     if not await workflow_repo.delete(db, code):
         raise NotFoundError(f"Workflow 不存在：{code}")
-    workflow_cache.clear()

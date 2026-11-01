@@ -61,8 +61,13 @@ class AgentRepo:
     ) -> Agent | None:
         """按 code 局部更新字段（``None`` 值视为「不修改」而被忽略）。
 
-        ``bump_version`` 是缓存一致性的关键：Agent 缓存键含 version，
-        版本号 +1 后旧键自然失效，运行中的 run 也会读到新配置。
+        ``bump_version`` 会让 ``version`` 自增——它是**配置版本号**，随响应返回
+        给客户端，客户端据此判断「我手上的配置是不是已经被别人改过了」。
+
+        自增用 SQL 表达式 ``version = version + 1``，而不是「读出来 +1 再写回」：
+        后者在并发更新下会丢版本（两个请求都读到 3、都写回 4，其中一个的改动
+        就被吞了）。
+
         置为 False 仅用于不改语义的字段写入。
         """
         agent = await self.get_by_code(db, code)
@@ -72,7 +77,11 @@ class AgentRepo:
             if v is not None:
                 setattr(agent, k, v)
         if bump_version:
-            agent.version = (agent.version or 0) + 1
+            await db.execute(
+                sa.update(Agent)
+                .where(Agent.code == code)
+                .values(version=Agent.version + 1)
+            )
         await db.commit()
         await db.refresh(agent)
         return agent

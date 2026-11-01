@@ -5,7 +5,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from app.api.deps import DbSession
-from app.cache import agent_cache
 from app.core.crypto import encrypt
 from app.core.errors import ConflictError, NotFoundError
 from app.core.tools import known_tool_names, normalize_tool_names
@@ -28,7 +27,7 @@ def _to_out(agent) -> AgentOut:
     里是 tinyint，也是在这里才转成 bool。
 
     Args:
-        agent: ORM ``Agent`` 实例（来自 repo 查询或 ``agent_cache`` 缓存）。
+        agent: ORM ``Agent`` 实例（来自 repo 查询）。
 
     Returns:
         ``AgentOut``。``tools`` 只保留**已注册**的工具名（V3.2）——读的时候
@@ -77,7 +76,6 @@ async def create_agent(payload: AgentCreate, db: DbSession) -> AgentOut:
         extra_params=payload.extra_params,
         enabled=1 if payload.enabled else 0,
     )
-    agent_cache.put(agent)
     return _to_out(agent)
 
 
@@ -126,7 +124,6 @@ async def update_agent(code: str, payload: AgentUpdate, db: DbSession) -> AgentO
     agent = await agent_repo.update(db, code, fields, bump_version=True)
     if agent is None:
         raise NotFoundError(f"Agent 不存在：{code}")
-    agent_cache.put(agent)
     return _to_out(agent)
 
 
@@ -136,4 +133,3 @@ async def delete_agent(code: str, db: DbSession) -> None:
     ok = await agent_repo.delete(db, code)
     if not ok:
         raise NotFoundError(f"Agent 不存在：{code}")
-    agent_cache.clear()

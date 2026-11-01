@@ -45,9 +45,11 @@ class WorkflowRepo:
     ) -> Workflow | None:
         """按 code 局部更新字段（值为 None 的键跳过）；不存在时返回 None。
 
-        ``bump_version=True``（默认）时顺手让 ``version+1``，于是
-        :class:`~app.cache.WorkflowCache` 的旧键自然命中不了。调用方不再必须
-        「记得 ``put()``」才能保证不脏读——漏了最多退化成回源查库。
+        ``bump_version=True``（默认）时顺手让 ``version+1``。``version`` 是**配置
+        版本号**：它随响应返回给客户端，客户端据此判断「我手上的配置是不是已经
+        被别人改过了」。自增用 SQL 表达式 ``version = version + 1``，而不是
+        「读出来 +1 再写回」——后者在并发更新下会丢版本：两个请求都读到 3，
+        都写回 4，其中一个的改动就被吞了。
 
         Args:
             db: 请求级 AsyncSession。
@@ -62,7 +64,12 @@ class WorkflowRepo:
             if v is not None:
                 setattr(wf, k, v)
         if bump_version:
-            wf.version = (wf.version or 0) + 1
+            # 原子自增（见 docstring）。用 SQL 表达式而不是 ORM 属性赋值。
+            await db.execute(
+                sa.update(Workflow)
+                .where(Workflow.code == code)
+                .values(version=Workflow.version + 1)
+            )
         await db.commit()
         await db.refresh(wf)
         return wf
@@ -70,9 +77,9 @@ class WorkflowRepo:
     async def delete(self, db: AsyncSession, code: str) -> bool:
         """按 code 硬删除 Workflow；不存在返回 False，由 API 层转 404。
 
-        删除后仍要 ``workflow_cache.clear()``：删除无法像更新那样用 version+1
-        表达失效——行都没了，谈不上版本，只能整表清。漏调的后果是内存里还留着
-        一条已删除 workflow 的定义，比读到旧版本更难察觉。
+        删除无法用版本号表达失效——行都没了，谈不上版本。但删掉的配置可能被
+        正在跑的 run 引用（run 启动时已把 definition 快照进内存，不受影响），
+        后续发消息会以「Workflow 不存在或已停用」被拒（409）。
         """
         wf = await self.get_by_code(db, code)
         if wf is None:
