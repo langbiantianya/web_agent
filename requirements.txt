@@ -34,8 +34,14 @@ pydantic-settings>=2.4
 cryptography>=42.0
 
 # ---- 敏感词前置过滤（V3.4）----
-# 刻意只用 numpy：不加载任何模型框架、不起任何外部服务。
-# 训练与推理都只用它，几十秒就能重训一次模型。
+# 用**现成的开源中文审核模型**（ONNX），不自己训练。模型文件不进仓库，
+# 部署时跑一次 `python -m scripts.fetch_sensitive_model` 拉取并量化成 int8。
+# 运行时只需要 onnxruntime + tokenizers——不加载任何深度学习框架。
+onnxruntime>=1.20
+tokenizers>=0.20
+# onx 只在跑上面那个拉取脚本、做 int8 动态量化时用得到；服务运行不需要。
+onnx>=1.17
+# numpy 是 onnxruntime 的依赖，本项目也直接用（打分时拼 batch）。
 numpy>=1.26
 
 # ---- 测试 ----
