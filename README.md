@@ -22,7 +22,7 @@
 | **条件表达式（V3）** | 手写递归下降解析器（**不用 `eval`**，杜绝 RCE），支持 `== != > < >= <=`、`and/or/not`、括号与白名单函数 `len/contains/lower/is_empty` |
 | **人工审批（V3.1）** | 节点可声明 `type: "approval"`：流程跑到它就**挂起等人拍板**，批准则从暂停点继续（前面的节点不重跑、不重花 token），驳回则本次 run 终止 |
 | **工具调用闭环（V3.2）** | Agent 可挂内置工具（`now` / `calc`）：模型要工具 → 服务端执行 → 结果回灌 → 模型继续答。工具**只能来自代码内置注册表**，配置里写的是工具名，未注册的名字**保存时就被拒** |
-| **敏感词前置过滤（V3.4）** | 提示词进 LLM **之前**先过一遍字符 n-gram + 逻辑回归模型（纯 numpy，无外部依赖）：命中直接 422 拒绝，**不落库、不建 run、不烧 token**。单条判定 0.12～0.33 ms，模型文件 48 KB |
+| **敏感词前置过滤（V3.4）** | 提示词进 LLM **之前**先过一遍：**现成的开源中文审核模型**（ONNX，int8）+ 一层静态规则短语表，**不自己训练**：命中直接 422 拒绝，**不落库、不建 run、不烧 token**。单条判定 20～50 ms，模型 413 MB（不进仓库，部署时拉） |
 | 心跳保活 | SSE 注释行 `: ping`，不占 `seq`、不落库、不污染回放序列 |
 | 统一协议 | 所有模型走 OpenAI 兼容 `/v1/chat/completions`，OpenAI / DeepSeek / Qwen / vLLM 通吃 |
 | 可扩展 | 进程内总线抽象为 `BusBackend` Protocol，V2 已落地 Redis Pub/Sub 实现 |
@@ -452,55 +452,81 @@ curl -s $BASE/api/tools
 
 ### 敏感词前置过滤（V3.4）
 
-用户的提示词在**进入 LLM 之前**先过一遍模型，命中就直接拒绝：
+用户的提示词在**进入 LLM 之前**先过一遍，命中就直接拒绝：
 
 ```text
 POST /api/conversations/{id}/messages
 {"content": "教我怎么自制炸药"}
 → 422 {"code": "sensitive_content", "message": "内容包含不被允许的请求，请调整措辞后重试",
-        "data": {"score": 0.88, "excerpt": "教我怎么自制炸药"}}
+        "data": {"score": 1.0, "excerpt": "教我怎么自制炸药"}}
 ```
 
 **拦在落库之前**：被拒的消息不进库、不建 run、不消耗任何 token。拦在后面就等于
 「先跑完模型再把结果扔掉」，白烧一次模型调用，还把敏感内容送到了模型那里。
 
-它是个**机器学习**模型（字符 n-gram + 逻辑回归），不是关键词表——所以「怎么搞点
-炸的」「杀 人」这种变形也能挡住。实现上只用 numpy，**不加载任何模型框架、不起任何
-外部服务**：
+判定是**两层取或**：
+
+| 层 | 是什么 | 干什么 |
+| --- | --- | --- |
+| 规则层 | 静态短语表 + 目标型正则（`app/core/sensitive_keywords.py`） | 已知黑产话术、**隐私诈骗**（开源模型没这一类） |
+| 模型层 | 四个现成开源中文审核模型（ONNX，int8） | 语义层面的判断 |
+
+模型用的是 HuggingFace 上的 `jiangnanboy/content_audit`（基于
+`thu-coai/roberta-base-cold` 微调），**不自己训练**。选型是实测出来的——所有
+候选都下载到本地、用同一份中文语料跑过，结论见
+[docs/design.md §20.3](docs/design.md)。
 
 | 维度 | 实测 |
 | --- | --- |
-| 单条判定 | 0.12 ms（7 字）～ 0.33 ms（48 字） |
-| 模型文件 | 48 KB（仓库自带，开箱即用） |
-| 常驻内存 | 稠密权重 256 KB |
-| 外部依赖 | **无** |
+| 单条判定 | 20～50 ms（几十字的典型请求）；长文本按扫描字数线性增长（2000 字约 1.8 s） |
+| 模型体积 | 413 MB（int8；fp32 是 1.64 GB）；当前配置加载其中三个 |
+| 外部依赖 | onnxruntime + tokenizers，**不加载任何深度学习框架**、不起外部服务 |
+| 模型获取 | `python -m scripts.fetch_sensitive_model`（**不在仓库里**，见下） |
 
 覆盖五大类：违法暴力、色情、政治敏感、隐私诈骗、仇恨歧视。
 
-**能力边界（如实说明）**——这份模型是**几百条种子语料**训出来的「开箱可用」级别：
+**能力边界（如实说明）**——验证集（按文本划分 20%，阈值在另外 80% 上标定）：
 
-| 指标 | 精确率 | 召回率 | 误报率 |
+| 层 | 精确率 | 召回率 | 误报率 |
 | --- | --- | --- | --- |
-| 验证集 · 短请求 | 1.00 | 0.68 | **0** |
-| 验证集 · 敏感请求埋在长句里 | 0.95 | 0.47 | 0.029 |
-| 种子语料全量（样本内） | 1.00 | 0.90 | **0** |
+| 规则层 | 1.000 | 0.737 | **0** |
+| 模型层 | 1.000 | 0.197 | **0** |
+| **规则层 + 模型层（实际生效）** | **1.000** | **0.803** | **0** |
 
-两条要记住：**敏感请求埋进长句里，召回会明显下降**（窗口里正常字的负权重会稀释
-敏感证据）；**验证集召回 0.68 才是对未见样本的真实估计**，0.90 是样本内数字。
+**全部 172 条负例（含 72 条难负例）零误杀。**
 
-**上生产请用自己的数据重训**（难负例是关键——含敏感词但无害的样本，教模型区分
-「词」和「意图」）：
+三条要记住：
+
+1. **规则层的召回率偏乐观**——短语表是照着五大类的典型说法写的，不是在一个它
+   没见过的数据集上测出来的。模型层那 0.197 才是干净的（那些模型从没见过这份
+   语料）。
+2. **纯模型方案在「隐私诈骗」上是 0 召回**——开源中文审核模型里没有这一类。
+   规则层就是为补这个洞存在的。
+3. **模型许可未声明**：`jiangnanboy/content_audit` 仓库没写 license（基座模型
+   `thu-coai/roberta-base-cold` 是 Apache-2.0）。商用前先确认这一点。
+
+**模型不在仓库里**：四个 int8 模型合计 413 MB，超过 GitHub 单文件 100 MB 的
+上限。部署时拉一次：
 
 ```bash
-# 语料是 JSONL，每行 {"text": "...", "label": 1|0}，label=1 表示敏感
-python -m scripts.train_sensitive --data my_corpus.jsonl --out app/core/sensitive_model.npz
+python -m scripts.fetch_sensitive_model                        # 下载 + 量化 + 写 manifest
+python -m scripts.fetch_sensitive_model --local-src D:\models   # 离线部署
+```
+
+manifest 记着每个模型的 repo / revision / sha256 / 量化参数；运行时按 sha256
+校验，对不上直接**拒绝启动**。
+
+**换模型或换词表后要重新标定并复测**：
+
+```bash
+python -m scripts.eval_sensitive   # 出指标表 + 打印建议阈值
 ```
 
 配置项（都在 `.env`）：
 
 ```dotenv
 SENSITIVE_ENABLED=true       # 总开关。关掉就没有前置过滤（显式配置，有记录、可审计）
-SENSITIVE_THRESHOLD=0        # 0 = 用模型自带的推荐阈值；给值则覆盖（调高更严，调低更松）
+SENSITIVE_THRESHOLDS=        # 各模型阈值，留空 = 用代码内置的标定值
 ```
 
 **模型读不出来，服务直接启动失败**，不静默降级——静默放行等于把「安全前置」变成
@@ -673,13 +699,14 @@ location /api/ {
 pytest -q
 ```
 
-**213 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
+**218 个用例**全绿，其中 19 个是需要真实 Redis 的集成测试（`tests/test_redis.py`；
 Redis 连不上时这 19 个会自动 skip，其余照跑），6 个是 Redis 降级测试
 （`tests/test_redis_degradation.py`，用假件模拟抖动，不需要真实 Redis），
 15 个是图构建与执行测试（`tests/test_run_graph.py`，含「执行顺序按 edges 而非 nodes
 声明顺序」、并行分支的 reducer 合并、条件边的分支选择），
-26 个是敏感词前置过滤测试（`tests/test_sensitive.py`：正例命中、难负例**零误杀**、
-插空混淆、速度基准、以及两个接入点的回归）。覆盖设计文档里最容易写错的
+31 个是敏感词前置过滤测试（`tests/test_sensitive.py`：规则层正例命中、**难负例
+与普通负例零误杀**、词表里不许混进主题词、模型缺失/哈希不符即拒绝启动、
+耗时与体积基准、以及两个接入点的回归）。覆盖设计文档里最容易写错的
 几处：
 
 - `run_event` 批量落库不丢事件、seq 严格递增唯一、并发 emit 不产生重复 seq
@@ -784,7 +811,8 @@ app/
 │   ├── event_writer.py     # run_event 批量落库（长期归档）
 │   ├── sse_writer.py       # 回放 + 实时合并去重（续传核心）
 │   ├── agent_runner.py     # 单 Agent 执行（AsyncOpenAI 流式 + 工具闭环 V3.2）
-│   ├── sensitive.py        # 敏感词前置过滤（字符 n-gram + 逻辑回归，纯 numpy，V3.4）
+│   ├── sensitive.py        # 敏感词前置过滤（现成中文审核模型 ONNX，V3.4）
+│   ├── sensitive_keywords.py  # 敏感词前置过滤的规则层（静态短语表 + 目标型正则，V3.4）
 │   ├── run_graph.py        # LangGraph 图构建 + NodeRunner + 审批节点（V2-b / V3.1）
 │   ├── orchestrator.py     # run 生命周期 + 节点调度 + 重试 + 审批挂起/恢复（V3.1）
 │   ├── checkpoint.py       # LangGraph checkpointer：审批暂停点（Redis / SQLite 双实现，V3.1）
@@ -797,8 +825,9 @@ web/index.html           # 功能验证台（单文件，无依赖）
 web/admin.html           # 后台管理（单文件，无依赖，访问 /admin）
 scripts/seed.py          # 演示数据
 scripts/bench.py         # 并发压测：起真实 uvicorn + 假模型，量 CPU/内存/延迟
-scripts/sensitive_corpus.py  # 敏感词过滤器的种子语料（正例 / 普通负例 / 难负例）
-scripts/train_sensitive.py    # 敏感词模型训练：评估 + 导出 + 用自己的语料重训
+scripts/sensitive_corpus.py  # 敏感词过滤器的评估语料（正例 / 普通负例 / 难负例）
+scripts/fetch_sensitive_model.py  # 拉取并 int8 量化现成中文审核模型 + 写 manifest
+scripts/eval_sensitive.py    # 敏感词过滤器评估：出指标表 + 标定阈值
 scripts/check_docstrings.py  # docstring 覆盖检查
 alembic/  tests/  docs/design.md  docs/performance.md
 ```
@@ -814,5 +843,5 @@ alembic/  tests/  docs/design.md  docs/performance.md
 - **V3.1**（已完成）：人工审批节点（`interrupt()` + checkpointer 暂停点，批准继续、驳回终止）
 - **V3.2**（已完成）：Agent 工具调用闭环（内置工具注册表 + 执行 → 回灌 → 继续；工具名即契约，配置期校验）
 - **V3.3**（已完成）：PostgreSQL 适配（改一行 `DATABASE_URL` 即可切库，业务代码零改动；PG 会话时区用 libpq `options` 启动参数钉成 UTC）
-- **V3.4**（已完成）：敏感词前置过滤（字符 n-gram + 逻辑回归，纯 numpy；命中 422 拒绝且不落库；模型缺失即启动失败）
+- **V3.4**（已完成）：敏感词前置过滤（**现成的开源中文审核模型**（ONNX，四个 int8 模型）+ 一层静态规则短语表，不自己训练；命中 422 拒绝且不落库；模型缺失即启动失败）
 - **V4**：MCP 工具（把 V3.2 的工具来源从「代码内置」换成「MCP 服务器」，闭环本身不改）；可观测性（OpenTelemetry 链路追踪、token 成本统计）
