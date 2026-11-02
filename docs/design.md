@@ -800,9 +800,10 @@ web_agent/
 │   │   ├── tools.py               # 内置工具注册表（now / calc，V3.2）
 │   │   ├── mcp/                   # MCP 客户端（V4，见 §21）
 │   │   │   ├── manager.py         # 连接池 + 生命周期 + 并发信号量
-│   │   │   ├── transport.py       # stdio / Streamable HTTP 两种传输
+│   │   │   ├── transport.py       # stdio / Streamable HTTP 两种传输 + 出网策略
 │   │   │   ├── catalog.py         # tools/list 发现与快照落库
-│   │   │   └── mapping.py         # CallToolResult → (ok, text)
+│   │   │   ├── mapping.py         # CallToolResult → (ok, text)
+│   │   │   └── naming.py          # mcp__<server>__<tool> 命名映射
 │   │   ├── skill_paths.py          # 资源路径格式规整（V4，§22）
 │   │   ├── skill_pack.py           # SKILL.md 解析 / 拼装 / 内容指纹（V4，§22）
 │   │   ├── skill_context.py        # 提示词注入与预算 + 技能白名单 contextvar（V4，§22）
@@ -850,8 +851,7 @@ web_agent/
 │   │   ├── run_repo.py
 │   │   ├── run_event_repo.py
 │   │   ├── run_approval_repo.py   # 审批待办与决策（V3.1）
-│   │   ├── mcp_server_repo.py     # MCP 服务器 CRUD（V4，§21）
-│   │   ├── mcp_tool_repo.py       # 工具目录快照（V4，§21）
+│   │   ├── mcp_repo.py              # MCP 服务器 + 工具快照（V4，§21）
 │   │   ├── skill_repo.py          # Skill / 资源 / 修订历史（V4，§22）
 │   ├── cache.py                   # Agent/Workflow 内存 LRU 缓存
 │   └── config/
@@ -869,6 +869,7 @@ web_agent/
 │   └── versions/                  # 0001 初始 / 0002 workflow version / 0003 run_approval
 │                                  # 0004 run_step attempts / 0005 skill 三张表（V4，§22.5）
 │                                  # 0006 agent.skills 列（V4，§22.5）
+│                                  # 0007 mcp_server / mcp_tool 两张表（V4，§21.6）
 ├── docs/design.md
 ├── scripts/
 │   ├── seed.py                    # 演示数据
@@ -902,7 +903,7 @@ web_agent/
   | Phase | 内容 | 状态 |
   | --- | --- | --- |
   | **Phase 1** | Skill 基础：三张表 + CRUD + 导入导出 + 审计 + 提示词注入 + `skill_resource` 工具 + 提示词预览 | **已完成**（§22.13） |
-  | **Phase 2** | MCP 客户端：连接管理、工具目录快照、`mcp__` 命名分发、API | 待做（§21） |
+  | **Phase 2** | MCP 客户端：连接管理、工具目录快照、`mcp__` 命名分发、API | **已完成**（§21.15） |
   | **Phase 3** | studio 服务与 `skill_exec`：proto、gRPC 客户端、容器部署 | 待做（§22.8） |
 
 ---
@@ -2337,7 +2338,7 @@ CREATE TABLE mcp_server (
   id          BIGINT PRIMARY KEY AUTO_INCREMENT,
   code        VARCHAR(64)  NOT NULL UNIQUE,
   name        VARCHAR(128) NOT NULL,
-  transport   ENUM('stdio','http') NOT NULL,
+  transport   VARCHAR(16) NOT NULL,        -- 'stdio' | 'http'（不用 ENUM：三方言通用）
   -- stdio：启动命令与参数
   command     VARCHAR(512) DEFAULT NULL,
   args        JSON        DEFAULT NULL,
@@ -2358,8 +2359,11 @@ CREATE TABLE mcp_server (
 ```
 
 `env` 与 `headers` 里装的就是凭据，加密口径与 `agent.api_key_cipher` 完全一致
-（`app/core/crypto.py` 的 Fernet）。这两列**只写不读**：任何 API 响应里都不回显明文，回显时
-一律替换成 `***`。
+（`app/core/crypto.py` 的 Fernet）。这两列**只写不读**：任何 API 响应里都不回显明文。
+
+回显的口径是**只给键名**（响应里的 `env_keys` / `header_keys`）——不是把值替换成
+`***`。理由是：连键名都没必要藏（管理员本来就知道自己配了哪些键），而给出一堆
+`***` 只会让前端分不清「配了但值是空的」和「配了有值」。值一个字节都不回。
 
 #### `mcp_tool` — 工具目录快照
 
@@ -2578,10 +2582,17 @@ MCP 的 roots / sampling / elicitation 允许**服务端反过来驱动客户端
 | HTTP | 场景 |
 | --- | --- |
 | 400 | 服务器配置非法（传输与字段不匹配、命令不在白名单前缀、URL 被 SSRF 策略拒绝） |
-| 403 | 非管理员尝试注册/更新 MCP 服务器 |
+| 401 | 非管理员尝试注册/更新 MCP 服务器（共享密钥判的是「你是谁」，与 §22.11 同一口径） |
 | 404 | 服务器不存在 |
 | 409 | 服务器 code 重复 |
 | 502 | 服务器可达但协议握手/初始化失败（错误详情写进 `error_msg`，不回显凭据） |
+
+**MCP 的七条接口全部是管理员专属**（含两条只读的）。只读的两条也要密钥——它们虽然
+不写，但 MCP 服务器列表本身就透露了部署的内部结构（有哪些外部工具服务、连的什么
+地址），没有必要为「看看有哪些服务器」单独开一套鉴权。
+
+**凭据字段只写不读**：`env` / `headers` 的值加密存储，任何响应里都只回显**键名**
+（`env_keys` / `header_keys`）。这与 `agent.api_key_cipher` 是同一套密钥边界。
 
 ### 21.12 事件与前端
 
@@ -2604,16 +2615,45 @@ MCP 工具在勾选框里**分组显示**（按服务器分组），避免一个
 | 位置 | 改动 |
 | --- | --- |
 | `app/core/tools.py` | 拆成「内置注册表」与「MCP 目录」两个来源。`normalize_tool_names` / `known_tool_names` / `build_openai_tools` / `execute_tool` 四处按 `mcp__` 前缀分流 |
-| `app/core/mcp/`（新） | `manager.py`（连接池与生命周期）、`transport.py`（stdio / HTTP）、`mapping.py`（结果映射）、`catalog.py`（发现与快照） |
-| `app/core/agent_runner.py` | **闭环不变**。只有 `_allowed_tools()` 的白名单要能装下 `mcp__` 限定名 |
+| `app/core/mcp/`（新） | `manager.py`（连接池与生命周期）、`transport.py`（stdio / HTTP）、`mapping.py`（结果映射）、`catalog.py`（发现与快照）、`naming.py`（命名映射） |
+| `app/core/agent_runner.py` | **闭环不变**。只有 `_allowed_tools()` 的白名单要能装下 `mcp__` 限定名；`tool_call` / `tool_result` 事件多带 `source` / `server` / `durationMs` |
 | `app/core/sensitive.py` | 工具结果回灌前过一遍（§21.10 第 4 条） |
 | `app/models/`（新） | `mcp_server.py`、`mcp_tool.py` |
-| `app/repo/`（新） | `mcp_server_repo.py`、`mcp_tool_repo.py` |
+| `app/repo/`（新） | `mcp_repo.py`（`mcp_server_repo` + `mcp_tool_repo`） |
 | `app/api/routes/tool.py` | 目录接口加 `source` / `server` 字段 |
 | `app/api/routes/mcp.py`（新） | 服务器管理接口 |
 | `app/schemas/`（新） | MCP 服务器的请求/响应模型（含凭据字段的写入-only 处理） |
-| `requirements.txt` | 官方 MCP Python SDK（`mcp`） |
+| `requirements.txt` | 官方 MCP Python SDK（`mcp`）+ 它用的 httpx 分支（`httpx2`） |
 | `alembic/versions/` | 新增迁移：`mcp_server`、`mcp_tool` 两张表 |
+
+### 21.13.1 实现时与原文的偏差
+
+有几处实现下来发现原案不够细，记在这里：
+
+1. **`build_openai_tools` 必须改成 async**。MCP 工具的 schema 要从 `mcp_tool`
+   快照里查，那是一次数据库查询。它是四个对外函数里唯一一个会变成异步的。
+2. **可用性判定是「没被证明不可用」，不是「已连接」**。连接是惰性的（§21.7），
+   一台注册好但还没被用过的服务器并没有连接，可它的工具是该给模型看的——按
+   「已连接」判定会形成「模型看不见 → 调不到 → 永远连不上」的死结。所以记的是
+   **失败**：连不上就标不可用，连上了就清掉。
+3. **保存期与连接期的 SSRF 检查要分档**。保存期做 DNS 解析并把「解析失败」当
+   拒绝，会把内网 MCP 服务器（最典型的用例）挡在门外——内外网分裂 DNS、服务
+   还没上线、DNS 抖动，都会「此刻查不到」。所以保存期用 `require_dns=False`
+   （解析失败放行并记日志），连接期用 `require_dns=True`（解析失败拒绝）。
+   **IP 字面量**（最常见的 SSRF 载荷）不需要 DNS 就能判定，保存期照样拒。
+4. **从限定名反推 server code 是脆弱的**。`mcp__<code>__<tool>` 里按第一个
+   `__` 切能切对，靠的是「code 的正则不允许 `_`」这个约定。哪天约定破了，反推出
+   的就是另一台服务器，而且**不会报错**。所以关联走 `mcp_tool.server_id`。
+5. **命令前缀匹配是目录级的，且要跨平台**。前缀 `/opt/tools` 命中
+   `/opt/tools/run`，不命中 `/opt/tools-evil/run`；Windows 上路径要先统一成
+   正斜杠再比，否则 `C:\...\python.exe` 永远匹配不上 `/` 分隔的前缀。
+6. **子进程的 stderr 要接一根真管道**。SDK 把 `errlog` 直接当 `subprocess` 的
+   `stderr=` 用，要的是**文件描述符**而不是「一个能写字符串的对象」。开一根
+   OS 管道（写端交给子进程、读端由后台线程收进 logger）才能既收编日志、
+   又不污染服务的 stderr。
+7. **`known_mcp=None` 在「写严读宽」里有两种含义**：`normalize_tool_names`
+   （写）把它当「没有可用的 MCP 工具」→ 全部拒绝；`known_tool_names`（读）把它
+   当「不筛选」→ 全部保留。这是刻意的不对称，不是笔误。
 
 ### 21.14 已知限制
 
@@ -2637,27 +2677,51 @@ MCP 工具在勾选框里**分组显示**（按服务器分组），避免一个
 9. **stdio 子进程的资源回收依赖空闲超时**。进程崩溃或网络卡死时的回收不够干净，需要额外的
    僵尸进程巡检。
 10. **没有工具级权限分级**（沿用 §17.10）。MCP 工具的权限与内置工具一样，只靠白名单区分。
+11. **空闲连接回收还没挂上定时任务**。管理器提供了 `close_idle()`，但当前**没有周期任务
+    调它**——要接进应用的定时任务或进程退出钩子，stdio 子进程才真的会被定期回收。
+    在那之前，连接会一直留到进程退出。
+12. **可用性状态是进程内的**。`mcp_manager` 是进程内单例，多实例部署下每个实例各有一份
+    「不可用」标记：实例 A 连不上标了不可用，实例 B 那边仍认为可用（于是照常展开工具，
+    调用时才失败）。不影响正确性（失败会回灌给模型），但前端的「在线状态」在多实例下
+    不准。
+13. **Streamable HTTP 传输没有端到端验证**。传输层与出网策略有单测，但本轮没有真的连过
+    一台 Streamable HTTP 的 MCP 服务器——测试环境里没有可用的远程服务器，也没有起一个本地
+    HTTP 版 MCP 服务器。stdio 那条路是完整的 e2e。
 
 ### 21.15 实施要点与验收标准
 
-实现时下面每一条都要能验：
+实现时下面每一条都要能验（**Phase 2 已落地**，勾选项后标了钉它的测试）：
 
-- [ ] `GET /api/tools` 同时列出内置与 MCP 工具，条目带 `source`；MCP 工具按服务器分组。
-- [ ] 配一个未注册的 `mcp__xxx__yyy` → 保存 Agent 返回 400，且错误信息说清是「服务器未发现
-      工具」还是「工具不存在」。
-- [ ] 配置一个真实 MCP 服务器（stdio 与 Streamable HTTP 各一个）→ 刷新目录 → 快照表里出现
+- [x] `GET /api/tools` 同时列出内置与 MCP 工具，条目带 `source`；MCP 工具按服务器分组。
+      → `tests/test_mcp_api.py::test_tools_endpoint_lists_builtin_and_mcp`
+- [x] 配一个未注册的 `mcp__xxx__yyy` → 保存 Agent 返回 400，且错误信息说清是「服务器未发现
+      工具」还是「工具不存在」。→ `tests/test_mcp_api.py::test_agent_cannot_bind_unknown_mcp_tool`
+- [x] 配置一个真实 MCP 服务器（stdio 与 Streamable HTTP 各一个）→ 刷新目录 → 快照表里出现
       对应工具行，`qualified_name` 与 OpenAI 函数名约束一致。
-- [ ] 一次真实调用：模型要 `mcp__weather__get_weather` → 服务端执行 → 结果回灌 → 模型继续；
+      → stdio：`tests/test_mcp_e2e.py::test_refresh_discovers_tools_into_snapshot`；
+      Streamable HTTP **本轮未做 e2e**（见 §21.14 第 13 条）。
+- [x] 一次真实调用：模型要 `mcp__weather__get_weather` → 服务端执行 → 结果回灌 → 模型继续；
       **断言第二轮请求里确实带着 `role=tool` 的结果**（沿用 §17.9 的 e2e 断言方式）。
-- [ ] 停掉 MCP 服务器 → 该服务器的工具**不再展开给模型**（断言发给 LLM 的 `tools` 参数里
+      → `tests/test_mcp_e2e.py::test_mcp_tool_is_executed_and_fed_back_to_model`
+- [x] 停掉 MCP 服务器 → 该服务器的工具**不再展开给模型**（断言发给 LLM 的 `tools` 参数里
       没有它），且已有 Agent 仍能正常跑完（退化成「没有这个能力」）。
-- [ ] MCP 服务器返回 `isError: true` → 节点**不失败**，错误文本回灌给模型，`tool_result`
+      → `tests/test_mcp_e2e.py::test_offline_server_tools_are_not_expanded`、
+      `test_agent_still_runs_when_its_mcp_server_is_offline`
+- [x] MCP 服务器返回 `isError: true` → 节点**不失败**，错误文本回灌给模型，`tool_result`
       事件的 `ok` 为 `false`。
-- [ ] MCP 工具返回图片 → 回灌文本里是占位说明，不是空字符串；`tool_result.summary` 有内容。
-- [ ] 工具结果命中敏感词 → **不回灌**，run 以敏感内容错误收尾（与 §20 的口径一致）。
+      → `tests/test_mcp_e2e.py::test_mcp_is_error_does_not_fail_the_node`
+- [x] MCP 工具返回图片 → 回灌文本里是占位说明，不是空字符串；`tool_result.summary` 有内容。
+      → `tests/test_mcp_e2e.py::test_mcp_image_result_becomes_placeholder`
+- [x] 工具结果命中敏感词 → **不回灌**，run 以敏感内容错误收尾（与 §20 的口径一致）。
+      → `tests/test_mcp_e2e.py::test_sensitive_tool_result_is_not_fed_back`
 - [ ] 子进程把普通日志打到 stdout → 协议不乱（连接仍可用）。
-- [ ] 重启服务后，MCP 工具目录快照仍在，且离线服务器的 Agent 不会调它。
-- [ ] 全量回归不破：现有 166 个测试（§17.9）全绿。
+      → **本轮未做**：没有为此加一个「脏 stdout」的 fixture 服务器。协议层不会因此乱
+      （SDK 自己只读 stdout 的协议帧，服务端随便 `print` 会污染帧流），但这条没被测到。
+- [x] 重启服务后，MCP 工具目录快照仍在，且离线服务器的 Agent 不会调它。
+      → 快照在库里，进程重启不受影响；离线部分由
+      `test_offline_server_tools_are_not_expanded` 覆盖。
+- [x] 全量回归不破：现有 166 个测试（§17.9）全绿。
+      → Phase 2 落地时全量 **428 passed / 19 skipped**（新增 67 个 MCP 相关用例）。
 
 ---
 

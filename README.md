@@ -839,6 +839,6 @@ alembic/  tests/  docs/design.md  docs/performance.md  docs/skill-service.md
 - **V3.2**（已完成）：Agent 工具调用闭环（内置工具注册表 + 执行 → 回灌 → 继续；工具名即契约，配置期校验）
 - **V3.3**（已完成）：PostgreSQL 适配（改一行 `DATABASE_URL` 即可切库，业务代码零改动；PG 会话时区用 libpq `options` 启动参数钉成 UTC）
 - **V3.4**（已完成）：敏感词前置过滤（字符 n-gram + 逻辑回归，纯 numpy；命中 422 拒绝且不落库；模型缺失即启动失败）
-- **V4**（设计已完成，Phase 1 已落地）：MCP 工具（把 V3.2 的工具来源从「代码内置」扩到「MCP 服务器」，闭环本身不改；stdio + Streamable HTTP，工具名 `mcp__<server>__<tool>`）——设计文档 §21；Skill 指令包（内容与资源**全部存数据库**，`SKILL.md` 降为导出格式；正文进系统提示词、资源按需读；脚本经 gRPC 交给**独立的 studio 容器**执行，不在本进程起子进程）——设计文档 §22，服务侧见 [`docs/skill-service.md`](docs/skill-service.md)；可观测性（OpenTelemetry 链路追踪、token 成本统计）
+- **V4**（设计已完成，Phase 1 与 Phase 2 已落地）：MCP 工具（把 V3.2 的工具来源从「代码内置」扩到「MCP 服务器」，闭环本身不改；stdio + Streamable HTTP，工具名 `mcp__<server>__<tool>`）——设计文档 §21；Skill 指令包（内容与资源**全部存数据库**，`SKILL.md` 降为导出格式；正文进系统提示词、资源按需读；脚本经 gRPC 交给**独立的 studio 容器**执行，不在本进程起子进程）——设计文档 §22，服务侧见 [`docs/skill-service.md`](docs/skill-service.md)；可观测性（OpenTelemetry 链路追踪、token 成本统计）
 
-  V4 分三个 Phase 落地：**Phase 1（Skill 基础）已完成**——三张表 + CRUD + 导入导出 + 审计 + 提示词注入 + `skill_resource` 工具 + 提示词预览；Phase 2（MCP 客户端）与 Phase 3（studio + `skill_exec`）待做
+  V4 分三个 Phase 落地：**Phase 1（Skill 基础）已完成**——三张表 + CRUD + 导入导出 + 审计 + 提示词注入 + `skill_resource` 工具 + 提示词预览；**Phase 2（MCP 客户端）已完成**——`mcp_server` / `mcp_tool` 两张表 + stdio 与 Streamable HTTP 两种传输 + `mcp__<server>__<tool>` 命名分发 + 工具目录快照 + 管理员专属的服务器管理接口；Phase 3（studio + `skill_exec`）待做
