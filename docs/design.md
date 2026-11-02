@@ -1,6 +1,6 @@
 # 多 Agent 协作 Web 服务设计文档（Python + MySQL / PostgreSQL）
 
-> 版本：V3.3　|　状态：已实现　|　技术基础：Python 3.11+ / FastAPI / SQLAlchemy 2.0 async / MySQL 8 / PostgreSQL 13+
+> 版本：V4.0　|　状态：V3.4 已实现；V4（MCP 工具 §21 / Skill 指令包 §22）设计完成，实现待排期　|　技术基础：Python 3.11+ / FastAPI / SQLAlchemy 2.0 async / MySQL 8 / PostgreSQL 13+
 
 ---
 
@@ -26,6 +26,8 @@
 18. [性能与容量](#18-性能与容量)
 19. [PostgreSQL 适配](#19-postgresql-适配)
 20. [V3.4：敏感词前置过滤](#20-v34敏感词前置过滤)
+21. [V4：MCP 工具（外部工具来源）](#21-v4mcp-工具外部工具来源)
+22. [V4：Skill 指令包（可复用的领域知识）](#22-v4skill-指令包可复用的领域知识)
 ---
 
 ## 1. 项目目标与设计原则
@@ -784,6 +786,9 @@ web_agent/
 │   │       ├── conversation.py
 │   │       ├── run.py             # 含审批接口（V3.1）
 │   │       ├── tool.py            # 内置工具目录（V3.2）
+│   │       ├── mcp.py             # MCP 服务器管理（V4，见 §21）
+│   │       ├── skill.py           # Skill 目录与提示词预览（V4，见 §22）
+│   │       ├── studio.py          # studio 状态（V4，见 §22.8）
 │   │       ├── auth.py
 │   │       └── health.py
 │   ├── core/
@@ -793,6 +798,13 @@ web_agent/
 │   │   ├── workflow_def.py        # definition 解析与校验
 │   │   ├── expr.py                # 条件表达式解析与求值（不用 eval）
 │   │   ├── tools.py               # 内置工具注册表（now / calc，V3.2）
+│   │   ├── mcp/                   # MCP 客户端（V4，见 §21）
+│   │   │   ├── manager.py         # 连接池 + 生命周期 + 并发信号量
+│   │   │   ├── transport.py       # stdio / Streamable HTTP 两种传输
+│   │   │   ├── catalog.py         # tools/list 发现与快照落库
+│   │   │   └── mapping.py         # CallToolResult → (ok, text)
+│   │   ├── skill.py               # Skill 索引与提示词拼装（V4，见 §22）
+│   │   ├── studio.py              # studio gRPC 客户端（V4，脚本执行，见 §22.8）
 │   │   ├── arith.py               # 算术求值（ast 白名单，不用 eval，V3.2）
 │   │   ├── checkpoint.py          # LangGraph checkpointer（审批暂停点，V3.1）
 │   │   ├── agent_runner.py        # 单 Agent 执行（AsyncOpenAI）
@@ -818,7 +830,10 @@ web_agent/
 │   │   ├── message.py
 │   │   ├── run.py
 │   │   ├── run_event.py
-│   │   └── run_approval.py        # 审批记录（V3.1）
+│   │   ├── run_approval.py        # 审批记录（V3.1）
+│   │   ├── mcp_server.py          # MCP 服务器注册表（V4，§21）
+│   │   ├── mcp_tool.py            # MCP 工具目录快照（V4，§21）
+│   │   └── skill.py               # Skill 索引（V4，§22）
 │   ├── schemas/                   # Pydantic 请求/响应模型
 │   ├── repo/                      # 数据访问
 │   │   ├── __init__.py
@@ -828,7 +843,10 @@ web_agent/
 │   │   ├── message_repo.py
 │   │   ├── run_repo.py
 │   │   ├── run_event_repo.py
-│   │   └── run_approval_repo.py   # 审批待办与决策（V3.1）
+│   │   ├── run_approval_repo.py   # 审批待办与决策（V3.1）
+│   │   ├── mcp_server_repo.py     # MCP 服务器 CRUD（V4，§21）
+│   │   ├── mcp_tool_repo.py       # 工具目录快照（V4，§21）
+│   │   └── skill_repo.py          # Skill 索引与绑定（V4，§22）
 │   ├── cache.py                   # Agent/Workflow 内存 LRU 缓存
 │   └── config/
 │       ├── __init__.py
@@ -837,9 +855,19 @@ web_agent/
 ├── web/
 │   ├── index.html                 # 功能验证台（单文件，无构建步骤）
 │   └── admin.html                 # 后台管理页（单文件，无构建步骤）
+├── skills/                        # Skill 目录（V4，§22）
+│   └── <skill-name>/
+│       ├── SKILL.md               # 必需：frontmatter + 指令正文
+│       ├── scripts/               # 可选：可执行脚本（交给 studio 容器，§22.8）
+│       ├── references/            # 可选：参考资料（模型按需读）
+│       └── assets/                # 可选：模板与静态资源
+├── proto/                         # gRPC 契约（V4，§22.8）
+│   └── webagent/studio/v1/
+│       └── studio.proto           # service Studio { Exec, Health }
 ├── alembic/
 │   ├── env.py
 │   └── versions/                  # 0001 初始 / 0002 workflow version / 0003 run_approval
+│                                  # 0004 mcp_server + mcp_tool + skill + agent.skills（V4）
 ├── docs/design.md
 ├── scripts/
 │   ├── seed.py                    # 演示数据
@@ -861,8 +889,10 @@ web_agent/
   （**已完成**，见 §16）；Agent RAG / MCP 工具**仍未做**
 - **V3.2**：Agent 工具调用闭环——内置工具注册表（`now` / `calc`）、模型要工具 → 执行 →
   结果回灌 → 模型继续、配置期校验未注册的工具名（**已完成**，见 §17）
-- **V4**：可观测性（OpenTelemetry 链路追踪、token 成本统计）；MCP 工具（把 V3.2 的工具
-  来源从「代码内置」换成「MCP 服务器」，闭环本身不用改）
+- **V4**：MCP 工具——把 V3.2 的工具来源从「代码内置」扩到「MCP 服务器」，闭环本身不用改
+  （**设计已完成**，见 §21）；Skill 指令包——可复用的领域知识，正文进提示词、资源按需读，
+  脚本经 gRPC 交给**独立的 studio 容器**执行、不在本进程起子进程（**设计已完成**，见 §22）；
+  可观测性（OpenTelemetry 链路追踪、token 成本统计）
 
 ---
 
@@ -1534,6 +1564,9 @@ checkpointer 里，图状态与事件流分工明确（前者管「停在哪」�
 本轮先把「来源是代码内置」这条最基础的路走通；用户自定义工具则**刻意不做**——理由见
 §17.2。
 
+> MCP 的设计见 **§21**：它扩的是「来源」，不改本节的闭环；本节立下的「工具名即契约」
+> 与「读写宽严相反」两条规矩在 §21 里继续成立。
+
 ### 17.2 工具从哪来：只从代码里来
 
 **agent 的 `tools` 字段存的是工具名**（`["calc", "now"]`），不是 OpenAI 的 function
@@ -2142,7 +2175,1073 @@ python -m scripts.eval_sensitive --model app/core/sensitive_model.npz
 5. **袋外分数与最终模型的分数尺度不完全一致**。袋外模型各训 80% 语料，最终模型
    用全量，实测差异在 1～2 条样本量级，可以接受，但它意味着阈值是**近似**最优
    而不是严格最优。
-4. **不处理图片、语音、多模态内容**。本项目目前也没有这些入口。
+6. **不处理图片、语音、多模态内容**。本项目目前也没有这些入口。
+
+---
+
+## 21. V4：MCP 工具（外部工具来源）
+
+### 21.1 目标与边界
+
+V3.2 把「模型要了工具，run 就结束了，模型从没见过工具结果」这个断口补上了，但工具的**来源**
+被刻意钉死在代码里：注册表 `TOOL_REGISTRY` 里就 `now` 与 `calc` 两个（§17.2）。本轮把来源扩到
+**MCP 服务器**，让「工具从哪来」不再等于「工具必须是我们自己写的」。
+
+本轮要做的：
+
+- **MCP 客户端**：本项目作为 MCP **host / client**，连接外部 MCP 服务器（stdio 子进程 /
+  Streamable HTTP 远程端点）；
+- **工具目录并表**：内置注册表与 MCP 工具目录合成一张表，`agent.tools` 仍然是「工具名列表」，
+  只是允许出现 `mcp__` 限定的名字；
+- **调用链复用**：模型要工具 → 服务端执行 → 结果以 `role=tool` 回灌 → 模型继续——§17.3 的闭环
+  **一个字都不改**，只在「工具名 → 执行器」这步多一条分支；
+- **工具目录接口**：`GET /api/tools` 的形状不变，条目多一个 `source` 字段。
+
+本轮**不做**（每一条都有理由，不留「以后再说」）：
+
+| 不做的东西 | 为什么 |
+| --- | --- |
+| 实现 MCP **服务器** | 本项目是客户端。做一个 server 是另一个产品线的事 |
+| MCP 的 **resources / prompts** | 协议里还有这两类能力。本轮只接 tools；resources 的接入留给 V4.2，与 Skill 的资源读取一起做（§22.7） |
+| 服务端**主动推送**（`notifications/tools/list_changed`、`subscriptions/listen`） | 工具清单在**连接建立时快照**，之后不变；要变就重连。推送要维护长连接与订阅状态，收益远小于成本 |
+| **OAuth 授权流** | MCP 的授权是一整套（OAuth 2.1 + 动态注册 + RFC 9728 资源元数据 + `iss` 校验）。本轮只支持管理员配好**静态 header**（如 `Authorization: Bearer …`）的服务器 |
+| **MRTR**（多轮往返请求） | 2026-07-28 新增的 `input_required` 结果类型。本轮一律当失败处理（§21.9） |
+| MCP 工具的**代码级沙箱** | 见 §21.10 第 1 条——这是本设计里唯一一处「配置能决定执行什么代码」的地方，必须正面处理而不是绕过 |
+
+### 21.2 MCP 解决的是「来源」问题，不是「能力」问题
+
+§17.2 立的规矩是：**「模型能调的」与「服务端能执行的」必须是同一张表**，否则透传一份
+function schema 就等于让配置决定执行逻辑（≈ RCE）。
+
+MCP 不推翻这条规矩，它换的是**这张表由谁填**：
+
+| | V3.2 内置工具 | V4 MCP 工具 |
+| --- | --- | --- |
+| 表项由谁提供 | 我们自己写的代码 | 第三方进程 / 第三方服务 |
+| schema 与执行器 | 同一处（`ToolSpec`） | 同一处（MCP 服务器：它给的 `inputSchema` 就是我们要发的 `arguments`） |
+| 配置能否决定执行什么 | **不能**——配置只能填名字 | **stdio 能**——配置里就有 `command` / `args`（见 §21.10） |
+| 保存期能否校验 | 能，注册表即全集 | 只能对**已发现过的**服务器校验（§21.8） |
+| 参数危险等级 | 低（`now` / `calc`） | **未知**，取决于那台服务器 |
+
+关键点是第二行：MCP 工具的 schema 与执行器**天然同源**——服务器自己声明参数形状，自己执行。
+这正是它相对「用户自定义 HTTP 工具」的根本优势：后者要么透传 schema（回到 RCE 问题），要么
+服务端自己猜参数形状（模型看到的与执行的会对不上）。
+
+所以本轮的设计目标不是「把 MCP 接进来」，而是**在不动 §17.2 那条契约的前提下，把表的另一半
+交给外部**。为此需要一张**工具目录快照表**（§21.6）：它让「模型能调的」与「服务端能执行的」
+在**快照层面**仍然对得上。
+
+### 21.3 协议版本：钉在哪一版
+
+MCP 规范按日期版本化，且**版本之间有破坏性变更**。截至本设计定稿，规范的最新修订是
+**2026-07-28**，它在 2025-11-25 基础上做了大改：
+
+| 维度 | 2025-11-25 及更早（握手时代） | 2026-07-28（现代时代） |
+| --- | --- | --- |
+| 连接建立 | `initialize` 握手协商版本 | **无握手**，每个请求在 `_meta` 里带协议版本与客户端能力 |
+| 会话 | `Mcp-Session-Id` 头维持会话状态 | **移除协议级会话**；跨调用状态改由服务端自己铸一个 handle 当普通参数传 |
+| 服务端身份 | `initialize` 结果里返回 | 每个结果的 `_meta.io.modelcontextprotocol/serverInfo` |
+| 能力发现 | `initialize` | 新增 `server/discover`（服务端必须实现） |
+| 服务端推送 | GET 长连接 SSE + `resources/subscribe` | 改为 `subscriptions/listen`（单一长连接 POST 响应流） |
+| 结果形状 | 无此字段 | **所有结果必带 `resultType`**：`complete` / `input_required` |
+| 列表结果缓存 | 无 | `tools/list` 等结果必带 `ttlMs` + `cacheScope` |
+| HTTP 必填头 | `MCP-Protocol-Version` | 再加 `Mcp-Method`、`Mcp-Name` |
+
+**对本项目最要紧的一条是「无会话」。**
+
+§13 的多实例架构里最难啃的是「状态归属」：Redis Stream 把事件归属解决了，但任何**有状态的
+外部连接**都会带来会话亲和性问题——实例 A 建立的会话，实例 B 接不上。审批暂停点能跨实例恢复
+（§16.7），是因为它存在 Redis 里；而 MCP 会话是协议层的活连接状态，没地方放。
+
+2026-07-28 把会话从协议里删掉，正好撞上本项目「核心状态在 MySQL / Redis，进程内只放无状态
+计算」的原则。所以：
+
+- **目标协议版本：2026-07-28**（无状态）。Python SDK 会优先使用它。
+- **最低可接受：2025-06-18**（握手时代）。更早的不支持。
+- **本项目不自己写版本协商代码**，只声明「支持哪些版本」，协商交给 SDK
+  （`mcp.types.SUPPORTED_PROTOCOL_VERSIONS` 覆盖两个时代）。
+
+**但现实是握手时代的服务器仍然占多数**，它们会拿到 `Mcp-Session-Id`，也就把会话亲和性问题带
+了回来。本设计的处理口径是：
+
+> 架构上按 2026-07-28 的无状态模型设计（**不依赖**会话存在）；握手时代服务器能连，但接受
+> 「同一会话要落在同一实例」这个代价，并在 §21.14 第 1 条如实列出。
+
+具体做法：握手时代服务器的 `Mcp-Session-Id` **存进 Redis**（键 `mcp:sess:{server_code}`），
+任何实例都能用它继续对话，而不是把连接钉死在发起它的进程里。连接本身仍是进程内的（stdio
+子进程没法跨实例），所以**子进程型服务器天然单实例**——这是物理限制，不是设计选择。
+
+### 21.4 传输：stdio 与 Streamable HTTP
+
+选两种，是因为它们覆盖两类真实用法；旧的 HTTP+SSE 双端点传输**不实现**（它在 2025-03-26
+被废弃，2025-11-25 起进入正式 Deprecated 生命周期）。
+
+| 传输 | 典型场景 | 本项目怎么接 |
+| --- | --- | --- |
+| **stdio** | 本地子进程：文件工具、脚本工具、代码执行器 | 以子进程拉起，stdin/stdout 走 JSON-RPC 消息；**stderr 单独收进日志** |
+| **Streamable HTTP** | 远程服务：云 API 封装、内部平台 | 单端点 POST；服务端要主动推消息时走响应流 |
+
+三个必须记住的细节：
+
+1. **stdout 只能有协议消息**。stdio 模式下服务端的普通日志**必须走 stderr**，写 stdout 会污染
+   JSON-RPC 帧流。同理，本项目作为客户端拉起子进程时，要**主动把子进程的 stdout 收干净**，
+   不能让它继承父进程的 stdout——否则子进程随手一句 print 就把协议打乱了。
+2. **`MCP-Protocol-Version` 头**（2025-06-18 起）：每个 HTTP 请求都要带协商好的版本；缺失时
+   服务端按 2025-03-26 处理，收到非法值返回 400。
+3. **SSE 断流 = 这次请求丢失**。2026-07-28 移除了 SSE 的可续传性（`Last-Event-ID` 与事件 ID
+   不再是规范的一部分），规范明确要求客户端**用新的请求 ID 重新发起**。这对工具调用有直接
+   含义：**重试一个超时了的 MCP 工具调用，必须假设它可能已经执行过**（§21.9）。
+
+### 21.5 工具命名空间：`mcp__<server>__<tool>`
+
+内置工具叫 `calc`、`now`；MCP 工具有自己的名字，两台服务器的同名工具会撞。
+
+OpenAI function-calling 的函数名约束是 `^[a-zA-Z0-9_-]{1,64}$`——**没有点号**。所以
+`weather.get_weather` 非法，`weather__get_weather` 合法。
+
+采用 Claude Code 的约定：
+
+```text
+mcp__<server_code>__<tool_name>
+```
+
+- `server_code`：服务器在本项目 `mcp_server` 表里的 `code`，**不是** MCP 协议里的 `serverInfo.name`
+  ——后者是服务端自报的，不同服务器可能重名，不能拿来当主键；
+- `tool_name`：MCP 服务器自己的工具名，原样保留。导入时按 OpenAI 的字符集与长度卡，
+  不满足的**不导入**（并在服务器健康检查里报出来）；
+- 长度上限 64 是 OpenAI 的限制，不是我们的选择：`mcp__`(5) + `server_code` + `__`(2) +
+  `tool_name` ≤ 64。超长的**不导入**，**不截断**——截断会把两个不同的工具撞成同一个名，
+  那比不导入更糟。
+
+于是 `agent.tools` 的**形状变了，语义没变**：它还是「工具名列表」，只是现在可能混着内置名与
+`mcp__` 限定名。§17.2 立的契约依然成立：**模型能调的名字，必然是服务端能执行的名字**——
+只是「服务端」从「本进程里的注册表」扩展到「注册表 ∪ 已发现且在线的 MCP 服务器」。
+
+### 21.6 数据模型
+
+#### `mcp_server` — MCP 服务器注册表
+
+```sql
+CREATE TABLE mcp_server (
+  id          BIGINT PRIMARY KEY AUTO_INCREMENT,
+  code        VARCHAR(64)  NOT NULL UNIQUE,
+  name        VARCHAR(128) NOT NULL,
+  transport   ENUM('stdio','http') NOT NULL,
+  -- stdio：启动命令与参数
+  command     VARCHAR(512) DEFAULT NULL,
+  args        JSON        DEFAULT NULL,
+  -- stdio：子进程环境变量（**值加密**）
+  env         JSON        DEFAULT NULL,
+  -- http：端点 URL
+  url         VARCHAR(512) DEFAULT NULL,
+  -- http：请求头（**值加密**）
+  headers     JSON        DEFAULT NULL,
+  -- 工具白名单：只导入这些工具；为空 = 全导
+  allow_tools JSON        DEFAULT NULL,
+  timeout_sec INT         DEFAULT 30,
+  enabled     TINYINT(1)  DEFAULT 1,
+  version     INT         DEFAULT 1,
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+`env` 与 `headers` 里装的就是凭据，加密口径与 `agent.api_key_cipher` 完全一致
+（`app/core/crypto.py` 的 Fernet）。这两列**只写不读**：任何 API 响应里都不回显明文，回显时
+一律替换成 `***`。
+
+#### `mcp_tool` — 工具目录快照
+
+```sql
+CREATE TABLE mcp_tool (
+  id             BIGINT PRIMARY KEY AUTO_INCREMENT,
+  server_id      BIGINT      NOT NULL,
+  qualified_name VARCHAR(128) NOT NULL,   -- mcp__<code>__<tool>
+  tool_name      VARCHAR(64)  NOT NULL,   -- MCP 服务器自己的名字
+  description    TEXT         DEFAULT NULL,
+  input_schema   JSON         DEFAULT NULL,
+  output_schema  JSON         DEFAULT NULL,
+  annotations    JSON         DEFAULT NULL,
+  discovered_at  DATETIME(3)  DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uk_qualified (qualified_name),
+  KEY idx_server (server_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+这张表有**三个**用途，缺一不可：
+
+1. **保存期校验**：`normalize_tool_names` 遇到 `mcp__` 前缀的名字，去这张表查——查不到就拒
+   （§21.8）；
+2. **展开 schema 的数据源**：`build_openai_tools` 从这里取 `input_schema` 拼 OpenAI 的 `tools`
+   参数。但**离线服务器的工具不展开**（§21.9）——快照只负责「有哪些工具」，「现在能不能用」
+   由在线状态决定；
+3. **后台勾选框的数据源**：`GET /api/tools` 要回答「这台部署上有哪些工具可用」，MCP 工具的
+   来源就是这张表。
+
+快照是**发现时写入**的，不是实时的。`tools/list` 有分页，而服务端推送本轮不实现（§21.1），
+所以工具清单在**连接建立时取一次**，之后以快照为准。
+
+### 21.7 连接管理
+
+`McpClientManager` 是**进程内单例**，按 `server_code` 管理连接。
+
+| 关注点 | 口径 |
+| --- | --- |
+| 什么时候连 | **惰性**：第一次用到该服务器的工具时才连。服务启动不因为某台 MCP 服务器挂了就失败 |
+| 什么时候断 | 空闲超时（默认 5 分钟）后主动关闭——**stdio 子进程必须回收**，否则会攒出一堆僵尸进程 |
+| 断了怎么办 | 下次调用时重连，指数退避，最多 3 次；仍失败则该服务器标记为不可用 |
+| 同一服务器的并发 | **并发**调用（JSON-RPC 的 `id` 天然区分请求），但每个服务器有并发上限信号量（默认 4），避免把远端打爆 |
+| 跨实例 | 连接是进程内的。握手时代服务器的 `Mcp-Session-Id` 存 Redis（§21.3），让任意实例都能续上对话 |
+
+**为什么不预热**：预热会让启动变慢，且一台慢服务器拖慢整个启动。**为什么不因为连不上就启动
+失败**：MCP 服务器是**可选依赖**，不是服务运行的前提。一台 MCP 服务器挂掉，影响的是**配了它的
+那几个 Agent**，不是整个服务。
+
+> 这与 §13.5 的 Redis 策略**故意不同**，理由要说清楚：Redis 不可用是**全局**能力失效
+> （事件收不到、流会卡死），静默退回进程内总线会造成「看起来能跑、实际跨实例收不到事件」的
+> 分裂大脑；而 MCP 服务器不可用只让**部分 Agent** 退化成「没有这个能力」，且这个退化是
+> **显式且可观测**的（§21.12）——离线服务器的工具不会展开给模型，模型压根看不见它。
+
+### 21.8 工具目录：发现、快照与保存期校验
+
+三段式，和 §17.2 的「写的时候严格，读的时候宽容」是同一个思路，但**严格的对象变了**。
+
+**① 发现**：连接建立后调 `tools/list`（注意分页，`nextCursor` 要翻到底），把每个工具写进
+`mcp_tool` 快照。写之前先删掉该服务器旧的快照行再整体插入（快照是全量替换，不是增量合并
+——增量合并会留下服务器已经删掉的工具）。
+
+**② 保存期校验**（`normalize_tool_names`）：
+
+| 名字形态 | 校验方式 | 不通过时 |
+| --- | --- | --- |
+| 内置名（`calc`） | 在 `TOOL_REGISTRY` 里 | 400，配置存不进去 |
+| `mcp__<code>__<tool>` | 在 `mcp_tool` 快照里 | 400，配置存不进去 |
+| 其它形状 | 既不是内置名也不是 `mcp__` 限定名 | 400 |
+
+**MCP 服务器从未连过时**，`mcp_tool` 里没有它的任何工具 → 保存期直接 400，报错写明
+「服务器 X 尚未发现工具，先刷新一次目录」。这是有意的严格：宁可让配置保存失败并给出可执行的
+提示，也不要留一个「配了但模型看不见」的哑配置。
+
+**③ 运行期宽容**（`known_tool_names` 的同类）：读历史脏数据时，未知名字**丢掉**而不是报错——
+一个脏值不能让整个 Agent 列表接口 500（这是 §17.2 已经踩过的坑）。
+
+### 21.9 工具调用链：从模型请求到结果回灌
+
+```mermaid
+sequenceDiagram
+    participant LLM as 模型
+    participant R as AgentRunner
+    participant D as 工具分发
+    participant M as McpClientManager
+    participant S as MCP 服务器
+
+    LLM->>R: tool_calls: mcp__weather__get_weather
+    R->>D: execute_tool(name, args, allowed)
+    D->>D: 白名单校验（agent.tools）
+    D->>M: 查 server_code / tool_name
+    M->>S: tools/call
+    S-->>M: CallToolResult(content, structuredContent, isError)
+    M->>M: 结果映射 → 文本
+    M-->>D: (ok, text)
+    D-->>R: (ok, text)
+    R->>R: role=tool 消息回灌 + tool_result 事件
+    R->>LLM: 下一轮
+```
+
+**分发规则**（`execute_tool` 里加一条分支，闭环其余部分不动）：
+
+```
+name.startswith("mcp__")
+    → 解析 server_code / tool_name
+    → 白名单校验（allowed 列表里必须原样含这个限定名）
+    → McpClientManager.call(server_code, tool_name, args)
+else
+    → 现有 TOOL_REGISTRY 路径，一字不改
+```
+
+**结果映射**——MCP 的 `CallToolResult` 和我们的 `(ok, text)` 之间需要一个明确的转换：
+
+| MCP 侧 | 我们的侧 | 说明 |
+| --- | --- | --- |
+| `content: [TextContent]` | `ok=True`，`text` 为其文本 | 常规路径 |
+| 多个 `TextContent` | `ok=True`，用 `\n` 连接 | 顺序保留 |
+| `structuredContent` 且无 text | `ok=True`，`text` 为其 JSON 序列化 | 规范要求有 structured 时**同时**给一份 text，这条兜底 |
+| `isError: true` | **`ok=False`**，`text` 为其内容 | 工具**执行**错误——模型有机会自己纠正，与 §17.5 同一口径 |
+| JSON-RPC 协议错误 | **`ok=False`**，`text` 为错误说明 | 未知工具、参数非法等 |
+| 超时 / 连接断开 / 服务器不可达 | **`ok=False`**，`text` 为错误说明 | 同样**不失败节点**，回灌给模型 |
+| 非文本内容（image / audio / resource_link / embedded_resource） | `ok=True`，`text` 为占位说明 | 见下 |
+
+**非文本内容为什么要占位**：OpenAI 的 `role=tool` 消息只接受字符串内容，图片/音频塞不进去。
+所以 `ImageContent` / `AudioContent` / `ResourceLink` 在文本位置写一句占位
+（如「返回了 1 张图片（image/png，20480 字节），本通道暂不支持直接回灌」），让模型知道
+「有东西但你看不到」，而不是让它以为工具返回了空结果。`EmbeddedResource` 里 `mimeType`
+是 `text/*` 时可以把 `text` 成员提取出来当普通文本用。
+
+**所有错误一律回灌，不失败节点**——这是 §17.5 的规矩，MCP 不例外。真正兜不住的是「模型一直调
+同一个必失败的 MCP 工具」，那由 §17.6 的轮次上限收口。
+
+**一个例外：服务器离线时，不把它的工具展开给模型。**
+
+`build_openai_tools` 只展开**在线**服务器的 MCP 工具。离线服务器的工具仍然在 `mcp_tool`
+快照里（保存期校验、后台勾选框都要用），但**不给模型看**——模型看不见就不会去调一个调不通的
+工具。这比「照常展开、每次调用都失败」好：后者会让模型反复重试同一个坏工具，白烧轮次与 token，
+最后撞上轮次上限失败。
+
+**幂等性提醒**：§21.4 已经说过，2026-07-28 之后 SSE 断流要求重新发起请求。因此**超时后重试一个
+MCP 工具调用是有副作用风险的**——第一次可能已经执行了（比如删了一条记录）。本轮**不做
+幂等键**（MCP 协议没提供），列为已知限制（§21.14 第 6 条）。对于有副作用的工具，运维应在
+服务器侧自己做幂等。
+
+### 21.10 安全边界
+
+这一节是本章最重要的部分。MCP 把「外部代码」接进了本服务，必须把每一条边界写死。
+
+#### ① stdio 是「配置决定执行什么代码」——本设计唯一的例外
+
+§17.2 立的是「配置不能决定执行逻辑」，因为工具参数直接来自模型、会受提示词注入影响。MCP
+stdio 打破了这条例外：配置里写着 `command` 与 `args`，**配置确实决定了执行什么**。
+
+这不是 bug，是 MCP stdio 的本质。处理方式不是「假装它不存在」，而是**改变它的信任级别**：
+
+- **MCP 服务器注册不是普通配置操作，是部署级操作**。只能由管理员在后台完成，需要鉴权、
+  需要审计留痕。普通用户能做的只有「在已注册的服务器里勾选工具」。
+- **命令路径必须在白名单前缀内**（`settings.mcp_allowed_command_prefixes`，默认空 = 禁止
+  stdio 注册）。这挡住「注册一个 `/bin/sh -c '…'`」这类构造。
+- `env` 与 `headers` 的值加密存储，响应里永不回显明文。
+- **不把 MCP 服务器的配置下放给普通租户**。
+
+一句话对比：内置工具的配置是「名字」，MCP stdio 的配置是「程序」。前者是数据，后者是代码——
+所以后者的操作权限必须比前者高一个级别。
+
+#### ② Streamable HTTP 是 SSRF
+
+URL 来自配置，指向 `169.254.169.254` 或内网服务就能打穿内网。缓解：
+
+- 出网**地址白名单**：非白名单地址一律拒绝（默认白名单为空 = 允许全部，但生产部署必须配）；
+- 默认**拒绝私网与回环网段**（`10/8`、`172.16/12`、`192.168/16`、`127/8`、`169.254/16`、
+  `::1`、`fc00::/7`），除非显式放行；
+- **重定向后要重新校验**：跟随重定向到私网的地址同样拒绝；
+- 单次请求**超时上限**（`timeout_sec`，默认 30 秒），避免慢速服务挂住事件循环。
+
+#### ③ 工具注解不可信
+
+MCP 规范明确写了：客户端 **MUST** 把工具注解（`readOnlyHint` / `destructiveHint` /
+`idempotentHint` / `openWorldHint`）当作**不可信数据**，除非来自可信服务器。
+
+所以：**注解只用于前端展示与提示，永远不用于权限判定**。授权的唯一依据是 `agent.tools`
+白名单（§21.8）。一条声称自己 `readOnlyHint: true` 的工具，照样要进白名单才能被调用。
+
+#### ④ 工具结果是不可信输入
+
+工具结果会**直接进 prompt**。它来自第三方服务器，可能包含提示词注入内容，也可能是敏感内容。
+
+- **敏感词前置过滤**（§20）必须同样覆盖工具结果。§20 的过滤点在「用户输入进 LLM 之前」，
+  MCP 工具结果是「服务器返回的内容进 LLM 之前」——**位置一样，性质也一样**，不能只过滤用户
+  输入。命中时同样按「拒绝」处理（422 语义的等价物：不把该结果回灌给模型）。
+- 工具结果的文本要**限长**（复用 `tool_result_max_chars`，默认 4000 字符），否则一次
+  超长返回就能挤爆下一轮 prompt。
+
+#### ⑤ 不实现客户端特性
+
+MCP 的 roots / sampling / elicitation 允许**服务端反过来驱动客户端**：让我们的 LLM 去替它
+生成内容、让我们的文件系统暴露目录、让它发起交互。这是一条完整的放大链（服务端 → 我们的
+模型 → 我们的文件系统/外部 API），在本项目里没有任何一层是需要的。
+
+**本轮一律不实现客户端特性**：MCP 服务器请求这些能力时，一律回 `method not found`。这既是
+范围收敛，也是安全收敛。
+
+### 21.11 API 设计
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/tools` | 工具目录（内置 + MCP）。条目加 `source` 字段（`builtin` / `mcp`）与 `server` |
+| GET | `/api/mcp/servers` | MCP 服务器列表 + 在线状态 + 工具数 |
+| POST | `/api/mcp/servers` | 注册服务器（**管理员**，§21.10 第 1 条） |
+| PUT | `/api/mcp/servers/:code` | 更新，`version+1`，失效连接与快照 |
+| DELETE | `/api/mcp/servers/:code` | 删除（连带删 `mcp_tool` 快照） |
+| POST | `/api/mcp/servers/:code/refresh` | 重连并刷新工具快照 |
+| GET | `/api/mcp/servers/:code/tools` | 该服务器已发现的工具 |
+
+错误码沿用 §8 的约定：
+
+| HTTP | 场景 |
+| --- | --- |
+| 400 | 服务器配置非法（传输与字段不匹配、命令不在白名单前缀、URL 被 SSRF 策略拒绝） |
+| 403 | 非管理员尝试注册/更新 MCP 服务器 |
+| 404 | 服务器不存在 |
+| 409 | 服务器 code 重复 |
+| 502 | 服务器可达但协议握手/初始化失败（错误详情写进 `error_msg`，不回显凭据） |
+
+### 21.12 事件与前端
+
+延续 §17.7 的口径：工具事件都是**非终止事件**。
+
+| 事件 | 载荷 | 说明 |
+| --- | --- | --- |
+| `tool_call` | `{"toolCalls": [...], "source": "builtin" \| "mcp"}` | 源信息让前端能区分「内置工具」与「外部服务器工具」 |
+| `tool_result` | `{"tool", "ok", "summary", "source", "server", "durationMs"}` | `server` 是服务器 code，`durationMs` 是外部调用的耗时——外部工具比内置工具慢得多，前端要给不同的超时观感 |
+| `mcp_unavailable` | `{"server": "<code>", "reason": "..."}` | 服务器掉线时发一次（非终止）。前端据此提示「该 Agent 的一部分能力不可用」 |
+
+前端：后台的 Agent 编辑器里，工具勾选框从 `GET /api/tools` 取（§17.7 已经这么做了），
+MCP 工具在勾选框里**分组显示**（按服务器分组），避免一个长列表里 `mcp__weather__get_weather`
+和 `mcp__weather__get_forecast` 混在一起看不出来自哪台服务器。
+
+### 21.13 与 V3.2 的差异清单
+
+「闭环本身不用改」这句话要落到文件上。实现时**只有这几处**会动：
+
+| 位置 | 改动 |
+| --- | --- |
+| `app/core/tools.py` | 拆成「内置注册表」与「MCP 目录」两个来源。`normalize_tool_names` / `known_tool_names` / `build_openai_tools` / `execute_tool` 四处按 `mcp__` 前缀分流 |
+| `app/core/mcp/`（新） | `manager.py`（连接池与生命周期）、`transport.py`（stdio / HTTP）、`mapping.py`（结果映射）、`catalog.py`（发现与快照） |
+| `app/core/agent_runner.py` | **闭环不变**。只有 `_allowed_tools()` 的白名单要能装下 `mcp__` 限定名 |
+| `app/core/sensitive.py` | 工具结果回灌前过一遍（§21.10 第 4 条） |
+| `app/models/`（新） | `mcp_server.py`、`mcp_tool.py` |
+| `app/repo/`（新） | `mcp_server_repo.py`、`mcp_tool_repo.py` |
+| `app/api/routes/tool.py` | 目录接口加 `source` / `server` 字段 |
+| `app/api/routes/mcp.py`（新） | 服务器管理接口 |
+| `app/schemas/`（新） | MCP 服务器的请求/响应模型（含凭据字段的写入-only 处理） |
+| `requirements.txt` | 官方 MCP Python SDK（`mcp`） |
+| `alembic/versions/` | 新增迁移：`mcp_server`、`mcp_tool` 两张表 |
+
+### 21.14 已知限制
+
+1. **握手时代服务器的会话亲和性**。`Mcp-Session-Id` 存 Redis 后可以跨实例续上**对话**，但
+   **连接本身**是进程内的：stdio 子进程无法跨实例（物理限制）。Streamable HTTP 的握手时代
+   服务器若在实例 A 建连、请求落到实例 B，B 会用 Redis 里的 session id 重连——通常可行，但
+   第一次请求会有额外延迟。
+2. **工具清单是快照，不是实时的**。服务端加减工具不会立刻反映；要等下次重连或手工刷新。
+   （本轮不实现 `notifications/tools/list_changed` 与 `subscriptions/listen`。）
+3. **不接 MCP 的 resources 与 prompts**。只有 tools 能用。
+4. **不实现 OAuth 授权流**。远程服务器只能靠管理员配静态 header（`Authorization` 等）认证。
+   带 OAuth 的 MCP 服务器接不进来。
+5. **工具在节点内串行执行**（沿用 §17.10 的既有限制）：模型一次要了三个 MCP 工具，会一个一个
+   跑完再回灌。跨节点的 DAG 并行不受影响。
+6. **超时后重试有副作用风险**。MCP 没提供幂等键；一次超时后重试，第一次可能已经执行了。
+   有副作用的工具要由服务器侧自己做幂等。
+7. **没有工具调用的审计表**（沿用 §17.10）。MCP 工具调用的参数与结果只在事件流与
+   `run_step.output_json` 里，没有 `run_approval` 那样的账本表。
+8. **工具名长度 64 是硬上限**。长名字的 MCP 工具会被拒绝导入——这是 OpenAI 的约束，不是
+   MCP 的。
+9. **stdio 子进程的资源回收依赖空闲超时**。进程崩溃或网络卡死时的回收不够干净，需要额外的
+   僵尸进程巡检。
+10. **没有工具级权限分级**（沿用 §17.10）。MCP 工具的权限与内置工具一样，只靠白名单区分。
+
+### 21.15 实施要点与验收标准
+
+实现时下面每一条都要能验：
+
+- [ ] `GET /api/tools` 同时列出内置与 MCP 工具，条目带 `source`；MCP 工具按服务器分组。
+- [ ] 配一个未注册的 `mcp__xxx__yyy` → 保存 Agent 返回 400，且错误信息说清是「服务器未发现
+      工具」还是「工具不存在」。
+- [ ] 配置一个真实 MCP 服务器（stdio 与 Streamable HTTP 各一个）→ 刷新目录 → 快照表里出现
+      对应工具行，`qualified_name` 与 OpenAI 函数名约束一致。
+- [ ] 一次真实调用：模型要 `mcp__weather__get_weather` → 服务端执行 → 结果回灌 → 模型继续；
+      **断言第二轮请求里确实带着 `role=tool` 的结果**（沿用 §17.9 的 e2e 断言方式）。
+- [ ] 停掉 MCP 服务器 → 该服务器的工具**不再展开给模型**（断言发给 LLM 的 `tools` 参数里
+      没有它），且已有 Agent 仍能正常跑完（退化成「没有这个能力」）。
+- [ ] MCP 服务器返回 `isError: true` → 节点**不失败**，错误文本回灌给模型，`tool_result`
+      事件的 `ok` 为 `false`。
+- [ ] MCP 工具返回图片 → 回灌文本里是占位说明，不是空字符串；`tool_result.summary` 有内容。
+- [ ] 工具结果命中敏感词 → **不回灌**，run 以敏感内容错误收尾（与 §20 的口径一致）。
+- [ ] 子进程把普通日志打到 stdout → 协议不乱（连接仍可用）。
+- [ ] 重启服务后，MCP 工具目录快照仍在，且离线服务器的 Agent 不会调它。
+- [ ] 全量回归不破：现有 166 个测试（§17.9）全绿。
+
+---
+
+## 22. V4：Skill 指令包（可复用的领域知识）
+
+### 22.1 目标与边界
+
+Agent 的 `system_prompt` 是一个字符串。它能装下一段话，装不下一套「怎么做某类事」的可复用
+流程——因为流程往往要带参考资料、模板、示例、脚本，一段纯文本装不下，而且没法被多个 Agent
+复用、没法单独版本管理。
+
+本轮引入 **Skill（Agent Skills）**：一个**目录**，里面有一个 `SKILL.md`（元数据 + 指令正文）
+和若干可选的资源文件。运维把目录放进部署里，Agent 绑定它，指令正文进系统提示词，资源文件按需读，
+`scripts/` 里的脚本交给**独立的 studio 容器**执行。
+
+本轮要做的：
+
+- **Skill 包格式**：采用 [Agent Skills 开放格式](https://agentskills.io/)（`SKILL.md` + YAML
+  frontmatter + `references/` `assets/` 等目录），保证技能目录能直接别处拷来用；
+- **绑定关系**：Agent 绑定技能，绑定表落 DB；
+- **正文注入**：绑定技能的 `SKILL.md` 正文作为独立的一条 system 消息追加在 Agent 自己的
+  system prompt 之后；
+- **资源读取**：内置工具 `skill_resource`，让模型按需读 `references/` 里的文件；
+- **脚本执行**：内置工具 `skill_exec`，把 `scripts/` 里的脚本交给**独立的 studio 容器**执行
+  （gRPC 调用，见 §22.8）——**不在 web_agent 进程里起子进程**；
+- **索引**：启动扫描 + 手工刷新，DB 存索引与绑定。
+
+本轮**不做**：
+
+| 不做的东西 | 为什么 |
+| --- | --- |
+| **在 web_agent 进程内执行脚本**（`subprocess`） | 执行任意代码需要沙箱。沙箱是**studio 容器**，不是 web_agent 进程——理由见 §22.8.1 |
+| **模型自己挑技能**（动态发现） | 本项目是**配置驱动**的编排服务：运维明确知道每个节点需要哪些技能。模型「挑技能」这一步没有决策价值，只有一类新的失败模式（挑错、挑漏） |
+| **技能的上传/编辑界面** | 技能是**代码仓库里的一部分**（§22.4），它进不进得来取决于部署权限，不取决于后台按钮 |
+| **技能的版本发布与回滚** | 目录进 git，版本管理交给 git，不另造一套 |
+| **多租户技能隔离** | `skills/` 目录是部署级的。租户隔离要先把目录布局与租户模型对齐（§22.12 第 8 条） |
+
+### 22.2 Skill 是什么
+
+一个技能目录：
+
+```text
+skills/
+└── financial-report/
+    ├── SKILL.md          # 必需：frontmatter + 指令正文
+    ├── scripts/          # 可选：可执行脚本（交给 studio 容器跑，§22.8）
+    │   └── extract.py
+    ├── references/       # 可选：参考资料（按需读）
+    │   ├── METRICS.md
+    │   └── TAX_RULES.md
+    └── assets/           # 可选：模板、表格、示例
+        └── report-template.xlsx
+```
+
+`SKILL.md` = YAML frontmatter + Markdown 正文：
+
+```markdown
+---
+name: financial-report
+description: 生成季度财务分析报告。需要产出财报分析、指标解读或经营回顾时使用。
+license: Proprietary
+metadata:
+  author: finance-team
+  version: "1.0"
+---
+
+# 季度财务分析报告
+
+## 步骤
+
+1. 先用 `get_quarter_metrics` 拉取本季度与去年同期指标；
+2. 按 `references/METRICS.md` 里的口径计算同比；
+3. …（完整步骤见正文）
+
+模板见 [报告模板](assets/report-template.xlsx)。
+```
+
+frontmatter 字段（规范原样，本项目**不做扩展**——扩展字段放 `metadata` 里）：
+
+| 字段 | 必填 | 约束 | 本项目的用法 |
+| --- | --- | --- | --- |
+| `name` | 是 | 1–64 字符，小写字母/数字/连字符，不以连字符开头结尾，不连续连字符，**须与目录名一致** | 同时是 DB 里的 `skill.code` |
+| `description` | 是 | 1–1024 字符 | 后台列表展示 + 「这技能干什么用」的说明 |
+| `license` | 否 | 许可证名或文件名 | 原样存 |
+| `compatibility` | 否 | ≤ 500 字符 | 原样存（如「需要内网访问」） |
+| `metadata` | 否 | 字符串键值对 | 原样存（作者、版本等） |
+| `allowed-tools` | 否 | 空格分隔，**实验性** | **仅作建议**（§22.9），不用于授权 |
+
+正文部分**没有格式约束**，写什么都行。本项目额外加两条自己的约束（§22.6）：正文长度有上限，
+引用文件路径只能相对技能根目录。
+
+> **为什么沿用开放格式而不是自定义一套**：技能目录里的 `SKILL.md` 是**可移植资产**——别人写的
+> 技能目录能直接拷进 `skills/` 就用，本项目也能把别人的目录拷走。格式一旦自定义，生态就用不上了。
+> 参考实现见 [agentskills.io](https://agentskills.io/) 与其校验工具 `skills-ref`。
+
+### 22.3 渐进披露在本项目里的三种形态
+
+Agent Skills 的标准做法是**三级渐进披露**：
+
+1. **发现**：启动时只加载每个技能的 `name` + `description`（约 100 token），够模型判断「这事跟
+   我有没有关系」；
+2. **激活**：任务匹配上，才把完整 `SKILL.md` 正文读进上下文；
+3. **执行**：按需读 `scripts/` `references/` `assets/` 里的文件。
+
+**第 1、2 级在本项目里都不成立**，得说清楚为什么：
+
+- 本项目的 Agent 是**配置驱动**的：`agent.skills` 里点名的技能才会出现在这个节点的提示词里。
+  模型**没有「挑技能」这一步**——运维已经替它挑好了。于是「发现」阶段的产物（目录清单）根本
+  不需要进上下文，绑定关系本身就是发现结果。
+- 既然绑定即确定，「激活」也没有单独一轮的必要：被绑定的技能，正文直接注入。
+
+于是落地形态是：
+
+| 标准形态 | 本项目的落地 |
+| --- | --- |
+| ① 发现（name+description 全量） | **替换为绑定表**——不进上下文 |
+| ② 激活（SKILL.md 正文） | **绑定即注入**：正文作为独立 system 消息追加在 Agent 的 system prompt 之后 |
+| ③ 执行（按需读资源文件） | **保留**：模型用 `skill_resource` 工具按需读 |
+
+第 ③ 级是**成本控制的主力**：`references/` 里的资料往往比 `SKILL.md` 正文长得多，全量注入
+既贵又稀释注意力。规范的建议也是「SKILL.md 控制在 500 行以内，详细资料拆到 `references/`」。
+
+省掉 ① ② 的代价是明确的：**技能绑多了，提示词会变长**。这由 §22.6 的预算处理。
+
+### 22.4 存放：文件系统为准，DB 做索引
+
+**技能内容以文件系统为准，DB 只存索引与绑定。**
+
+理由有四条：
+
+1. **开放格式的前提**。技能是个**目录**（多个文件、子目录），不是一条文本。DB 存多文件很别扭，
+   而文件系统天然就是「一个目录一堆文件」。
+2. **可移植**。目录直接从别处拷进 `skills/` 就能用；反过来本项目也能把目录打包带走。
+3. **版本管理天然走 git**。技能改动的 diff、review、回滚全部复用现有的仓库流程，不需要另造
+   一套发布机制。
+4. **`system_prompt` 在 DB 里，但它是「一段文本」；技能是「一个目录」**。这两者的形态不同，
+   硬塞进同一张表会两头不讨好。
+
+那 DB 里存什么？**索引 + 绑定**：
+
+- `skill` 表：一行一个技能，记 `code` / `name` / `description` / frontmatter 其余字段 /
+  `source_path` / `content_hash` / `enabled`；
+- `agent.skills` 列：Agent 绑定了哪些技能（JSON 数组，与 `agent.tools` 同形，见 §22.5）。
+
+**目录扫描**在服务启动时跑一次，另外提供手工刷新接口。扫描只做两件事：
+
+1. 读 `skills/*/SKILL.md` 的 frontmatter，校验合法性（§22.9），写进 `skill` 表；
+2. 算 `SKILL.md` 的 `content_hash`（sha256），与库里比对，变了就更新 `updated_at`。
+
+**扫描不读正文**——正文是运行时才注入的，不需要入库。
+
+### 22.5 数据模型
+
+#### `skill` 表
+
+```sql
+CREATE TABLE skill (
+  id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+  code          VARCHAR(64)   NOT NULL UNIQUE,   -- 目录名，与 SKILL.md 的 name 一致
+  name          VARCHAR(64)   NOT NULL,          -- frontmatter 的 name
+  description   VARCHAR(1024) DEFAULT '',
+  license       VARCHAR(128)  DEFAULT '',
+  compatibility VARCHAR(500)  DEFAULT '',
+  metadata      JSON          DEFAULT NULL,
+  allowed_tools VARCHAR(512)  DEFAULT '',        -- frontmatter 原样存，**仅建议**
+  source_path   VARCHAR(512)  NOT NULL,          -- skills/<code> 的绝对路径
+  content_hash  VARCHAR(64)   NOT NULL,          -- SKILL.md 的 sha256
+  enabled       TINYINT(1)    DEFAULT 1,
+  created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+#### `agent.skills` 列
+
+```sql
+ALTER TABLE agent ADD COLUMN skills JSON DEFAULT NULL;
+```
+
+与 `tools` **同形**：存技能 code 的数组，不存正文。理由同 §17.2——**配置只放名字，正文与资源
+从文件系统取**。这样「模型能用的技能」与「服务端能提供的技能」仍然是同一张表（`skill` 表 +
+目录），对不上就在保存期拒。
+
+**读的时候宽容，写的时候严格**（与 §17.2、§21.8 一致）：
+
+- 写（`normalize_skill_codes`）：未注册的 code **保存期就拒**（400）；
+- 读（`known_skill_codes`）：历史脏数据里的未知 code **丢掉**，不能让 Agent 列表接口 500。
+
+### 22.6 Skill 怎么进入提示词
+
+**拼装顺序**：
+
+```text
+messages[0] = { role: "system", content: <Agent 自己的 system_prompt> }
+messages[1] = { role: "system", content: <技能 1 的 SKILL.md 正文> }
+messages[2] = { role: "system", content: <技能 2 的 SKILL.md 正文> }
+...
+```
+
+两个决定：
+
+**① 技能作为独立的一条 system 消息，不拼进 Agent 的 system_prompt 字段。**
+
+拼进去的话，后台页面上「提示词」那一栏显示的内容就和实际发给模型的不一致——运营改提示词时
+看到的不是模型真正收到的东西。独立成条，差异是**可见的一层**：后台要显示「生效提示词预览」
+（§22.11），预览内容与实际发送逐字一致。
+
+**② 技能在前，Agent 的 system_prompt 在后——不对，反过来。**
+
+顺序是 **Agent 的 system_prompt 在前，技能正文在后**。理由：system_prompt 说的是「你是谁、
+你在这条流程里干什么」，技能说的是「这类事具体怎么做」。先定身份与目标，再给方法，与人读的
+顺序一致；反过来会让技能里的方法论盖过角色设定。
+
+> 技能正文之间按 `agent.skills` 数组的**声明顺序**注入，运营可以靠顺序表达优先级。
+
+**预算与截断**：
+
+| 上限 | 默认 | 挡什么 |
+| --- | --- | --- |
+| 单个 `SKILL.md` 正文字符数 | 20000 | 一个巨型技能撑爆上下文 |
+| 技能正文**总**字符数 | 4000（`settings.skill_prompt_budget`） | 绑了太多技能 |
+| 参与注入的技能数 | 5（`settings.skill_max_count`） | 同上 |
+
+**截断策略是「宁少勿半」**：超过总预算时，**按声明顺序保留靠前的技能，后面的整个不注入**，
+并记一条日志与一条 `skill_skipped` 事件说明「因为预算没注入哪个技能」。
+
+**不做半个技能的截断**——半个 `SKILL.md` 里的指令可能自相矛盾（前一半说「用 A 方法」，被砍掉
+的后一半说「用 B 方法」），比不给更糟。
+
+`skill_prompt_budget` 与 §4.4 的 `context_max_tokens` 是**两层**预算，不是一层：后者管的是
+**会话历史**（用户与助手消息），前者管的是**技能正文**（系统侧配置）。两者都计入最终发给
+模型的 prompt，LLM 边界那次裁剪（§14.3 / `_split_turns`）是最后一道。
+
+**技能正文不过敏感词过滤**。§20 的前置过滤拦的是**用户输入**——那是不可信输入。技能正文是
+**运维放进部署目录的内容**，它的信任级别跟代码仓库一样。在它上面套一层敏感词过滤，只会
+制造「改个技能正文要绕过过滤器」的荒唐场面。技能正文的准入靠的是**目录权限**（§22.10）。
+
+### 22.7 Skill 资源读取工具 `skill_resource`
+
+`references/` 里的文件不进上下文，模型需要时用内置工具读。
+
+```python
+# app/core/tools.py（新增一条内置工具）
+async def _skill_resource(args: dict) -> str:
+    """读取技能目录里的一个文件。"""
+    code = args.get("skill")
+    rel = args.get("path")
+    # 1. 校验 code 在该 Agent 绑定的技能里（白名单）
+    # 2. 解析路径，**必须仍在技能根目录内**
+    # 3. 读文件，按 tool_result_max_chars 截断
+```
+
+参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `skill` | string | 技能 code |
+| `path` | string | **相对技能根目录**的路径，如 `references/METRICS.md` |
+
+**路径穿越防护**（这是这个工具的**全部**风险所在）：
+
+```python
+root = (skills_root / code).resolve()
+target = (root / rel).resolve()
+if not target.is_relative_to(root):   # 逃出技能目录 → 拒绝
+    raise ToolCallError("路径超出技能目录范围")
+```
+
+四条一起做，缺一不可：
+
+1. **解析后再判定**（`resolve()` 之后再 `is_relative_to`）——只做字符串前缀判断会被
+   `../../etc/passwd` 与符号链接绕过；
+2. **拒绝绝对路径**；
+3. **符号链接指向目录外时拒绝**——`resolve()` 已经把符号链接解开了，判定自然覆盖；
+4. **不读 `skills/` 目录之外的任何路径**，即使模型给的是一个看起来像别的技能目录的绝对路径。
+
+**大小上限**：单文件最多读 `tool_result_max_chars`（默认 4000 字符）——与工具结果回灌同一条
+上限，避免一次读取把上下文撑爆。
+
+**`scripts/` 里的文件也可以读**（当参考资料读）。但**读 ≠ 执行**：执行是另一条路——`skill_exec`
+工具把脚本正文交给 studio 容器（§22.8），web_agent 自己**从不**执行它。
+
+### 22.8 脚本执行：gRPC 调用 studio 容器
+
+#### 22.8.1 为什么不在 web_agent 进程里跑脚本
+
+前面的边界里写着「不执行 `scripts/` 里的脚本」，理由是「执行任意代码需要沙箱」。现在这个
+沙箱有了：**沙箱就是容器**。
+
+不在 web_agent 进程里 `subprocess` 跑脚本，有三条硬理由：
+
+1. **逃逸面**：脚本的参数直接来自**模型**，而模型会被提示词注入影响。脚本跑在 web_agent
+   进程里，它能看到 web_agent 的一切——环境变量（含 `SECRET_KEY`、数据库口令）、文件系统、
+   进程空间；这些都能被 `stdout` 读出来，再由工具结果回灌进 prompt 带出去。
+2. **资源失控**：脚本要 CPU、内存、磁盘、时长。在 web_agent 进程里没法真正限制——
+   `resource.setrlimit` 是**进程级**的，一个跑飞的脚本能把整个服务拖垮；§13 的多实例设计里，
+   一个实例的 CPU 打满就等于该分片不可用。
+3. **依赖地狱**：脚本要 numpy、pandas 或某个 CLI。装进 web_agent 的镜像 = 污染服务运行时；
+   每个技能各带各的依赖 = 镜像膨胀到不可维护。
+
+容器把这三条一次性解决掉：**studio 容器里没有 web_agent 的任何凭据。**
+
+#### 22.8.2 studio 是什么
+
+| 项 | 口径 |
+| --- | --- |
+| 形态 | 独立容器、独立镜像，与 web_agent 同级部署 |
+| 职责 | 接收「一段脚本 + 一组参数」，在受限环境里执行，回传 stdout / stderr / exit code |
+| 状态 | **无状态**：不落盘、不缓存、不认识用户、不认识技能目录 |
+| 与 web_agent 的关系 | 只被 gRPC 单向调用；它不依赖 web_agent 的任何接口 |
+
+#### 22.8.3 契约
+
+```proto
+syntax = "proto3";
+package webagent.studio.v1;
+
+// studio：技能脚本的受限执行容器
+service Studio {
+  // 执行一个脚本，同步返回结果
+  rpc Exec(ExecRequest) returns (ExecResponse);
+  // 探活：容器是否就绪
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message ExecRequest {
+  string skill = 1;          // 技能 code（审计用）
+  string script = 2;         // 相对技能根目录的脚本路径，如 scripts/extract.py
+  string language = 3;       // python | bash | node
+  string content = 4;        // 脚本正文（web_agent 读出来随请求带上）
+  repeated string argv = 5;  // 传给脚本的参数
+  string stdin = 6;          // 标准输入
+  int64 timeout_ms = 7;      // 执行时限（调用方给上限，studio 侧还要再收一道）
+  string run_id = 8;         // 关联一次 run（审计）
+  string node_id = 9;        // 关联一个节点
+}
+
+message ExecResponse {
+  int32 exit_code = 1;       // 脚本退出码；-1 表示「压根没跑起来」
+  string stdout = 2;
+  string stderr = 3;
+  bool truncated = 4;         // 输出被截断
+  int64 duration_ms = 5;
+  string error = 6;           // 服务级错误（不是脚本的 stderr）
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool ready = 1;
+  string version = 2;
+  repeated string languages = 3;   // 容器里可用的运行时
+}
+```
+
+字段上的四个决定：
+
+- **脚本正文随请求走**（`content`），不共享卷：studio 保持无状态，web_agent 与 studio 之间
+  没有卷依赖，两个容器可以独立扩缩、独立升级。代价是请求体变大——脚本通常几 KB 到几十 KB，
+  可接受。
+- **`script` 与 `content` 分开**：`script` 是**审计用的标识**（哪个技能、哪个文件），`content`
+  才是真正被执行的东西。studio **不**校验 `script` 路径，也**不**解析技能目录——它没有技能
+  目录的概念。路径校验因此必须留在 web_agent 侧（复用 §22.7 的穿越防护）。
+- **`error` 与 `stderr` 分开**：脚本自己写到 stderr 的是「脚本的输出」，原样回灌给模型；
+  `error` 是「studio 这次没跑起来」（超时、容器被杀、镜像缺运行时）。两者语义不同，模型
+  看到它们的反应也不同。
+- **`exit_code = -1`**：区分「脚本跑了但退出码是 -1」与「压根没跑起来」。
+
+#### 22.8.4 新增的内置工具：`skill_exec`
+
+```python
+# app/core/tools.py（新增一条内置工具）
+async def _skill_exec(args: dict) -> str:
+    """在 studio 容器里执行技能脚本。"""
+    code = args.get("skill")
+    script = args.get("script")
+    argv = args.get("args") or []
+    # 1. 校验 code 在该 Agent 绑定的技能里（白名单）
+    # 2. 校验 script 路径仍在技能根目录内（复用 §22.7 的穿越防护）
+    # 3. 读脚本正文（限长）
+    # 4. 调 studio 的 Exec
+    # 5. 拼成「退出码 + stdout (+ stderr)」返回给模型
+```
+
+返回给模型的文本形状——模型要能据此判断成功与否：
+
+```text
+exit_code: 0
+--- stdout ---
+{"rows": 128, "file": "q3.csv"}
+--- stderr ---
+(warning) 2 rows skipped
+```
+
+失败时：
+
+```text
+exit_code: 2
+--- stdout ---
+
+--- stderr ---
+Traceback (most recent call last):
+  ...
+```
+
+**脚本输出不落库**：它可能含敏感数据（§22.10）。只作为 `role=tool` 的内容回灌，并截断到
+`tool_result_max_chars`。
+
+#### 22.8.5 超时、取消与僵尸进程
+
+- 超时由 `timeout_ms` 指定，**上限由 web_agent 侧强制**（`studio_exec_max_timeout_ms`，默认
+  60 秒）。模型请求的时限只能在这个上限之内。
+- studio 侧必须**自己也有一道时限**，并且超时后要杀掉**整个进程组**——只杀父进程的话，孙进程
+  会继续跑并占着容器。
+- web_agent 侧同时设 gRPC deadline（`timeout_ms + 2 秒`宽限），先到哪个算哪个。
+- 用户点「停止」时，编排器的取消标志要能中断这次 gRPC 调用。但**协议上无法保证容器里的脚本
+  被杀掉**（gRPC 的取消不传播到对端的进程组），所以 studio 侧的自设时限不是可选项，是**兜底**。
+
+#### 22.8.6 studio 不可用时
+
+`skill_exec` 返回 `ok=False` + 错误说明，按 §17.5 的口径**不失败节点**（回灌给模型让它自己
+换条路）。
+
+但更早一道防线在**启动期**：studio 不可达 → **启动失败**。理由与 §20.7（敏感词模型缺失即
+启动失败）一致——studio 是部署的一个组成部分，它挂了说明部署不完整，让问题在部署时暴露，
+而不是在用户的一次 run 里暴露。确实需要降级的场景（本地开发没有 studio）可以用
+`STUDIO_EXEC_REQUIRED=false` 显式关掉；此时 `skill_exec` **不注册**，且配置期直接拒。
+
+#### 22.8.7 部署拓扑
+
+```mermaid
+graph LR
+    subgraph deploy["同一编排平台（同一台机器的两个容器也算）"]
+        WA["web_agent 容器<br/>FastAPI + LangGraph<br/>持有 SECRET_KEY / DB 口令"]
+        ST["studio 容器<br/>无凭据 / 只读根 fs<br/>无出网 / 限 CPU 内存时长"]
+    end
+    WA -->|"gRPC · settings.studio_exec_addr"| ST
+```
+
+studio 容器应满足：
+
+| 项 | 要求 | 为什么 |
+| --- | --- | --- |
+| 凭据 | **一个都没有** | 它执行的是模型指定的脚本 |
+| 根文件系统 | 只读 | 脚本只往 `/tmp` 写 |
+| 可写目录 | 只有 `/tmp`（tmpfs 或空卷），写完即弃 | 不留痕 |
+| 出网 | **禁止**（或严格白名单） | 否则它可以从里面往外拉数据 |
+| 资源 | CPU / 内存上限 + 时限 | 一个跑飞的脚本不能拖累宿主机 |
+| 用户 | 非 root、无特权、无宿主挂载 | —— |
+
+#### 22.8.8 新增配置项
+
+| 配置 | 默认 | 说明 |
+| --- | --- | --- |
+| `STUDIO_EXEC_ADDR` | 空 | studio 的 gRPC 地址（如 `studio:9000`）。为空 = 未启用脚本执行 |
+| `STUDIO_EXEC_REQUIRED` | `true` | studio 不可达时是否启动失败 |
+| `STUDIO_EXEC_TIMEOUT_MS` | 30000 | 单次执行默认时限 |
+| `STUDIO_EXEC_MAX_TIMEOUT_MS` | 60000 | 模型能请求的时限上限（写死在配置里，模型改不了） |
+| `STUDIO_EXEC_MAX_SCRIPT_CHARS` | 200000 | 脚本正文长度上限 |
+
+### 22.9 Skill 与 MCP 的关系
+
+三者的分工，一句话讲清：
+
+> **Skill 负责「什么时候用、怎么用」，MCP 负责「能用什么」，白名单负责「准不准」。**
+
+`SKILL.md` 的 frontmatter 里有一个 `allowed-tools` 字段（规范标注为**实验性**），形如
+`allowed-tools: Bash(git:*) Read`。本项目对它的口径是：
+
+- **它只是建议，不是授权**；
+- **授权的唯一依据仍然是 `agent.tools`**（§17.2 的规矩：模型能调的与服务端能执行的必须是同一
+  张表）；
+- 实现上：后台在 Agent 编辑页提示「技能 `financial-report` 声明要用工具 `get_quarter_metrics`，
+  但本 Agent 的工具白名单里没有它」——**提示，不拒绝**。
+
+为什么是提示不是拒绝：技能的正文里可能只是**提到**某个工具名（"这个报告需要配合
+`get_quarter_metrics` 使用"），并不是真的要调它。按名字硬拒会误伤。按名字硬放行则是把授权
+交给技能作者——那就把 §17.2 的护栏拆了。
+
+**MCP 工具不知道技能的存在**：MCP 工具的 schema 里没有技能上下文。模型知不知道「这个技能要我
+用它」，取决于技能正文有没有把话说清楚。这是技能作者的责任，不是协议的责任。
+
+### 22.10 安全边界
+
+**Skill 是提示词内容。进了 prompt 的文字，模型会当成指令执行。**
+
+所以技能的可信级别 = **能往 `skills/` 目录里写文件的人的级别**。这句话必须写在文档最显眼
+的地方：
+
+> 拿到 `skills/` 目录的写权限 ≈ 拿到提示词注入权限 ≈ 能改模型的行为。
+> 这与「拿到代码仓库写权限 ≈ 能改代码」是同一句话。
+
+由此得出几条硬约束：
+
+1. **技能只从受控目录读**（部署里的 `skills/`），**不进数据库、不接受 HTTP 上传**。要装一个
+   技能 = 往目录里放文件 + 走部署流程。这是有意的摩擦：技能是代码级的资产。
+2. **`allowed-tools` 不授权**（§22.9）。技能正文不能扩大 Agent 的工具白名单。
+3. **frontmatter 严格校验**：缺 `name` / `description`、`name` 超过 64 字符、含大写字母、
+   `name` 与目录名不一致 → **该技能直接不导入**，并记日志。规范给了 `skills-ref validate`
+   可用，但那是外部工具；本项目至少要把上面几条自己守住。
+4. **长度与预算上限**（§22.6）：单文件上限、总预算上限、注入技能数上限，三道都卡死。
+5. **web_agent 进程里没有脚本执行器**。正文里的代码块不会被运行；`scripts/` 里的脚本**只**能
+   经 `skill_exec` 交给 studio 容器执行（§22.8），web_agent 侧**没有** `subprocess` 这条路。
+6. **技能正文不参与敏感词前置过滤**（§22.6），因为它是受信任的部署内容。
+
+**脚本执行是另一条信任边界**，单独说：
+
+> 技能脚本会**真的被执行**。它由**模型指定的参数**驱动，而模型会被提示词注入影响。
+> 所以「谁能写 `skills/`」的级别 = **能让任意代码在 studio 容器里跑**的级别。
+
+studio 容器是这条边界的**唯一**实现手段，它必须满足（§22.8.7）：**零凭据、只读根文件系统、
+仅 `/tmp` 可写、禁出网、CPU/内存/时限受限、非 root**。
+
+三条由此而来的硬约束：
+
+1. **凭据不进容器**。studio 容器里**一个凭据都没有**——它不需要数据库口令、不需要
+   `SECRET_KEY`、不需要任何 API key。需要凭据的技能**做不了**，这是有意的。
+2. **脚本输出不进数据库**。stdout 可能含从容器里读到的数据，落库就是留副本；它只作为
+   `role=tool` 的内容回灌并截断（§22.8.4）。
+3. **studio 的出网要禁掉**。容器禁出网后，脚本拿不到外网，也没法把容器里的东西往外送；
+   需要出网的技能走 MCP 工具，而不是在脚本里 `curl`。
+
+### 22.11 API 设计
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/skills` | 技能目录：`code` / `name` / `description` / `source_path` / `content_hash` / 被哪些 Agent 绑定 |
+| GET | `/api/skills/:code` | 详情 + `SKILL.md` 原文（只读） |
+| POST | `/api/skills/refresh` | 重扫 `skills/` 目录，更新索引 |
+| GET | `/api/agents/:code/prompt-preview` | **生效提示词预览**：`system_prompt` + 各技能正文，与实际发给模型的逐字一致 |
+| GET | `/api/studio` | studio 状态：可达性、版本、可用运行时（`HealthResponse`） |
+
+`GET /api/tools` 里会多出两条内置工具（与 `now` / `calc` 同级），运营可以在 Agent 的工具
+白名单里勾上或取消——**不勾模型就用不到**：
+
+| 工具 | 不勾的后果 |
+| --- | --- |
+| `skill_resource` | 模型读不到技能资源（`references/`、`assets/`） |
+| `skill_exec` | 模型执行不了技能脚本（studio 未启用时这条工具**根本不注册**，配置期直接拒） |
+
+### 22.12 已知限制
+
+1. **脚本只能跑在 studio 容器里**（§22.8）。web_agent 进程内没有任何脚本执行器——这既是
+   安全设计，也意味着**本地开发必须起一个 studio 容器**（或用 `STUDIO_EXEC_REQUIRED=false`
+   显式关掉，那就没有脚本执行能力）。
+2. **studio 是单点**。它挂了，脚本执行能力整体不可用；本设计的对策是**启动期就失败**
+   （§22.8.6），不是运行期降级。
+3. **studio 容器里没有凭据、不能出网**（§22.10）。需要凭据或需要外网的技能**做不了**——
+   这类需求应该走 MCP 工具，不该在脚本里硬凑。
+4. **取消不保证杀掉脚本**。gRPC 取消不传播到对端的进程组，studio 只能靠自己的时限收口
+   （§22.8.5）。
+5. **模型不自己挑技能**（§22.3）。技能绑多了只能靠预算截断，靠后被砍掉的技能模型完全看不见。
+6. **技能正文占固定成本**。每个绑定的技能，每一轮模型调用都要带一遍（system 消息在多轮里
+   会被重复发送）。技能多、正文长时 token 成本上升明显。
+7. **技能变更不是实时的**。改了 `SKILL.md` 要刷新索引（重启或 `POST /api/skills/refresh`）
+   才会更新 `content_hash`，但**正文是运行时读的**，所以其实改完立刻生效——只是后台显示的
+   哈希与「已加载」状态会滞后。这是一个刻意的取舍：**内容实时、索引滞后**。
+8. **多租户隔离没做**。`skills/` 是部署级目录。租户隔离要先把「目录布局 ↔ 租户模型」对齐，
+   而本项目目前没有租户概念（§1.1 的目标是单部署多 Agent）。
+9. **技能没有版本与回滚机制**。靠 git。
+10. **`allowed-tools` 不做自动授权**，只做提示（§22.9）。
+11. **`skill_resource` 只能读技能目录内的文件**，读不了部署里别处的文件——本项目没有通用的
+    文件读取工具（模型侧的文件访问能力为零）。
+12. **脚本语言受 studio 镜像限制**。镜像里装了哪几种运行时就是哪几种，`HealthResponse.languages`
+    把它报出来；配置期按它校验（§22.8.8），但**新增语言要改 studio 镜像**。
+
+### 22.13 实施要点与验收标准
+
+- [ ] `skills/` 目录里放一个合法技能 → 启动扫描后 `skill` 表里出现对应行，`content_hash` 与
+      `sha256(SKILL.md)` 一致。
+- [ ] 放一个 `name` 与目录名不一致的技能 → **不导入**，日志写明原因，其它技能照常导入
+      （一个坏技能不能拖垮整次扫描）。
+- [ ] Agent 绑定技能 → 发给 LLM 的 messages 里出现一条独立的 `role=system` 消息，内容是
+      `SKILL.md` 正文，**且在 Agent 自己的 system_prompt 之后**。
+- [ ] 后台的「生效提示词预览」与实际发给 LLM 的内容**逐字一致**（同一份拼装函数）。
+- [ ] 绑 6 个技能、总正文超过预算 → 只有靠前的 5 个（或预算内的部分）被注入，后面的**整个**
+      不出现，且事件流里有一条 `skill_skipped` 说明是哪个、为什么。
+- [ ] `skill_resource` 读 `references/METRICS.md` → 返回文件内容。
+- [ ] `skill_resource` 读 `../../../../etc/passwd` → 拒绝，返回错误说明，**不泄露任何内容**。
+- [ ] `skill_resource` 读一个指向目录外的符号链接 → 拒绝。
+- [ ] `skill_resource` 读一个没绑定的技能 → 拒绝（白名单校验）。
+- [ ] 技能声明了 `allowed-tools: get_quarter_metrics`，而 Agent 白名单里没有它 → 后台给出
+      **提示**，但保存**不被拒**。
+- [ ] `skill_exec` 执行 `scripts/extract.py` → 脚本**在 studio 容器里**跑，web_agent 进程内
+      **没有**起任何子进程（用 `ps` 或打桩断言验证）；退出码与 stdout 原样回灌给模型。
+- [ ] `skill_exec` 的脚本参数含 `../../etc/passwd` 式的路径 → **在 web_agent 侧**就被拒，
+      请求**根本没发出去** studio（studio 收到的一定是已校验过的脚本正文）。
+- [ ] 脚本超时 → studio 侧超时生效、进程组被杀；web_agent 侧拿到 `exit_code=-1` 与 `error`
+      说明，节点**不失败**（§17.5 口径）。
+- [ ] studio 不可达 → **服务启动失败**（§22.8.6），而不是运行期才炸。
+- [ ] `STUDIO_EXEC_REQUIRED=false` 且 studio 不可达 → 服务正常启动，但 `skill_exec` 不注册，
+      且保存期拒绝把 `skill_exec` 加进 Agent 的工具白名单。
+- [ ] 脚本 stdout 里包含一段敏感内容 → 回灌前**被 §20 的过滤器拦下**（与 MCP 工具结果同一
+      条规矩，§21.10 第 4 条）。
+- [ ] 全量回归不破：现有 166 个测试（§17.9）全绿。
 
 ---
 
