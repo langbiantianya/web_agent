@@ -34,6 +34,12 @@ from app.core.redis_client import (
     redact_url,
 )
 from app.core.sensitive import init_filter
+from app.core.studio import (
+    StudioStartupError,
+    close_studio_client,
+    init_studio,
+)
+from app.core.tools import set_optional_tools_enabled
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -75,9 +81,10 @@ async def lifespan(app: FastAPI):
 
     易踩的坑：启动阶段的**恢复**失败只记日志、不阻塞启动。数据库暂时不可用
     （例如迁移还没跑完）不应该让整个服务起不来，否则就是「恢复逻辑本身制造了
-    新的启动故障」。**Redis 不可用、敏感词模型缺失则相反**——必须让启动失败，
-    否则会出现「服务能跑但内容没被过滤」或「跨实例收不到事件」这类**症状正常、
-    行为已错**的分裂状态，比启动失败难查得多。
+    新的启动故障」。**Redis 不可用、敏感词模型缺失、studio 不可达则相反**——
+    必须让启动失败，否则会出现「服务能跑但内容没被过滤」「跨实例收不到事件」
+    或「脚本执行能力看着有其实没有」这类**症状正常、行为已错**的分裂状态，
+    比启动失败难查得多。
     """
     logger.info("%s v%s 启动中…", settings.app_name, __version__)
 
@@ -119,6 +126,18 @@ async def lifespan(app: FastAPI):
                 logger.warning("已将 %s 个遗留 run 标记为 error", n)
         except Exception:  # pragma: no cover - 数据库暂时不可用时不阻塞启动
             logger.exception("启动时恢复遗留 run 失败（数据库可能尚未就绪）")
+
+        # studio 脚本执行（V4，§22.8.6）。配了地址但连不上 → **启动失败**：
+        # studio 是部署的一个组成部分，它挂了说明部署不完整，让问题在部署时暴露，
+        # 而不是等到用户的一次 run 里才炸。
+        # 连不上且 STUDIO_EXEC_REQUIRED=false 时不注册 skill_exec——模型看不见它、
+        # 配置期也拒，不会留下「配了但调不通」的哑配置。
+        try:
+            studio_enabled = await init_studio()
+        except StudioStartupError as exc:
+            logger.error("studio 不可用：%s", exc)
+            raise
+        set_optional_tools_enabled(studio_enabled)
     except BaseException:
         # 启动失败：把已经建立的资源回滚掉，别让它们悬到进程退出
         logger.exception("启动失败，回滚已建立的资源")
@@ -142,6 +161,9 @@ async def _close_resources() -> None:
     """
     steps = (
         ("编排器", get_orchestrator().shutdown),
+        # studio 通道排在编排器**之后**：编排器要取消还在跑的 run 任务，
+        # 那些任务可能正在调 studio——通道先关了，调用会变成「连不上」。
+        ("studio 连接", close_studio_client),
         ("审批暂停点", close_checkpointer),
         ("Redis 连接", disconnect_redis),
         ("数据库连接池", dispose_engine),

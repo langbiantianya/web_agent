@@ -67,6 +67,10 @@ class StudioTimeoutError(StudioError):
     """调用超时（``DEADLINE_EXCEEDED``）。"""
 
 
+class StudioStartupError(StudioError):
+    """studio 不可达且要求必须可用——服务应当**启动失败**（§22.8.6）。"""
+
+
 @dataclass(frozen=True, slots=True)
 class StudioHealth:
     """studio 的健康信息。"""
@@ -338,6 +342,66 @@ def get_studio_client() -> StudioClient | None:
 def studio_configured() -> bool:
     """脚本执行**是否配置了**（地址非空）。"""
     return bool(settings.studio_exec_addr.strip())
+
+
+async def init_studio(timeout: float = 5.0) -> bool:
+    """启动期检查 studio，决定脚本执行能力是否启用（§22.8.6）。
+
+    三种情形，**两件事**：
+
+    | 情形 | 结果 |
+    | --- | --- |
+    | 地址为空 | 未启用（这不是「不可达」，是「压根没配」） |
+    | 地址有、连上了 | 启用 |
+    | 地址有、连不上 | ``studio_exec_required`` 为真 → **启动失败**；为假 → 未启用，只记一条警告 |
+
+    为什么 studio 不可达要**启动失败**：studio 是部署的一个组成部分，它挂了说明
+    部署不完整。让问题在部署时暴露，而不是在用户的一次 run 里暴露——那时用户看到
+    的是「这个 Agent 好像少了个能力」，排查成本高得多。
+
+    口径与 §20.7（敏感词模型缺失即启动失败）一致：宁可起不来，也不要「看起来
+    能跑、行为已错」。
+
+    Args:
+        timeout: 探活超时（秒）。
+
+    Returns:
+        脚本执行能力是否启用。
+
+    Raises:
+        StudioStartupError: studio 连不上且 ``studio_exec_required`` 为真。
+    """
+    client = configure_studio(settings.studio_exec_addr)
+    if client is None:
+        logger.info("未配置 studio 地址，脚本执行能力未启用")
+        return False
+    try:
+        health = await client.health(timeout=timeout)
+    except StudioError as exc:
+        if settings.studio_exec_required:
+            raise StudioStartupError(
+                f"studio 不可达（{client.addr}）：{exc}。"
+                "确认 studio 已部署，或设 STUDIO_EXEC_REQUIRED=false 显式关掉脚本执行。"
+            ) from exc
+        logger.warning(
+            "studio 不可达（%s），脚本执行能力未启用：%s", client.addr, exc
+        )
+        return False
+    if not health.ready:
+        message = f"studio 未就绪（{client.addr}）：profile={health.profile}"
+        if settings.studio_exec_required:
+            raise StudioStartupError(message)
+        logger.warning("%s，脚本执行能力未启用", message)
+        return False
+    logger.info(
+        "studio 就绪（%s）：版本 %s，运行时 %s，并发上限 %s，隔离档 %s",
+        client.addr,
+        health.version,
+        "、".join(health.languages) or "（未声明）",
+        health.max_concurrency,
+        health.profile,
+    )
+    return True
 
 
 async def close_studio_client() -> None:
