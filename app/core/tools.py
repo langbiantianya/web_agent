@@ -192,6 +192,64 @@ async def _skill_resource(args: dict) -> str:
     return text
 
 
+async def _skill_exec(args: dict) -> str:
+    """在 studio 容器里执行技能脚本。
+
+    与 :func:`_skill_resource` 同款：内置工具的 handler **拿不到 Agent 参数**，
+    所以「本 Agent 绑了哪些技能」从 contextvars 里取（:mod:`app.core.skill_context`）。
+
+    脚本正文**从数据库读出来随请求发给 studio**——studio 保持无状态，两边没有卷
+    依赖（§22.8.3）。web_agent 进程内**不起任何子进程**：执行发生在 studio 容器
+    里（§22.8.1）。
+
+    Args:
+        args: 需含 ``skill``（技能 code）与 ``script``（``scripts/`` 下的相对路径）；
+            可选 ``args``（参数数组）、``stdin``、``timeout_ms``。
+
+    Returns:
+        给模型看的文本：退出码 + stdout + stderr。
+
+    Raises:
+        ToolCallError: 参数不合法、技能未授权、studio 不可用、脚本执行失败。异常
+            由 :func:`execute_tool` 统一转成「失败结果」回灌给模型，而不是在这里
+            返回一段错误字符串——否则调用方分不清「算出来是这句话」和「出错了」。
+    """
+    from app.config.db import SessionLocal
+    from app.core.skill_context import current_skill_codes
+    from app.core.skill_exec import exec_skill_script
+
+    code = args.get("skill")
+    script = args.get("script")
+    if not isinstance(code, str) or not code.strip():
+        raise ToolCallError("缺少 skill 参数（技能 code）")
+    if not isinstance(script, str) or not script.strip():
+        raise ToolCallError("缺少 script 参数（脚本相对路径，如 scripts/extract.py）")
+
+    raw_argv = args.get("args")
+    if raw_argv is not None and not isinstance(raw_argv, list):
+        raise ToolCallError("args 必须是字符串数组")
+    stdin = args.get("stdin") or ""
+    if not isinstance(stdin, str):
+        raise ToolCallError("stdin 必须是字符串")
+    raw_timeout = args.get("timeout_ms")
+    if raw_timeout is not None and not isinstance(raw_timeout, int):
+        raise ToolCallError("timeout_ms 必须是整数")
+
+    async with SessionLocal() as db:
+        ok, text = await exec_skill_script(
+            db,
+            skill=code.strip(),
+            script=script.strip(),
+            argv=raw_argv,
+            stdin=stdin,
+            timeout_ms=raw_timeout,
+            allowed_codes=current_skill_codes(),
+        )
+    if not ok:
+        raise ToolCallError(text)
+    return text
+
+
 # 注册表：名字 → 工具。**加新工具只需要在这里加一条**。
 TOOL_REGISTRY: dict[str, ToolSpec] = {
     "now": ToolSpec(
@@ -247,6 +305,70 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         handler=_skill_resource,
     ),
 }
+
+
+# 可选工具：**只有在 studio 可用时才注册**（§22.8.6）。
+#
+# 为什么它不在 TOOL_REGISTRY 里直接写死：studio 没配置、或者配置了但连不上时，
+# 脚本执行能力**整体不存在**——这时 `skill_exec` 应当**根本不出现**（模型看不见、
+# 配置期也拒），而不是「能勾上但每次调用都失败」。后者会让模型反复重试同一个
+# 坏工具，白烧轮次与 token。
+OPTIONAL_TOOLS: dict[str, ToolSpec] = {
+    "skill_exec": ToolSpec(
+        name="skill_exec",
+        description=(
+            "在 studio 容器里执行技能包里的脚本（scripts/ 下的文件）。"
+            "脚本跑在独立的受限容器里：没有凭据、不能出网、有时间与资源上限，"
+            "跑挂了也不会影响主服务。参数以数组给出，不会被 shell 解析。"
+            "返回退出码与 stdout/stderr。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "skill": {
+                    "type": "string",
+                    "description": "技能 code（不是显示名），例如 financial-report",
+                },
+                "script": {
+                    "type": "string",
+                    "description": "脚本相对路径，例如 scripts/extract.py",
+                },
+                "args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "传给脚本的参数数组（不会被 shell 解析）",
+                },
+                "stdin": {
+                    "type": "string",
+                    "description": "标准输入（文本）",
+                },
+                "timeout_ms": {
+                    "type": "integer",
+                    "description": "执行时限（毫秒）。服务端还有一道更严的上限，模型改不了",
+                },
+            },
+            "required": ["skill", "script"],
+            "additionalProperties": False,
+        },
+        handler=_skill_exec,
+    ),
+}
+
+
+def set_optional_tools_enabled(enabled: bool) -> None:
+    """按开关注册 / 注销可选工具。
+
+    启动期调一次：studio 不可用就**不注册** ``skill_exec``（§22.8.6）。这样
+    模型看不见它、配置期也拒——不会留下「配了但调不通」的哑配置。
+
+    Args:
+        enabled: 是否启用。
+    """
+    for name, spec in OPTIONAL_TOOLS.items():
+        if enabled:
+            TOOL_REGISTRY[name] = spec
+        else:
+            TOOL_REGISTRY.pop(name, None)
 
 
 # ----------------------------------------------------------------- 对外接口
@@ -319,6 +441,13 @@ def normalize_tool_names(
                     "尚未发现工具——先到「MCP 服务器」里刷新一次工具目录。"
                 )
         elif name not in TOOL_REGISTRY:
+            if name in OPTIONAL_TOOLS:
+                # 可选工具没注册 = studio 不可用。给一句能行动的提示，
+                # 而不是把它混在「未知工具」里让人猜。
+                raise ToolConfigError(
+                    f"工具「{name}」当前不可用（studio 未启用或连不上），配不了它。"
+                    "studio 恢复之后可以再配。"
+                )
             raise ToolConfigError(
                 f"未知工具「{name}」，可用的有：{'、'.join(tool_names())}"
             )

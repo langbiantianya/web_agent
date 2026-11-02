@@ -24,6 +24,11 @@ from app.core.errors import RunCancelled, SensitiveContentError, ToolLoopExceede
 from app.core.mcp.naming import is_mcp_name, parse_qualified_name
 from app.core.run_hub import RunEventDTO, RunHub
 from app.core.sensitive import screen_text
+from app.core.studio_context import (
+    StudioExecContext,
+    reset_exec_context,
+    set_exec_context,
+)
 from app.core.tools import build_openai_tools, execute_tool, known_tool_names
 from app.models.agent import Agent
 from app.models.enums import EventType
@@ -405,9 +410,23 @@ class AgentRunner:
                 fn = tc.get("function") or {}
                 name = fn.get("name") or ""
                 started = time.monotonic()
-                ok, output = await execute_tool(
-                    name, fn.get("arguments") or "{}", allowed=self._allowed_tools()
+                # 执行上下文：studio 的 request_id 靠它算（§22.8.5、skill-service
+                # §5.2）。必须**每次调用都重设**——不复位的话下一个 tool_call 会
+                # 继承上一个的 tool_call_id，于是两次不同的调用算出同一个 id，
+                # studio 的去重窗口会把第二次静默吞掉。
+                exec_token = set_exec_context(
+                    StudioExecContext(
+                        run_id=str(self.run_id),
+                        node_id=str(self.node_id),
+                        tool_call_id=str(tc.get("id") or ""),
+                    )
                 )
+                try:
+                    ok, output = await execute_tool(
+                        name, fn.get("arguments") or "{}", allowed=self._allowed_tools()
+                    )
+                finally:
+                    reset_exec_context(exec_token)
                 duration_ms = int((time.monotonic() - started) * 1000)
                 output = _truncate(output)
                 server = _mcp_server_of(name)

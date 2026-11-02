@@ -139,6 +139,10 @@ class StudioClient:
         self.addr = addr
         self._channel: grpc.aio.Channel | None = None
         self._stub: studio_pb2_grpc.StudioStub | None = None
+        # 最近一次探活的结果。调用方据此校验「这个脚本的语言本实例能不能跑」
+        # （skill-service §10.2 的「写的时候严格」）。探活之前是 None——那表示
+        # 还没探过，不做这道校验。
+        self.health_info: StudioHealth | None = None
 
     async def _get_stub(self) -> studio_pb2_grpc.StudioStub:
         """取（或建）桩对象。
@@ -174,13 +178,15 @@ class StudioClient:
             )
         except grpc.aio.AioRpcError as exc:
             raise _map_rpc_error(exc, self.addr) from exc
-        return StudioHealth(
+        health = StudioHealth(
             ready=bool(response.ready),
             version=response.version,
             languages=tuple(info.name for info in response.language_info),
             max_concurrency=int(response.max_concurrency),
             profile=response.profile,
         )
+        self.health_info = health
+        return health
 
     async def exec_script(
         self,
