@@ -3340,6 +3340,45 @@ studio 容器应满足：
 | `STUDIO_EXEC_TIMEOUT_MS` | 30000 | 单次执行默认时限 |
 | `STUDIO_EXEC_MAX_TIMEOUT_MS` | 60000 | 模型能请求的时限上限（写死在配置里，模型改不了） |
 | `STUDIO_EXEC_MAX_SCRIPT_CHARS` | 200000 | 脚本正文长度上限 |
+| `STUDIO_EXEC_LB_POLICY` | `round_robin` | gRPC 的负载均衡策略。Phase 3 落地时补的——见下 |
+
+**「地址为空」与「连不上」是两件事**，别混：
+
+| 情形 | 结果 |
+| --- | --- |
+| 地址为空 | **未启用脚本执行**：服务正常启动，`skill_exec` 根本不注册（配置期也拒） |
+| 地址有 + 连上了 | 启用 |
+| 地址有 + 连不上 + `STUDIO_EXEC_REQUIRED=true` | **启动失败**（§22.8.6） |
+| 地址有 + 连不上 + `STUDIO_EXEC_REQUIRED=false` | 正常启动，`skill_exec` 不注册，只记一条警告 |
+
+**`STUDIO_EXEC_LB_POLICY` 为什么必须有**（skill-service §13.4）：gRPC 用 HTTP/2
+**长连接**，默认的 `pick_first` 会**只连上第一个 DNS 解析结果**，之后再也不换。
+配上普通 ClusterIP Service，扩缩容就等于白扩——加了 Pod，流量一点都不过去。而这个
+症状极难发现：服务看着完全正常，只是没吃满。
+
+所以客户端建通道时给地址加 `dns:///` 前缀（让 gRPC 的 DNS 解析器返回**全部**
+A 记录）并指定 `round_robin`。**Service 侧也必须是 headless 的**——两边配对才有
+意义，单改一边等于没改。
+
+#### 22.8.9 落地情况（Phase 3）
+
+| 关注点 | 代码在哪 |
+| --- | --- |
+| 契约（唯一来源） | `proto/webagent/studio/v1/studio.proto` |
+| 生成的桩代码 | `webagent/studio/v1/`（包名就是 proto 的 `package`，生成代码一行都不用改） |
+| 契约一致性检查 | `scripts/check_proto_contract.py`（proto 文件 vs 本节 vs `docs/skill-service.md` §5） |
+| gRPC 客户端 | `app/core/studio.py`（`StudioClient` / `init_studio` / 错误码翻译） |
+| 每次调用的执行上下文 | `app/core/studio_context.py`（`request_id` 靠 run + 节点 + tool_call_id 算） |
+| `skill_exec` 工具 | `app/core/skill_exec.py`（校验 + 规整）、`app/core/tools.py`（handler + 注册开关） |
+| 启动期检查与注册联动 | `app/main.py`（lifespan）、`app/core/tools.py::set_optional_tools_enabled` |
+| 敏感词兜底 | `app/core/tools.py::_screen_tool_output`（MCP 与 skill_exec 共用） |
+| **服务侧参考实现** | `services/studio/`（gRPC server + 进程隔离 + 超时 + 截断 + 限流 + 去重 + 优雅停机） |
+| 探针 / 启动巡检 | `services/studio/healthcheck.py`、`services/studio/reaper.py` |
+| 部署产物 | `services/studio/Dockerfile`、`deploy/k8s/`、`deploy/docker-compose.yml` |
+
+**为什么本仓库同时交付服务侧**：§22.13 的验收项「脚本在 studio 容器里跑、web_agent
+进程内没有起任何子进程」必须有一个**真的** studio 才能验证。只做调用侧 + mock，
+这条验收就变成空话。
 
 ### 22.9 Skill 与 MCP 的关系
 
@@ -3528,11 +3567,21 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
     准入靠 admin 权限 + 审计留痕，而不是靠过滤器。
 19. **技能上传的请求体上限与管理员门禁共用同一把密钥**。放宽只对带对 `X-Admin-Key` 的请求
     生效（§22.11），所以密钥一旦泄露，放宽后的上限也一起泄露了——两者是同一条信任边界。
+20. **`isolated` 隔离档未实现**。当前只有 `fast` 档：同一容器内先后两次执行之间理论上存在残留
+    （临时目录、环境变量、打开的文件）。需要强隔离的走 `isolated` 档，它当前**未实现**
+    （skill-service §8.4、§18 第 1 条）。
+21. **K8s 清单没有在真实集群上验证过**。`deploy/k8s/` 里的清单是照着文档逐条写的，但开发它的
+    机器上没有 Docker 也没有集群——镜像构建、探针在镜像里跑通、NetworkPolicy 是否真的拦住
+    出向、headless + `round_robin` 是否真把流量摊到多个 Pod 上，这四条**都未实测**。
+    `deploy/k8s/README.md` 里列了部署前要先跑的三条自检命令。
+22. **studio 服务侧是参考实现，不是生产就绪的服务**。`services/studio/` 做完了契约、进程隔离、
+    超时、截断、限流、去重、优雅停机这些**功能**，但没有指标导出、没有结构化日志、没有多档隔离。
+    它的定位是「把调用侧与服务侧的边界钉清楚，并让验收能真的跑起来」，不是直接上生产。
 
 ### 22.13 实施要点与验收标准
 
-> 勾选状态对应 **Phase 1（Skill 基础）**的落地情况。标 **Phase 3** 的是 studio 与
-> `skill_exec` 那部分，本轮不实现。
+> 勾选状态对应 **Phase 1（Skill 基础）**与 **Phase 3（studio 与 `skill_exec`）**的落地情况。
+> 每条后面标了钉它的测试；Phase 3 的测试在 `tests/test_studio_*.py`。
 
 - [x] `POST /api/skills` 建一个技能 → `skill` 表出现对应行，`content_hash` 与
       `sha256(body ‖ 各资源摘要)` 一致，`version=1`，`origin='manual'`。
@@ -3564,21 +3613,50 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
 - [x] `skill_resource` 读一个二进制资源 → 只回「文件名 + 大小 + mimeType」，**不把字节塞进
       上下文**。
 - [x] 上传一个路径含 `..` 或绝对路径的资源 → **400，不入库**。
+- [x] `skill_exec` 执行 `scripts/extract.py` → 脚本**在 studio 容器里**跑，web_agent 进程内
+      **没有**起任何子进程（用 `ps` 或打桩断言验证）；退出码与 stdout 原样回灌给模型。
+      → `tests/test_studio_e2e.py::test_skill_exec_runs_script_in_studio_and_feeds_model`
+      （真 studio + 真 uvicorn + 假 LLM；脚本的 stdout 确实进了下一轮请求的
+      `role=tool` 消息）
+- [x] `skill_exec` 的脚本参数含 `../../etc/passwd` 式的路径 → **在 web_agent 侧**就被拒，
+      请求**根本没发出去** studio（studio 收到的一定是已校验过的脚本正文）。
+      → `tests/test_studio_e2e.py::test_rejected_request_never_reaches_studio`
+      （断言 studio 的 `Exec` 调用次数**一次都没涨**）；另有路径穿越、不在 `scripts/`
+      目录、argv 含 `..` 三种形态
+- [x] 脚本超时 → studio 侧超时生效、进程组被杀；web_agent 侧拿到 `status=TIMEOUT` 与 `error`
+      说明，节点**不失败**（§17.5 口径）。
+      → `tests/test_studio_e2e.py::test_script_timeout_is_reported_not_hung`
+- [x] studio 不可达 → **服务启动失败**（§22.8.6），而不是运行期才炸。
+      → `tests/test_studio_startup.py`
+- [x] `STUDIO_EXEC_REQUIRED=false` 且 studio 不可达 → 服务正常启动，但 `skill_exec` 不注册，
+      且保存期拒绝把 `skill_exec` 加进 Agent 的工具白名单。
+      → `tests/test_studio_startup.py`、`tests/test_skill_exec.py::test_skill_exec_cannot_be_configured_when_unavailable`
+- [x] 脚本 stdout 里包含一段敏感内容 → 回灌前**被 §20 的过滤器拦下**（与 MCP 工具结果同一
+      条规矩，§21.10 第 4 条）。
+      → `tests/test_tool_output_sensitive.py::test_sensitive_script_output_is_not_fed_back`、
+      `test_sensitive_script_stderr_is_not_fed_back`（**失败的**脚本其 stderr 同样要筛——
+      它照样会被回灌）
+- [x] **gRPC 成功 ≠ 脚本成功**：脚本自己 `exit 3` 是 `completed` + `exit_code=3`，不是错误；
+      stderr 原样回灌给模型，节点**不失败**。
+      → `tests/test_studio_e2e.py::test_nonzero_exit_is_fed_back_to_model_not_a_service_error`
+- [x] **studio 挂掉时节点不失败**：工具失败（`ok=false`）+「连不上 studio」回灌给模型，run 正常结束。
+      → `tests/test_studio_e2e.py::test_studio_down_fails_tool_but_run_survives`
+- [x] **studio 忙不过来时节点不失败**：`RESOURCE_EXHAUSTED` 翻译成「忙不过来」回灌给模型。
+      → `tests/test_studio_e2e.py::test_studio_saturated_is_reported_to_model`
+- [x] **技能没绑到 Agent 上**：白名单校验先于存在性检查，拒绝且不泄露「它在不在」；
+      请求同样没发出去。
+      → `tests/test_studio_e2e.py::test_skill_not_bound_to_agent_is_refused`
+- [x] **契约在仓库里只有一份**：proto 文件 + 本文档 §22.8.3 + `docs/skill-service.md` §5 三处
+      逐字一致，CI 脚本比对不一致时打印 diff 并非 0 退出。
+      → `scripts/check_proto_contract.py`、`tests/test_proto_contract.py`
+- [x] **优雅停机先摘 readiness 再 drain**（§13.5）：停机时在跑的执行能跑完，不是被腰斩。
+      → `tests/test_studio_service.py::test_graceful_shutdown_drops_readiness_before_draining`
 - [ ] 技能声明了 `allowed-tools: get_quarter_metrics`，而 Agent 白名单里没有它 → 后台给出
       **提示**，但保存**不被拒**。（字段已存、授权仍只看 `agent.tools`；后台提示 UI 待做，
       见第 17 条。）
-- [ ] `skill_exec` 执行 `scripts/extract.py` → 脚本**在 studio 容器里**跑，web_agent 进程内
-      **没有**起任何子进程（用 `ps` 或打桩断言验证）；退出码与 stdout 原样回灌给模型。**Phase 3**
-- [ ] `skill_exec` 的脚本参数含 `../../etc/passwd` 式的路径 → **在 web_agent 侧**就被拒，
-      请求**根本没发出去** studio（studio 收到的一定是已校验过的脚本正文）。**Phase 3**
-- [ ] 脚本超时 → studio 侧超时生效、进程组被杀；web_agent 侧拿到 `status=TIMEOUT` 与 `error`
-      说明，节点**不失败**（§17.5 口径）。**Phase 3**
-- [ ] studio 不可达 → **服务启动失败**（§22.8.6），而不是运行期才炸。**Phase 3**
-- [ ] `STUDIO_EXEC_REQUIRED=false` 且 studio 不可达 → 服务正常启动，但 `skill_exec` 不注册，
-      且保存期拒绝把 `skill_exec` 加进 Agent 的工具白名单。**Phase 3**
-- [ ] 脚本 stdout 里包含一段敏感内容 → 回灌前**被 §20 的过滤器拦下**（与 MCP 工具结果同一
-      条规矩，§21.10 第 4 条）。**Phase 3**
 - [x] 全量回归不破：现有 166 个测试（§17.9）全绿（Phase 1 落地后为 **358 passed / 19 skipped**）。
+      → Phase 3 落地时全量 **546 passed / 22 skipped**（Phase 2 终态是 428 / 19，新增 118 个
+      studio 相关用例；22 个跳过里 3 个是本机没有 bash 与没有 `/proc` 导致的）。
 
 ---
 

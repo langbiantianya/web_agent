@@ -716,24 +716,55 @@ K8s Deployment（无状态）：
 
 ## 19. 实施清单
 
-- [ ] `proto/webagent/studio/v1/studio.proto` 落库，生成 Python 桩代码；
-- [ ] web_agent 与 studio **共用同一份 proto**（不各抄一份）；
-- [ ] studio 服务：gRPC server + 并发闸门 + 队列 + 执行器；
-- [ ] 进程隔离：新 session、独立 cwd、env 白名单、`killpg` + `wait` 回收；
-- [ ] 超时：墙钟定时器 + `RLIMIT_CPU` 双保险；
-- [ ] 输出：stdout/stderr 双上限，**超限停止读取**；
-- [ ] 容器加固：只读 rootfs、非 root、drop capabilities、no-new-privileges、seccomp、
+> 勾选状态对应 **Phase 3** 的落地情况。每一项后面标了它落在哪、或者钉它的测试。
+
+- [x] `proto/webagent/studio/v1/studio.proto` 落库，生成 Python 桩代码；
+      → `proto/webagent/studio/v1/studio.proto`、`webagent/studio/v1/`
+- [x] web_agent 与 studio **共用同一份 proto**（不各抄一份）；
+      → 生成代码放在仓库根的 `webagent/` 包下，包名就是 proto 里的 `package`，生成代码
+      一行都不用改；studio 容器不装 web_agent 的代码，只拷这个目录即可。
+- [x] studio 服务：gRPC server + 并发闸门 + 队列 + 执行器；
+      → `services/studio/server.py`、`services/studio/executor.py`
+- [x] 进程隔离：新 session、独立 cwd、env 白名单、`killpg` + `wait` 回收；
+      → `services/studio/executor.py`（`start_new_session` / `CREATE_NEW_PROCESS_GROUP`）
+- [x] 超时：墙钟定时器 + `RLIMIT_CPU` 双保险；
+      → `services/studio/executor.py::_collect`、`_make_preexec`
+- [x] 输出：stdout/stderr 双上限，**超限停止读取**；
+      → `services/studio/executor.py::_drain`
+- [x] 容器加固：只读 rootfs、非 root、drop capabilities、no-new-privileges、seccomp、
       `pidsLimit`、零凭据、禁出网；
-- [ ] 启动巡检：杀残留进程；
-- [ ] 优雅停机：先摘 readiness，再 drain；
+      → `deploy/k8s/studio-deployment.yaml`、`deploy/k8s/studio-networkpolicy.yaml`。
+      **未在真实集群上验证**（见 `deploy/k8s/README.md`）。
+- [x] 启动巡检：杀残留进程；
+      → `services/studio/reaper.py`（按 cwd 在临时目录里判定，不按进程名匹配；没有 `/proc`
+      的平台上不做任何事）
+- [x] 优雅停机：先摘 readiness，再 drain；
+      → `services/studio/__init__.py::serve`。
+      **踩过的坑**：取消 grpc 的 `wait_for_termination()` 那个 task 会让后面的
+      `server.stop()` 直接抛 CancelledError——停机路径整个断掉。已修，见
+      `tests/test_studio_service.py::test_graceful_shutdown_drops_readiness_before_draining`。
 - [ ] 指标与结构化日志（含 `stdout_digest`，**不含**输出内容）；
-- [ ] `Health` 实现（便宜、可做探针）；
-- [ ] 镜像：python / bash / node 三运行时，版本固定；
-- [ ] 部署：Deployment（replicas ≥ 2）+ **headless Service** + 探针；
-- [ ] web_agent 侧：gRPC 客户端、启动期兼容性检查、`skill_exec` 工具、路径校验；
-- [ ] 契约一致性 CI 检查（proto 文件 vs 两份文档里的片段）；
-- [ ] 故障注入测试：studio 被 kill / 超时 / OOM / 队列满；
-- [ ] 端到端：web_agent → studio → 模型收到结果（主设计 §22.13 的验收项）。
+      → **未做**：studio 侧现在只有普通日志，没有 Prometheus 指标端点，也没有结构化
+      输出格式。`stdout_digest` 已经在契约里（`ExecResponse.stdout_digest`），但没有
+      围绕它建指标。
+- [x] `Health` 实现（便宜、可做探针）；
+      → `services/studio/server.py::Health`；探针命令行工具 `services/studio/healthcheck.py`
+      （用 exec 探针而不是 K8s 的 `grpc:` 探针——后者发的是标准健康检查协议，跟契约对不上）
+- [x] 镜像：python / bash / node 三运行时，版本固定；
+      → `services/studio/Dockerfile`。**未实测构建**（本机没有 Docker）。
+- [x] 部署：Deployment（replicas ≥ 2）+ **headless Service** + 探针；
+      → `deploy/k8s/`。客户端侧的 `round_robin` 策略见 `app/core/studio.py::channel_target`
+      与 `STUDIO_EXEC_LB_POLICY`——**Service 与客户端两边配对才有意义**，单改一边等于没改。
+- [x] web_agent 侧：gRPC 客户端、启动期兼容性检查、`skill_exec` 工具、路径校验；
+      → `app/core/studio.py`、`app/core/skill_exec.py`、`app/core/tools.py`
+- [x] 契约一致性 CI 检查（proto 文件 vs 两份文档里的片段）；
+      → `scripts/check_proto_contract.py`、`tests/test_proto_contract.py`
+- [x] 故障注入测试：studio 被 kill / 超时 / OOM / 队列满；
+      → studio 被 kill、超时、输出超限（OOM 的近亲）、队列满：
+      `tests/test_studio_e2e.py`。**OOM 本身没测**——容器级 OOM killer 的行为要在真实
+      容器里才测得到（§13.2 的 137 退出码判定也还没实现）。
+- [x] 端到端：web_agent → studio → 模型收到结果（主设计 §22.13 的验收项）。
+      → `tests/test_studio_e2e.py`（真 studio + 真 uvicorn + 假 LLM）
 
 ---
 

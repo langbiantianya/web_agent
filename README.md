@@ -228,6 +228,57 @@ location /api/ {
 
 ---
 
+## 脚本执行：studio（V4 Phase 3）
+
+技能包里的 `scripts/` 下的脚本**不在 web_agent 进程内跑**——它们经 gRPC 交给一个
+**独立的 studio 服务**执行。理由是安全：脚本内容来自数据库，而数据库里的技能
+可能来自导入的 zip；让它在主服务进程里跑，等于让不可信代码住在持有
+`SECRET_KEY` 和数据库口令的进程里。
+
+### 本地起一个
+
+```bash
+# 方式一：Docker（推荐，运行时齐全）
+docker compose -f deploy/docker-compose.yml up -d --build
+
+# 方式二：本地进程（需要 python / bash / node 都在 PATH 里）
+python -m services.studio            # 监听 0.0.0.0:9000
+STUDIO_PORT=9001 python -m services.studio
+```
+
+然后在 web_agent 的 `.env` 里写：
+
+```bash
+STUDIO_EXEC_ADDR=127.0.0.1:9000
+STUDIO_EXEC_REQUIRED=true
+```
+
+### 两种「不可用」不是一回事
+
+| 情形 | 结果 |
+| --- | --- |
+| `STUDIO_EXEC_ADDR` 为空 | **未启用脚本执行**：服务正常启动，`skill_exec` 工具**根本不注册**（配置期也拒） |
+| 地址有 + 连不上 + `STUDIO_EXEC_REQUIRED=true` | **服务启动失败**——studio 是部署的一个组成部分，它挂了说明部署不完整 |
+| 地址有 + 连不上 + `STUDIO_EXEC_REQUIRED=false` | 正常启动，`skill_exec` 不注册，只记一条警告 |
+
+本地开发不想装 studio 时，把 `STUDIO_EXEC_ADDR` 留空即可。
+
+### 三道校验全在 web_agent 侧
+
+技能白名单、脚本路径格式、argv 形态——**校验不过的请求根本没发出去**，studio 收到的
+永远是已校验过的内容。studio **不认识技能**：它只认「一段脚本 + 一组参数」。
+
+### 部署
+
+见 [`deploy/k8s/README.md`](deploy/k8s/README.md)。两条容易踩的：
+
+1. **Service 必须是 headless 的**，客户端也要用 `round_robin`（默认就是）——普通
+   ClusterIP Service + gRPC 长连接 = 永远只有一个 Pod 在干活，而且看不出任何异常。
+2. **零凭据**：studio 容器里不注入任何 env、不挂任何 secret。它执行的是模型指定的
+   代码，容器里只要有一个能用的 key，一次提示词注入就够了。
+
+---
+
 ## 功能验证台（`web/index.html`）
 
 启动服务后直接访问根路径即可。它不是演示动画，而是一个能**把每个环节都点一遍**的验证台：
@@ -793,12 +844,12 @@ app/
 ├── main.py                 # FastAPI 工厂 + 生命周期 + 统一异常处理
 ├── api/
 │   ├── deps.py             # get_db / ticket 校验 / 断点解析
-│   └── routes/             # agent / workflow / conversation / run / auth / health / tool
+│   └── routes/             # agent / workflow / conversation / run / auth / health / tool / skill / mcp
 ├── core/
 │   ├── bus.py              # BusBackend Protocol + InMemory / Redis Pub-Sub 两种实现
 │   ├── event_log.py        # EventLog Protocol + Db / Redis Stream 两种回放源
 │   ├── expr.py             # 条件表达式解析与求值（手写递归下降，不用 eval，V3）
-│   ├── tools.py            # 内置工具注册表：工具名即契约（now / calc，V3.2）
+│   ├── tools.py            # 内置工具注册表：工具名即契约（now / calc / skill_resource / skill_exec）
 │   ├── arith.py            # 算术求值（ast 白名单遍历，不用 eval，V3.2）
 │   ├── lease.py            # RunLease Protocol + Noop / Redis 两种归属租约与取消频道
 │   ├── redis_client.py     # Redis 连接生命周期 + 实例标识 + 键布局（V2）
@@ -812,9 +863,24 @@ app/
 │   ├── checkpoint.py       # LangGraph checkpointer：审批暂停点（Redis / SQLite 双实现，V3.1）
 │   ├── workflow_def.py     # definition 解析与校验
 │   ├── crypto.py           # api_key 加解密
-│   └── ticket.py           # SSE ticket 签发与校验
+│   ├── ticket.py           # SSE ticket 签发与校验
+│   ├── skill_*.py          # 技能：路径校验 / 解析 / 读取 / 注入 / 导入导出（V4 Phase 1）
+│   ├── mcp/                # MCP 客户端：传输 / 连接管理 / 工具目录 / 命名映射（V4 Phase 2）
+│   ├── studio.py           # studio 的 gRPC 客户端 + 启动期兼容性检查（V4 Phase 3）
+│   ├── studio_context.py   # 每次工具调用的执行上下文（request_id 的来源）
+│   └── skill_exec.py       # skill_exec 的三道调用侧校验 + 结果格式化
 ├── models/  repo/  schemas/  config/  cache.py
 │   └── run_approval.py     # 审批记录模型（V3.1）
+services/studio/           # studio 服务侧**参考实现**（V4 Phase 3）：gRPC server + 进程隔离
+│   ├── executor.py         #   执行器：进程组 / 超时 / 输出截断 / env 白名单
+│   ├── server.py           #   gRPC servicer：并发闸门 / 队列 / 去重窗口
+│   ├── reaper.py           #   启动巡检：杀残留进程
+│   ├── healthcheck.py      #   探针命令行工具
+│   └── Dockerfile          #   镜像：python / bash / node 三运行时，零凭据，非 root
+proto/webagent/studio/v1/  # studio 的 gRPC 契约（**仓库里只有这一份**）
+webagent/studio/v1/        # 由上面的 proto 生成的桩代码（不手改）
+deploy/k8s/                # studio 的 Deployment + headless Service + NetworkPolicy
+deploy/docker-compose.yml  # 本地起一个 studio
 web/index.html           # 功能验证台（单文件，无依赖）
 web/admin.html           # 后台管理（单文件，无依赖，访问 /admin）
 scripts/seed.py          # 演示数据
@@ -824,6 +890,8 @@ scripts/sensitive_eval_corpus.py  # 敏感词过滤器的**留出**语料（从�
 scripts/train_sensitive.py    # 敏感词模型训练：K 折选阈值 + 评估 + 导出 + 用自己的语料重训
 scripts/eval_sensitive.py     # 敏感词模型评测：留出集 / 训练集 / 仓库文档三角度 + 阈值曲线
 scripts/check_docstrings.py  # docstring 覆盖检查
+scripts/gen_proto.py         # 从 proto 生成桩代码（幂等）
+scripts/check_proto_contract.py  # 契约一致性检查：proto 文件 vs 两份文档里的片段
 alembic/  tests/  docs/design.md  docs/performance.md  docs/skill-service.md
 ```
 
@@ -839,6 +907,8 @@ alembic/  tests/  docs/design.md  docs/performance.md  docs/skill-service.md
 - **V3.2**（已完成）：Agent 工具调用闭环（内置工具注册表 + 执行 → 回灌 → 继续；工具名即契约，配置期校验）
 - **V3.3**（已完成）：PostgreSQL 适配（改一行 `DATABASE_URL` 即可切库，业务代码零改动；PG 会话时区用 libpq `options` 启动参数钉成 UTC）
 - **V3.4**（已完成）：敏感词前置过滤（字符 n-gram + 逻辑回归，纯 numpy；命中 422 拒绝且不落库；模型缺失即启动失败）
-- **V4**（设计已完成，Phase 1 与 Phase 2 已落地）：MCP 工具（把 V3.2 的工具来源从「代码内置」扩到「MCP 服务器」，闭环本身不改；stdio + Streamable HTTP，工具名 `mcp__<server>__<tool>`）——设计文档 §21；Skill 指令包（内容与资源**全部存数据库**，`SKILL.md` 降为导出格式；正文进系统提示词、资源按需读；脚本经 gRPC 交给**独立的 studio 容器**执行，不在本进程起子进程）——设计文档 §22，服务侧见 [`docs/skill-service.md`](docs/skill-service.md)；可观测性（OpenTelemetry 链路追踪、token 成本统计）
+- **V4**（设计已完成，三个 Phase 全部落地）：MCP 工具（把 V3.2 的工具来源从「代码内置」扩到「MCP 服务器」，闭环本身不改；stdio + Streamable HTTP，工具名 `mcp__<server>__<tool>`）——设计文档 §21；Skill 指令包（内容与资源**全部存数据库**，`SKILL.md` 降为导出格式；正文进系统提示词、资源按需读；脚本经 gRPC 交给**独立的 studio 容器**执行，不在本进程起子进程）——设计文档 §22，服务侧见 [`docs/skill-service.md`](docs/skill-service.md)；可观测性（OpenTelemetry 链路追踪、token 成本统计）
 
-  V4 分三个 Phase 落地：**Phase 1（Skill 基础）已完成**——三张表 + CRUD + 导入导出 + 审计 + 提示词注入 + `skill_resource` 工具 + 提示词预览；**Phase 2（MCP 客户端）已完成**——`mcp_server` / `mcp_tool` 两张表 + stdio 与 Streamable HTTP 两种传输 + `mcp__<server>__<tool>` 命名分发 + 工具目录快照 + 管理员专属的服务器管理接口；Phase 3（studio + `skill_exec`）待做
+  V4 分三个 Phase 落地：**Phase 1（Skill 基础）已完成**——三张表 + CRUD + 导入导出 + 审计 + 提示词注入 + `skill_resource` 工具 + 提示词预览；**Phase 2（MCP 客户端）已完成**——`mcp_server` / `mcp_tool` 两张表 + stdio 与 Streamable HTTP 两种传输 + `mcp__<server>__<tool>` 命名分发 + 工具目录快照 + 管理员专属的服务器管理接口；**Phase 3（studio + `skill_exec`）已完成**——proto 契约（仓库里只有一份）+ gRPC 客户端 + `skill_exec` 工具 + 三道调用侧校验 + 启动期兼容性检查 + studio 服务侧参考实现（`services/studio/`）+ 端到端与故障注入 + 部署产物（`deploy/k8s/`）
+
+  Phase 3 之后仍未做的：V4 的可观测性（OpenTelemetry 链路追踪、token 成本统计）、`isolated` 隔离档、studio 的指标与结构化日志。
