@@ -15,7 +15,8 @@ SKIP_DIRS = {".venv", "__pycache__", ".pytest_cache", ".mypy_cache"}
 
 # 默认扫描范围。这里必须显式列出根目录下的模块（run.py）——只扫子目录的话，
 # 根目录新增的脚本会静默漏检，"0 缺失"就成了假象。
-DEFAULT_TARGETS = ["run.py", "app", "scripts", "alembic", "tests"]
+# services/ 是 studio 参考实现，同样要扫：它是交付物，不是"顺便写的工具"。
+DEFAULT_TARGETS = ["run.py", "app", "scripts", "alembic", "tests", "services"]
 
 
 def _expand(target: str) -> list[Path]:

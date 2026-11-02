@@ -59,6 +59,7 @@ def fake_client(monkeypatch):
     holder: dict[str, _FakeClient] = {}
 
     def _install(client: _FakeClient) -> _FakeClient:
+        """装上假客户端并返回它，便于用例链式取用。"""
         holder["client"] = client
         monkeypatch.setattr(studio_mod, "configure_studio", lambda _addr: client)
         return client

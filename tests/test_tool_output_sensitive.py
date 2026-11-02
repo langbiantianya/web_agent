@@ -90,6 +90,7 @@ def fake_studio(monkeypatch):
     from app.core import skill_exec as skill_exec_mod
 
     def _install(studio: _FakeStudio) -> _FakeStudio:
+        """装上假 studio 并返回它，便于用例链式取用。"""
         monkeypatch.setattr(skill_exec_mod, "get_studio_client", lambda: studio)
         return studio
 

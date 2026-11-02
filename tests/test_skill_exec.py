@@ -73,6 +73,7 @@ def fake_studio(monkeypatch):
     holder: dict[str, _FakeStudio] = {}
 
     def _install(studio: _FakeStudio) -> _FakeStudio:
+        """装上假 studio 并返回它，便于用例链式取用。"""
         holder["studio"] = studio
         monkeypatch.setattr(skill_exec_mod, "get_studio_client", lambda: studio)
         return studio
