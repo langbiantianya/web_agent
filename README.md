@@ -2,7 +2,8 @@
 
 基于 **Python + FastAPI + MySQL / PostgreSQL** 的多 Agent 协作服务。Agent 与 Workflow 全部以数据形式存在数据库里，**新增/调整 Agent 不需要改代码、不需要发版**；多个 Agent 按 Workflow 协作产出结果，前端通过 SSE 接收流式输出，**断线可续传**。
 
-完整设计见 [`docs/design.md`](docs/design.md)。
+完整设计见 [`docs/design.md`](docs/design.md)。技能脚本执行服务（studio 容器）的设计见
+[`docs/skill-service.md`](docs/skill-service.md)。
 
 ---
 
@@ -823,7 +824,7 @@ scripts/sensitive_eval_corpus.py  # 敏感词过滤器的**留出**语料（从�
 scripts/train_sensitive.py    # 敏感词模型训练：K 折选阈值 + 评估 + 导出 + 用自己的语料重训
 scripts/eval_sensitive.py     # 敏感词模型评测：留出集 / 训练集 / 仓库文档三角度 + 阈值曲线
 scripts/check_docstrings.py  # docstring 覆盖检查
-alembic/  tests/  docs/design.md  docs/performance.md
+alembic/  tests/  docs/design.md  docs/performance.md  docs/skill-service.md
 ```
 
 ---
@@ -838,4 +839,4 @@ alembic/  tests/  docs/design.md  docs/performance.md
 - **V3.2**（已完成）：Agent 工具调用闭环（内置工具注册表 + 执行 → 回灌 → 继续；工具名即契约，配置期校验）
 - **V3.3**（已完成）：PostgreSQL 适配（改一行 `DATABASE_URL` 即可切库，业务代码零改动；PG 会话时区用 libpq `options` 启动参数钉成 UTC）
 - **V3.4**（已完成）：敏感词前置过滤（字符 n-gram + 逻辑回归，纯 numpy；命中 422 拒绝且不落库；模型缺失即启动失败）
-- **V4**（设计已完成，待实现）：MCP 工具（把 V3.2 的工具来源从「代码内置」扩到「MCP 服务器」，闭环本身不改；stdio + Streamable HTTP，工具名 `mcp__<server>__<tool>`）——设计文档 §21；Skill 指令包（`SKILL.md` + 资源文件，正文进系统提示词、资源按需读；脚本经 gRPC 交给**独立的 studio 容器**执行，不在本进程起子进程）——设计文档 §22；可观测性（OpenTelemetry 链路追踪、token 成本统计）
+- **V4**（设计已完成，待实现）：MCP 工具（把 V3.2 的工具来源从「代码内置」扩到「MCP 服务器」，闭环本身不改；stdio + Streamable HTTP，工具名 `mcp__<server>__<tool>`）——设计文档 §21；Skill 指令包（`SKILL.md` + 资源文件，正文进系统提示词、资源按需读；脚本经 gRPC 交给**独立的 studio 容器**执行，不在本进程起子进程）——设计文档 §22，服务侧见 [`docs/skill-service.md`](docs/skill-service.md)；可观测性（OpenTelemetry 链路追踪、token 成本统计）

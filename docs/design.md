@@ -891,7 +891,8 @@ web_agent/
   结果回灌 → 模型继续、配置期校验未注册的工具名（**已完成**，见 §17）
 - **V4**：MCP 工具——把 V3.2 的工具来源从「代码内置」扩到「MCP 服务器」，闭环本身不用改
   （**设计已完成**，见 §21）；Skill 指令包——可复用的领域知识，正文进提示词、资源按需读，
-  脚本经 gRPC 交给**独立的 studio 容器**执行、不在本进程起子进程（**设计已完成**，见 §22）；
+  脚本经 gRPC 交给**独立的 studio 容器**执行、不在本进程起子进程（**设计已完成**，见 §22，
+  服务侧见 [`docs/skill-service.md`](skill-service.md)）；
   可观测性（OpenTelemetry 链路追踪、token 成本统计）
 
 ---
@@ -2931,6 +2932,10 @@ if not target.is_relative_to(root):   # 逃出技能目录 → 拒绝
 
 ### 22.8 脚本执行：gRPC 调用 studio 容器
 
+> 本节是**调用侧**视角。studio 服务自身的内部架构、进程隔离、沙箱加固、资源治理、运行时
+> 矩阵、部署扩缩、威胁模型与测试策略，见独立文档
+> **[`docs/skill-service.md`](skill-service.md)**。
+
 #### 22.8.1 为什么不在 web_agent 进程里跑脚本
 
 前面的边界里写着「不执行 `scripts/` 里的脚本」，理由是「执行任意代码需要沙箱」。现在这个
@@ -2964,33 +2969,50 @@ if not target.is_relative_to(root):   # 逃出技能目录 → 拒绝
 syntax = "proto3";
 package webagent.studio.v1;
 
-// studio：技能脚本的受限执行容器
+// studio：技能脚本的受限执行容器。
+// 调用侧视角见主设计文档 §22.8。
 service Studio {
   // 执行一个脚本，同步返回结果
   rpc Exec(ExecRequest) returns (ExecResponse);
-  // 探活：容器是否就绪
+  // 探活：容器是否就绪、装了哪些运行时
   rpc Health(HealthRequest) returns (HealthResponse);
 }
 
+// 执行结果的状态。
+// **gRPC 层面成功 ≠ 脚本成功**：脚本自己 exit 1 是 COMPLETED + exit_code=1，
+// 业务失败要靠 status/exit_code 表达，不能用 gRPC status 报错——调用方要把
+// 失败信息回灌给模型（主设计 §17.5）。
+enum ExecStatus {
+  EXEC_STATUS_UNSPECIFIED = 0;
+  EXEC_STATUS_COMPLETED = 1;  // 脚本跑完了，exit_code 有意义
+  EXEC_STATUS_FAILED = 2;      // 没能跑起来（运行时缺失、启动失败、非法脚本）
+  EXEC_STATUS_TIMEOUT = 3;     // 超时被杀
+  EXEC_STATUS_LIMITED = 4;     // 被资源限制杀掉（OOM / cgroup 限额）
+  EXEC_STATUS_CANCELLED = 5;   // 调用方取消
+}
+
 message ExecRequest {
-  string skill = 1;          // 技能 code（审计用）
-  string script = 2;         // 相对技能根目录的脚本路径，如 scripts/extract.py
-  string language = 3;       // python | bash | node
-  string content = 4;        // 脚本正文（web_agent 读出来随请求带上）
-  repeated string argv = 5;  // 传给脚本的参数
-  string stdin = 6;          // 标准输入
-  int64 timeout_ms = 7;      // 执行时限（调用方给上限，studio 侧还要再收一道）
-  string run_id = 8;         // 关联一次 run（审计）
-  string node_id = 9;        // 关联一个节点
+  string skill = 1;           // 技能 code（审计用）
+  string script = 2;          // 相对技能根目录的脚本路径，如 scripts/extract.py
+  string language = 3;        // python | bash | node
+  string content = 4;         // 脚本正文（调用方读出来随请求带上）
+  repeated string argv = 5;   // 传给脚本的参数
+  string stdin = 6;           // 标准输入（文本）
+  int64 timeout_ms = 7;       // 执行时限；服务端还会再按上限收一道
+  string run_id = 8;          // 关联一次 run（审计）
+  string node_id = 9;         // 关联一个节点
+  string request_id = 10;     // 追踪键；同键在去重窗口内不重复执行
 }
 
 message ExecResponse {
-  int32 exit_code = 1;       // 脚本退出码；-1 表示「压根没跑起来」
-  string stdout = 2;
-  string stderr = 3;
-  bool truncated = 4;         // 输出被截断
-  int64 duration_ms = 5;
-  string error = 6;           // 服务级错误（不是脚本的 stderr）
+  ExecStatus status = 1;
+  int32 exit_code = 2;        // 仅 COMPLETED 时有意义
+  string stdout = 3;
+  string stderr = 4;
+  bool truncated = 5;          // 输出被截断
+  int64 duration_ms = 6;
+  string error = 7;            // 服务级错误说明（不是脚本的 stderr）
+  string stdout_digest = 8;    // stdout 的 sha256，用于审计与去重
 }
 
 message HealthRequest {}
@@ -2998,9 +3020,22 @@ message HealthRequest {}
 message HealthResponse {
   bool ready = 1;
   string version = 2;
-  repeated string languages = 3;   // 容器里可用的运行时
+  repeated LanguageInfo language_info = 3;
+  int32 max_concurrency = 4;
+  string profile = 5;          // 当前隔离档：fast | isolated
+}
+
+message LanguageInfo {
+  string name = 1;             // python
+  string version = 2;          // 3.11.9
+  repeated string extensions = 3;   // .py
 }
 ```
+
+> **服务侧展开见 [`docs/skill-service.md`](skill-service.md)**：容器的内部架构、执行生命周期、
+> 进程隔离、沙箱加固、资源治理、运行时矩阵、部署扩缩、威胁模型、测试策略。
+> 两份文档贴的 proto 片段**必须逐字一致**——proto 文件在仓库里只有一份
+> （`proto/webagent/studio/v1/studio.proto`），CI 会校验一致性。
 
 字段上的四个决定：
 
@@ -3013,7 +3048,9 @@ message HealthResponse {
 - **`error` 与 `stderr` 分开**：脚本自己写到 stderr 的是「脚本的输出」，原样回灌给模型；
   `error` 是「studio 这次没跑起来」（超时、容器被杀、镜像缺运行时）。两者语义不同，模型
   看到它们的反应也不同。
-- **`exit_code = -1`**：区分「脚本跑了但退出码是 -1」与「压根没跑起来」。
+- **`ExecStatus` 独立于 gRPC status**：脚本自己 `exit 1` 是 `COMPLETED` + `exit_code=1`，
+  **不是** gRPC 错误。理由见 §17.5 的口径——业务失败要回灌给模型，服务不可用才是 gRPC
+  错误。gRPC status 只用来表达 studio 自己的问题。
 
 #### 22.8.4 新增的内置工具：`skill_exec`
 
@@ -3210,7 +3247,7 @@ studio 容器是这条边界的**唯一**实现手段，它必须满足（§22.8
 10. **`allowed-tools` 不做自动授权**，只做提示（§22.9）。
 11. **`skill_resource` 只能读技能目录内的文件**，读不了部署里别处的文件——本项目没有通用的
     文件读取工具（模型侧的文件访问能力为零）。
-12. **脚本语言受 studio 镜像限制**。镜像里装了哪几种运行时就是哪几种，`HealthResponse.languages`
+12. **脚本语言受 studio 镜像限制**。镜像里装了哪几种运行时就是哪几种，`HealthResponse.language_info`
     把它报出来；配置期按它校验（§22.8.8），但**新增语言要改 studio 镜像**。
 
 ### 22.13 实施要点与验收标准
@@ -3234,7 +3271,7 @@ studio 容器是这条边界的**唯一**实现手段，它必须满足（§22.8
       **没有**起任何子进程（用 `ps` 或打桩断言验证）；退出码与 stdout 原样回灌给模型。
 - [ ] `skill_exec` 的脚本参数含 `../../etc/passwd` 式的路径 → **在 web_agent 侧**就被拒，
       请求**根本没发出去** studio（studio 收到的一定是已校验过的脚本正文）。
-- [ ] 脚本超时 → studio 侧超时生效、进程组被杀；web_agent 侧拿到 `exit_code=-1` 与 `error`
+- [ ] 脚本超时 → studio 侧超时生效、进程组被杀；web_agent 侧拿到 `status=TIMEOUT` 与 `error`
       说明，节点**不失败**（§17.5 口径）。
 - [ ] studio 不可达 → **服务启动失败**（§22.8.6），而不是运行期才炸。
 - [ ] `STUDIO_EXEC_REQUIRED=false` 且 studio 不可达 → 服务正常启动，但 `skill_exec` 不注册，
