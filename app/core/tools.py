@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from app.config.settings import settings
 from app.core.arith import ArithError, evaluate
 from app.core.errors import BadRequestError
 
@@ -133,6 +134,48 @@ async def _calc(args: dict) -> str:
     return str(value)
 
 
+async def _skill_resource(args: dict) -> str:
+    """读取技能包里的资源文件。
+
+    内置工具的 handler **拿不到 Agent 参数**，所以「本 Agent 绑了哪些技能」
+    是从 contextvars 里取的（:mod:`app.core.skill_context`）。没有那层限制的话，
+    模型就能读任意技能的任意资源——技能之间是可以互相引用的，A 技能引了 B 技能
+    的口径，B 的内容也就该只对绑了 B 的 Agent 可见。
+
+    Args:
+        args: 需含 ``skill``（技能 code）与 ``path``（资源相对路径）。
+
+    Returns:
+        资源文本；二进制资源返回一段说明而不是字节。
+
+    Raises:
+        ToolCallError: 参数缺失、技能未授权或不存在、路径非法。异常由
+            :func:`execute_tool` 统一转成「失败结果」回灌给模型。
+    """
+    from app.config.db import SessionLocal
+    from app.core.skill_context import current_skill_codes
+    from app.core.skill_reader import read_skill_resource
+
+    code = args.get("skill")
+    path = args.get("path")
+    if not isinstance(code, str) or not code.strip():
+        raise ToolCallError("缺少 skill 参数（技能 code）")
+    if not isinstance(path, str) or not path.strip():
+        raise ToolCallError("缺少 path 参数（资源相对路径）")
+
+    async with SessionLocal() as db:
+        ok, text = await read_skill_resource(
+            db,
+            code.strip(),
+            path,
+            allowed_codes=current_skill_codes(),
+            max_chars=settings.tool_result_max_chars,
+        )
+    if not ok:
+        raise ToolCallError(text)
+    return text
+
+
 # 注册表：名字 → 工具。**加新工具只需要在这里加一条**。
 TOOL_REGISTRY: dict[str, ToolSpec] = {
     "now": ToolSpec(
@@ -162,6 +205,30 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             "additionalProperties": False,
         },
         handler=_calc,
+    ),
+    "skill_resource": ToolSpec(
+        name="skill_resource",
+        description=(
+            "读取技能包里的资源文件（references/ 下的参考文档、assets/ 下的附件）。"
+            "技能正文里提到「详见 references/xxx」但没给内容时，用它按需取。"
+            "只能读本 Agent 已绑定技能的资源。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "skill": {
+                    "type": "string",
+                    "description": "技能 code（不是显示名），例如 financial-report",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "资源相对路径，例如 references/METRICS.md",
+                },
+            },
+            "required": ["skill", "path"],
+            "additionalProperties": False,
+        },
+        handler=_skill_resource,
     ),
 }
 
