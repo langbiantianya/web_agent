@@ -108,6 +108,23 @@ class Settings(BaseSettings):
     # 8 MB 压缩后的技能包解压后能到 50 MB（见 skill_import 的上限）。
     skill_upload_max_bytes: int = 8 * 1024 * 1024
 
+    # ---- studio 脚本执行（V4，§22.8.8）----
+    # studio 的 gRPC 地址（如 ``studio:9000``）。
+    # **为空 = 未启用脚本执行**：这时 ``skill_exec`` 工具根本不注册，配置期直接拒。
+    # 注意它与「配置了但连不上」是**两件事**：后者在 ``studio_exec_required``
+    # 为真时会让服务**启动失败**（§22.8.6）。
+    studio_exec_addr: str = ""
+    # studio 连不上时是否启动失败。默认 true——studio 是部署的一个组成部分，
+    # 它挂了说明部署不完整，让问题在部署时暴露，而不是在用户的一次 run 里暴露。
+    # 本地开发可以显式设 false。
+    studio_exec_required: bool = True
+    # 单次执行的默认时限（毫秒）。
+    studio_exec_timeout_ms: int = 30000
+    # 模型能请求的时限**上限**（毫秒）。写死在配置里，模型改不了。
+    studio_exec_max_timeout_ms: int = 60000
+    # 脚本正文长度上限（字符）。
+    studio_exec_max_script_chars: int = 200000
+
     # ---- LLM ----
     openai_timeout: float = 120.0
 
