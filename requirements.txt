@@ -40,6 +40,15 @@ cryptography>=42.0
 # 训练与推理都只用它，几十秒就能重训一次模型。
 numpy>=1.26
 
+# ---- MCP 客户端（V4）----
+# 官方 MCP Python SDK。本项目只做**客户端**：stdio 与 Streamable HTTP 两种传输。
+# 2.x 起 FastMCP 改名 MCPServer、streamablehttp_client 改名 streamable_http_client，
+# pydantic 字段改成 snake_case（input_schema / is_error / structured_content）。
+mcp>=2.3,<3
+# MCP SDK 2.x 用的 httpx 分支（与本项目自己用的 httpx 1.x 并存）。它是 mcp 的
+# 传递依赖，但 Streamable HTTP 传输**直接 import 它**，所以显式写出来。
+httpx2>=2.10
+
 # ---- 测试 ----
 pytest>=8.0
 pytest-asyncio>=0.24

@@ -80,8 +80,25 @@ class Settings(BaseSettings):
     # 审计里记的调用方标识。
     admin_author: str = "admin"
 
-    # ---- 技能（V4，§22.6）----
-    # 技能正文进提示词的总字符预算。超出预算的技能**整个不注入**（宁少勿半）。
+    # ---- MCP（V4，§21）----
+    # **stdio 的命令白名单前缀**。为空 = 禁止注册 stdio 类型的 MCP 服务器
+    # （fail-closed）：注册一台 stdio 服务器就是「允许执行某个程序」，默认开着
+    # 等于没有门（§21.10 第 ① 条）。
+    # 环境变量写法：MCP_ALLOWED_COMMAND_PREFIXES='["/usr/bin/","/opt/tools/"]'
+    mcp_allowed_command_prefixes: list[str] = []
+    # **出网主机白名单**。为空 = 允许任意主机（但私网网段仍然默认拒绝）。
+    mcp_allowed_hosts: list[str] = []
+    # 是否放行私网 / 回环 / 链路本地地址。默认 False —— Streamable HTTP 的 URL
+    # 来自配置，是 SSRF 面（§21.10 第 ② 条）。
+    mcp_allow_private_networks: bool = False
+    # 连接空闲多久后主动关闭。stdio 子进程必须回收，否则会攒出一堆僵尸进程。
+    mcp_idle_timeout_sec: int = 300
+    # 单台服务器的并发调用上限（信号量）。避免把远端打爆。
+    mcp_max_concurrency: int = 4
+    # 连接失败时的重试次数（指数退避）。
+    mcp_max_retries: int = 3
+
+    # ---- 技能（V4，§22.6）----    # 技能正文进提示词的总字符预算。超出预算的技能**整个不注入**（宁少勿半）。
     skill_prompt_budget: int = 4000
     # 一次最多注入几个技能。
     skill_max_count: int = 5
