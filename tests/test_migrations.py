@@ -24,6 +24,9 @@ EXPECTED_TABLES = {
     "run_step",
     "run_event",
     "run_approval",
+    "skill",
+    "skill_resource",
+    "skill_revision",
 }
 
 
