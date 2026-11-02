@@ -25,6 +25,26 @@ from app.config.settings import settings
 from app.core.errors import UnauthorizedError
 
 
+def admin_key_matches(key: str | None) -> bool:
+    """密钥是否正确。**不抛异常**。
+
+    给「需要判断而不是拒绝」的调用点用——比如请求体上限中间件：它要在**没有**
+    管理员密钥时把放宽的上限撤掉，而不是回一个 401（那个 401 是路由层的活）。
+
+    未配置 ``ADMIN_KEY`` 时一律返回 False：没有配置就没有管理员。
+
+    Args:
+        key: 调用方带上来的密钥。
+
+    Returns:
+        密钥正确返回 True。
+    """
+    configured = settings.admin_key
+    if not configured or not key:
+        return False
+    return secrets.compare_digest(key, configured)
+
+
 def require_admin(key: str | None) -> str:
     """校验管理员密钥。
 

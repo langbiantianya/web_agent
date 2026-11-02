@@ -22,7 +22,7 @@ from app import __version__
 from app.api.router import api_router
 from app.config.db import dispose_engine
 from app.config.settings import settings
-from app.core.body_limit import BodySizeLimitMiddleware
+from app.core.body_limit import BodySizeLimitMiddleware, scope_header
 from app.core.checkpoint import close_checkpointer, init_checkpointer
 from app.core.errors import AppError
 from app.core.orchestrator import get_orchestrator, recover_stale_runs
@@ -40,6 +40,17 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _admin_elevated(scope) -> bool:
+    """这个请求是否可以享受「按路径放宽」的请求体上限。
+
+    判据是**管理员密钥正确**——放宽后的上限只在调用方已经是管理员时生效，
+    未认证流量在同一条路径上仍然受全局上限约束。
+    """
+    from app.core.admin import admin_key_matches
+
+    return admin_key_matches(scope_header(scope, "x-admin-key"))
 
 
 @asynccontextmanager
@@ -165,8 +176,15 @@ def create_app() -> FastAPI:
 
     # 请求体上限先挂（它在外层），CORS 后挂（它更外层）——这样 413 响应也带得上
     # CORS 头，前端才读得到错误体而不是一个「跨域失败」。
+    #
+    # 技能上传路径有专属上限（V4，§22.10），但**只对带对管理员密钥的请求生效**：
+    # 技能包导入与资源上传需要比全局 2 MB 更大的请求体，而无条件放宽等于给
+    # 未认证的调用方开了一个 8 MB 的缓冲口。
     app.add_middleware(
-        BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes
+        BodySizeLimitMiddleware,
+        max_bytes=settings.max_request_bytes,
+        path_limits={"/api/skills": settings.skill_upload_max_bytes},
+        elevated_allowed=_admin_elevated,
     )
     app.add_middleware(
         CORSMiddleware,

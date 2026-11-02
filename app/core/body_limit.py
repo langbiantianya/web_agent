@@ -8,11 +8,19 @@
 **为什么是纯 ASGI 而不是 BaseHTTPMiddleware**：``BaseHTTPMiddleware`` 会把整个
 请求体读进内存再往下传，对「限制请求体」这件事来说正好是反的；纯 ASGI 版本
 可以在自己这一层就把大小卡住。
+
+**按路径放宽（V4 技能上传）**：技能包导入与资源上传需要比全局上限更大的请求体，
+否则「单资源 5 MB」这条领域约束在 HTTP 上根本够不着（全局上限是 2 MB）。
+但放宽不能无条件生效——那等于给未认证的调用方开了一个几十 MB 的缓冲口。
+所以放宽有条件：路径命中 ``path_limits`` **且**请求带着正确的管理员密钥。
+未认证的调用方在同一条路径上仍然只受全局上限约束，防护面没有变大。
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -33,22 +41,54 @@ class BodySizeLimitMiddleware:
     内存占用因此被 ``max_bytes`` 兜住：超限时立刻停读并拒绝，不再累积。
     """
 
-    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        max_bytes: int,
+        path_limits: Mapping[str, int] | None = None,
+        elevated_allowed: Callable[[Scope], bool] | None = None,
+    ) -> None:
         """绑定应用与上限。
 
         Args:
             app: 下一个 ASGI 应用。
             max_bytes: 允许的最大请求体字节数。小于等于 0 表示不限制。
+            path_limits: 路径前缀 → 该路径专属的上限。只在 ``elevated_allowed``
+                判定通过时生效；没判定通过就用全局 ``max_bytes``。
+            elevated_allowed: 判断某个请求是否可以享受放宽上限。拿不到就一律
+                按全局上限处理（fail-closed）。
         """
         self.app = app
         self.max_bytes = max_bytes
+        self.path_limits = dict(path_limits or {})
+        self.elevated_allowed = elevated_allowed
+
+    def _limit_for(self, scope: Scope) -> int:
+        """算这个请求实际适用的上限。
+
+        Args:
+            scope: ASGI scope。
+
+        Returns:
+            允许的最大请求体字节数。
+        """
+        path = scope.get("path") or ""
+        for prefix, limit in self.path_limits.items():
+            if path.startswith(prefix):
+                if self.elevated_allowed is None or not self.elevated_allowed(scope):
+                    # 没带对密钥就别想用放宽的上限——防护面不能因为加了个功能
+                    # 就变大。
+                    return self.max_bytes
+                return limit
+        return self.max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """ASGI 入口。"""
         if scope["type"] != "http" or scope.get("method") not in _BODY_METHODS:
             await self.app(scope, receive, send)
             return
-        if self.max_bytes <= 0:
+        max_bytes = self._limit_for(scope)
+        if max_bytes <= 0:
             await self.app(scope, receive, send)
             return
 
@@ -59,7 +99,7 @@ class BodySizeLimitMiddleware:
             if message["type"] == "http.disconnect":
                 break
             body += message.get("body", b"")
-            if len(body) > self.max_bytes:
+            if len(body) > max_bytes:
                 too_large = True
                 break
             if not message.get("more_body", False):
@@ -68,7 +108,7 @@ class BodySizeLimitMiddleware:
         if too_large:
             logger.warning(
                 "请求体超过上限（%s 字节），已拒绝：%s %s",
-                self.max_bytes,
+                max_bytes,
                 scope.get("method"),
                 scope.get("path"),
             )
@@ -76,7 +116,7 @@ class BodySizeLimitMiddleware:
                 status_code=413,
                 content={
                     "code": "payload_too_large",
-                    "message": f"请求体过大（上限 {self.max_bytes} 字节）",
+                    "message": f"请求体过大（上限 {max_bytes} 字节）",
                 },
             )
             await response(scope, receive, send)
@@ -96,4 +136,21 @@ class BodySizeLimitMiddleware:
         await self.app(scope, _replay, send)
 
 
-__all__ = ["BodySizeLimitMiddleware"]
+def scope_header(scope: Any, name: str) -> str | None:
+    """从 ASGI scope 里取一个请求头。
+
+    Args:
+        scope: ASGI scope。
+        name: 头名（大小写不敏感）。
+
+    Returns:
+        头的值；没有则是 ``None``。
+    """
+    raw = name.encode("latin-1").lower()
+    for key, value in scope.get("headers", []):
+        if key.lower() == raw:
+            return value.decode("latin-1")
+    return None
+
+
+__all__ = ["BodySizeLimitMiddleware", "scope_header"]

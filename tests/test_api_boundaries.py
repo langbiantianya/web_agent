@@ -67,6 +67,57 @@ def test_normal_body_is_accepted(client: TestClient):
     assert r.status_code == 201, f"应 201，实际 {r.status_code}：{r.text[:200]}"
 
 
+# ------------------------------------------- 技能上传路径的放宽上限（V4）
+
+
+def test_skill_upload_path_keeps_global_limit_without_admin_key(
+    client: TestClient,
+):
+    """技能上传路径**没带管理员密钥**时，仍受全局上限约束。
+
+    放宽是为了让「单资源 5 MB」这条领域约束在 HTTP 上够得着。但放宽不能
+    无条件生效——那等于给未认证的调用方开了一个 8 MB 的缓冲口。
+    """
+    payload = {
+        "code": "big-skill",
+        "description": "太大",
+        "body": "A" * (settings.max_request_bytes + 1024),
+    }
+    r = client.post("/api/skills", json=payload)
+    assert r.status_code == 413, f"应 413，实际 {r.status_code}：{r.text[:200]}"
+    assert r.json()["code"] == "payload_too_large"
+
+
+def test_skill_upload_path_allows_admin_bigger_body(client: TestClient):
+    """带对管理员密钥时，技能上传路径用专属上限。
+
+    技能正文本身有 20000 字符的领域上限，所以这里发一个**介于全局上限与
+    技能上限之间**的请求体：它过得了全局上限（会 413），但在管理员路径上
+    应该被受理到领域校验那一层（400 而不是 413）。
+    """
+    payload = {
+        "code": "big-admin",
+        "description": "太大",
+        "body": "A" * (settings.max_request_bytes + 1024),
+    }
+    r = client.post(
+        "/api/skills", json=payload, headers={"X-Admin-Key": settings.admin_key}
+    )
+    # 过了请求体限制，撞上领域层的正文长度上限 → 400
+    assert r.status_code == 400, f"应 400，实际 {r.status_code}：{r.text[:200]}"
+
+
+def test_skill_upload_path_with_wrong_key_keeps_global_limit(client: TestClient):
+    """密钥不对 → 拿不到放宽后的上限。"""
+    payload = {
+        "code": "big-wrong",
+        "description": "太大",
+        "body": "A" * (settings.max_request_bytes + 1024),
+    }
+    r = client.post("/api/skills", json=payload, headers={"X-Admin-Key": "wrong"})
+    assert r.status_code == 413, f"应 413，实际 {r.status_code}：{r.text[:200]}"
+
+
 # --------------------------------------------------------------- 字段长度
 
 

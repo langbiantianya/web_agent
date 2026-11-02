@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     skill_prompt_budget: int = 4000
     # 一次最多注入几个技能。
     skill_max_count: int = 5
+    # 技能上传（导入 zip / 上传资源）的请求体上限。**只对带对管理员密钥的
+    # 请求生效**——没带密钥的调用方在同一条路径上仍受 max_request_bytes 约束，
+    # 免得加个功能就把未认证流量能撑的缓冲口放大了。
+    # 8 MB 压缩后的技能包解压后能到 50 MB（见 skill_import 的上限）。
+    skill_upload_max_bytes: int = 8 * 1024 * 1024
 
     # ---- LLM ----
     openai_timeout: float = 120.0

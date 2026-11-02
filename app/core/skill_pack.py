@@ -25,6 +25,18 @@ _NAME_MAX = 64
 _DESCRIPTION_MAX = 1024
 _COMPATIBILITY_MAX = 500
 
+# 领域层的硬上限（V4，§22.10）。
+#
+# - 正文 20000 字符：正文会整段进提示词，超了就是白烧 token；
+# - 单资源 5 MB：一个技能包里放张图或一个数据集就到这个量级；
+# - 单技能资源总量 20 MB：防止一个技能把库的存储吃光。
+#
+# 注意这些是**领域上限**，与传输层无关：HTTP 上传还要过请求体上限中间件
+# （见 ``settings.skill_upload_max_bytes``），那一条更严。
+MAX_BODY_CHARS = 20_000
+MAX_RESOURCE_BYTES = 5 * 1024 * 1024
+MAX_SKILL_RESOURCE_BYTES = 20 * 1024 * 1024
+
 # 自己维护的「扩展名 → mime / 是不是文本」表。
 #
 # 刻意不只靠 ``mimetypes``：那张表随平台而变（Windows 会把注册表里的映射合进来），

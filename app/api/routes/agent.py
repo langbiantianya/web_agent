@@ -12,6 +12,7 @@ from app.core.tools import known_tool_names, normalize_tool_names
 from app.repo.agent_repo import agent_repo
 from app.repo.skill_repo import skill_repo
 from app.schemas.agent import AgentCreate, AgentOut, AgentUpdate
+from app.schemas.skill import SkillPromptPreviewOut
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -164,6 +165,50 @@ async def update_agent(code: str, payload: AgentUpdate, db: DbSession) -> AgentO
         raise NotFoundError(f"Agent 不存在：{code}")
     all_codes, _ = await _skill_code_sets(db)
     return _to_out(agent, all_codes)
+
+
+@router.get("/{code}/prompt-preview", response_model=SkillPromptPreviewOut)
+async def preview_agent_prompt(code: str, db: DbSession) -> SkillPromptPreviewOut:
+    """生效提示词预览：system_prompt + 各技能正文，与实际发给模型的逐字一致。
+
+    存在的意义是「后台看到的」必须等于「模型收到的」：技能正文是**独立的一条**
+    system 消息（§22.6），如果它被拼进 ``system_prompt`` 字段，运营在这个
+    接口里看到的内容就会和真正发出去的不一样。
+
+    这里复用编排器**同一套**拼装逻辑（``Orchestrator._build_skill_plan``），
+    而不是另写一遍——两处各写一遍的话，预览迟早会和实际发出去的不一致。
+    """
+    agent = await agent_repo.get_by_code(db, code)
+    if agent is None:
+        raise NotFoundError(f"Agent 不存在：{code}")
+
+    from app.core.orchestrator import get_orchestrator
+
+    plan = await get_orchestrator()._build_skill_plan(agent)
+    skills = await skill_repo.list_by_codes(
+        db, known_skill_codes(agent.skills) or []
+    )
+    by_code = {s.code: s for s in skills}
+    return SkillPromptPreviewOut(
+        agent_code=code,
+        system_prompt=agent.system_prompt,
+        skills=[
+            {
+                "code": c,
+                "name": by_code[c].name if c in by_code else c,
+                "version": by_code[c].version if c in by_code else 0,
+                "enabled": bool(by_code[c].enabled) if c in by_code else False,
+                "injected": c in plan.codes,
+                "body": by_code[c].body if c in by_code else "",
+            }
+            for c in (known_skill_codes(agent.skills) or [])
+        ],
+        messages=[
+            {"role": "system", "content": agent.system_prompt},
+            *plan.messages,
+        ],
+        skipped=[{"code": c, "reason": r} for c, r in plan.skipped],
+    )
 
 
 @router.delete("/{code}", status_code=204)
