@@ -22,6 +22,9 @@ class Agent(Base):
     temperature: Mapped[float] = mapped_column(sa.DECIMAL(3, 2), default=0.70)
     max_tokens: Mapped[int] = mapped_column(sa.Integer, default=2048)
     tools: Mapped[list | None] = mapped_column(JSON_COL, default=None)
+    # 绑定的技能 code 列表（V4，§22.5）。**不是**工具白名单：技能只贡献指令
+    # 正文，模型能不能调工具仍然只看 tools。
+    skills: Mapped[list | None] = mapped_column(JSON_COL, default=None)
     extra_params: Mapped[dict | None] = mapped_column(JSON_COL, default=None)
     enabled: Mapped[bool] = mapped_column(sa.SmallInteger, default=1)
     version: Mapped[int] = mapped_column(sa.Integer, default=1)
