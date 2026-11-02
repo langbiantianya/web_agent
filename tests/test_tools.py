@@ -196,16 +196,20 @@ def test_known_tool_names_is_lenient_on_read():
     assert known_tool_names("不是列表") is None
 
 
-def test_build_openai_tools_expands_and_skips_unknown():
-    """展开成 schema；未注册的名字跳过并告警（兜底，不抛）。"""
-    tools = build_openai_tools(["calc"])
+async def test_build_openai_tools_expands_and_skips_unknown():
+    """展开成 schema；未注册的名字跳过并告警（兜底，不抛）。
+
+    V4 起它是**异步**的：MCP 工具的 schema 要从 ``mcp_tool`` 快照里取，
+    那需要一次数据库查询（§21.13）。
+    """
+    tools = await build_openai_tools(["calc"])
     assert tools is not None
     assert len(tools) == 1
     assert tools[0]["function"]["name"] == "calc"
     # 全是未知名 → 没有可用工具 → None（而不是空数组）
-    assert build_openai_tools(["不存在"]) is None
-    assert build_openai_tools(None) is None
-    assert build_openai_tools([]) is None
+    assert await build_openai_tools(["不存在"]) is None
+    assert await build_openai_tools(None) is None
+    assert await build_openai_tools([]) is None
 
 
 # --------------------------------------------------------------- 工具执行
