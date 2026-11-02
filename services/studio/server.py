@@ -82,6 +82,14 @@ class StudioService(studio_pb2_grpc.StudioServicer):
         """设置就绪标志——优雅停机时先摘 readiness 再 drain（§13.5）。"""
         self._ready = ready
 
+    @property
+    def ready(self) -> bool:
+        """当前是否就绪。
+
+        优雅停机一开始就是 False——负载均衡据此把流量摘走（§13.5 第 1 步）。
+        """
+        return self._ready
+
     # --------------------------------------------------------------- Exec
 
     async def Exec(self, request, context):  # noqa: N802 - gRPC 的命名

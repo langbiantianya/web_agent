@@ -334,3 +334,80 @@ async def test_bash_script_runs(stub):
     )
     assert resp.status == studio_pb2.EXEC_STATUS_COMPLETED
     assert "bash-ok" in resp.stdout
+
+
+async def test_graceful_shutdown_drops_readiness_before_draining():
+    """停机顺序：**先摘 readiness，再 drain**（§13.5）。
+
+    顺序反了的话，drain 永远结束不了——新的请求会一直进来，因为这个实例
+    还「就绪」着，负载均衡还在往这儿送。
+
+    复现：让一个脚本跑着（占着执行），触发停机，在 drain 期间探一次活——
+    必须是 ``ready=false``，而那个执行要能**跑完**（不是被腰斩）。
+    """
+    from services.studio import serve
+
+    port = _free_port()
+    config = StudioConfig(
+        host="127.0.0.1",
+        port=port,
+        languages=("python",),
+        max_concurrency=2,
+        max_queue=2,
+        max_timeout_ms=10000,
+        drain_timeout_sec=10,
+    )
+    stop = asyncio.Event()
+    svc = StudioService(config)
+    task = asyncio.create_task(serve(config, stop_event=stop, service=svc))
+
+    channel = grpc.aio.insecure_channel(f"127.0.0.1:{port}")
+    try:
+        stub = studio_pb2_grpc.StudioStub(channel)
+        # 等它起来
+        deadline = asyncio.get_running_loop().time() + 10
+        while True:
+            try:
+                await stub.Health(studio_pb2.HealthRequest(), timeout=1)
+                break
+            except grpc.aio.AioRpcError:
+                if asyncio.get_running_loop().time() > deadline:
+                    raise AssertionError("studio 没起来")
+                await asyncio.sleep(0.05)
+
+        # 挂一个要跑 2 秒的执行
+        async def _run_exec():
+            """包一层协程：grpc.aio 的调用对象不能直接进 create_task。"""
+            return await stub.Exec(
+                studio_pb2.ExecRequest(
+                    skill="demo",
+                    script="scripts/run.py",
+                    language="python",
+                    content="import time\ntime.sleep(2)\nprint('done')\n",
+                    timeout_ms=10000,
+                    request_id="graceful-1",
+                ),
+                timeout=30,
+            )
+
+        running = asyncio.create_task(_run_exec())
+        await asyncio.sleep(0.3)
+
+        # 触发停机
+        stop.set()
+
+        # drain 期间：readiness 必须已经摘掉（先摘 readiness，再 drain）
+        await asyncio.sleep(0.3)
+        assert svc.ready is False, "停机时必须先摘 readiness 再 drain"
+
+        # 在跑的执行要能跑完，不能被腰斩
+        resp = await running
+        assert resp.status == studio_pb2.EXEC_STATUS_COMPLETED
+        assert "done" in resp.stdout
+
+        # serve() 自己要退出
+        await asyncio.wait_for(task, timeout=15)
+    finally:
+        await channel.close()
+        if not task.done():
+            task.cancel()
