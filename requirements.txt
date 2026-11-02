@@ -49,6 +49,13 @@ mcp>=2.3,<3
 # 传递依赖，但 Streamable HTTP 传输**直接 import 它**，所以显式写出来。
 httpx2>=2.10
 
+# ---- studio gRPC（V4，§22.8）----
+# 技能脚本的执行通道。web_agent 是**客户端**，studio 是**服务端**。
+# grpcio-tools 只在生成桩代码时用（scripts/gen_proto.py），运行期不需要——
+# 但它也带着 protoc 本体，装着省事。
+grpcio>=1.60
+grpcio-tools>=1.60
+
 # ---- 测试 ----
 pytest>=8.0
 pytest-asyncio>=0.24

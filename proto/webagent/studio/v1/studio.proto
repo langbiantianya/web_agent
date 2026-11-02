@@ -1,0 +1,64 @@
+syntax = "proto3";
+package webagent.studio.v1;
+
+// studio：技能脚本的受限执行容器。
+// 调用侧视角见主设计文档 §22.8。
+service Studio {
+  // 执行一个脚本，同步返回结果
+  rpc Exec(ExecRequest) returns (ExecResponse);
+  // 探活：容器是否就绪、装了哪些运行时
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// 执行结果的状态。
+// **gRPC 层面成功 ≠ 脚本成功**：脚本自己 exit 1 是 COMPLETED + exit_code=1，
+// 业务失败要靠 status/exit_code 表达，不能用 gRPC status 报错——调用方要把
+// 失败信息回灌给模型（主设计 §17.5）。
+enum ExecStatus {
+  EXEC_STATUS_UNSPECIFIED = 0;
+  EXEC_STATUS_COMPLETED = 1;  // 脚本跑完了，exit_code 有意义
+  EXEC_STATUS_FAILED = 2;      // 没能跑起来（运行时缺失、启动失败、非法脚本）
+  EXEC_STATUS_TIMEOUT = 3;     // 超时被杀
+  EXEC_STATUS_LIMITED = 4;     // 被资源限制杀掉（OOM / cgroup 限额）
+  EXEC_STATUS_CANCELLED = 5;   // 调用方取消
+}
+
+message ExecRequest {
+  string skill = 1;           // 技能 code（审计用）
+  string script = 2;          // 相对技能根目录的脚本路径，如 scripts/extract.py
+  string language = 3;        // python | bash | node
+  string content = 4;         // 脚本正文（调用方读出来随请求带上）
+  repeated string argv = 5;   // 传给脚本的参数
+  string stdin = 6;           // 标准输入（文本）
+  int64 timeout_ms = 7;       // 执行时限；服务端还会再按上限收一道
+  string run_id = 8;          // 关联一次 run（审计）
+  string node_id = 9;         // 关联一个节点
+  string request_id = 10;     // 追踪键；同键在去重窗口内不重复执行
+}
+
+message ExecResponse {
+  ExecStatus status = 1;
+  int32 exit_code = 2;        // 仅 COMPLETED 时有意义
+  string stdout = 3;
+  string stderr = 4;
+  bool truncated = 5;          // 输出被截断
+  int64 duration_ms = 6;
+  string error = 7;            // 服务级错误说明（不是脚本的 stderr）
+  string stdout_digest = 8;    // stdout 的 sha256，用于审计与去重
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool ready = 1;
+  string version = 2;
+  repeated LanguageInfo language_info = 3;
+  int32 max_concurrency = 4;
+  string profile = 5;          // 当前隔离档：fast | isolated
+}
+
+message LanguageInfo {
+  string name = 1;             // python
+  string version = 2;          // 3.11.9
+  repeated string extensions = 3;   // .py
+}
