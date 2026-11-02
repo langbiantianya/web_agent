@@ -787,7 +787,7 @@ web_agent/
 │   │       ├── run.py             # 含审批接口（V3.1）
 │   │       ├── tool.py            # 内置工具目录（V3.2）
 │   │       ├── mcp.py             # MCP 服务器管理（V4，见 §21）
-│   │       ├── skill.py           # Skill 目录与提示词预览（V4，见 §22）
+│   │       ├── skill.py           # Skill CRUD / 导入导出 / 提示词预览（V4，见 §22）
 │   │       ├── studio.py          # studio 状态（V4，见 §22.8）
 │   │       ├── auth.py
 │   │       └── health.py
@@ -803,7 +803,7 @@ web_agent/
 │   │   │   ├── transport.py       # stdio / Streamable HTTP 两种传输
 │   │   │   ├── catalog.py         # tools/list 发现与快照落库
 │   │   │   └── mapping.py         # CallToolResult → (ok, text)
-│   │   ├── skill.py               # Skill 索引与提示词拼装（V4，见 §22）
+│   │   ├── skill.py               # Skill 读取与提示词拼装（V4，见 §22）
 │   │   ├── studio.py              # studio gRPC 客户端（V4，脚本执行，见 §22.8）
 │   │   ├── arith.py               # 算术求值（ast 白名单，不用 eval，V3.2）
 │   │   ├── checkpoint.py          # LangGraph checkpointer（审批暂停点，V3.1）
@@ -833,7 +833,7 @@ web_agent/
 │   │   ├── run_approval.py        # 审批记录（V3.1）
 │   │   ├── mcp_server.py          # MCP 服务器注册表（V4，§21）
 │   │   ├── mcp_tool.py            # MCP 工具目录快照（V4，§21）
-│   │   └── skill.py               # Skill 索引（V4，§22）
+│   │   ├── skill.py               # Skill 定义（V4，§22）
 │   ├── schemas/                   # Pydantic 请求/响应模型
 │   ├── repo/                      # 数据访问
 │   │   ├── __init__.py
@@ -846,7 +846,7 @@ web_agent/
 │   │   ├── run_approval_repo.py   # 审批待办与决策（V3.1）
 │   │   ├── mcp_server_repo.py     # MCP 服务器 CRUD（V4，§21）
 │   │   ├── mcp_tool_repo.py       # 工具目录快照（V4，§21）
-│   │   └── skill_repo.py          # Skill 索引与绑定（V4，§22）
+│   │   ├── skill_repo.py          # Skill / 资源 / 修订历史（V4，§22）
 │   ├── cache.py                   # Agent/Workflow 内存 LRU 缓存
 │   └── config/
 │       ├── __init__.py
@@ -855,12 +855,6 @@ web_agent/
 ├── web/
 │   ├── index.html                 # 功能验证台（单文件，无构建步骤）
 │   └── admin.html                 # 后台管理页（单文件，无构建步骤）
-├── skills/                        # Skill 目录（V4，§22）
-│   └── <skill-name>/
-│       ├── SKILL.md               # 必需：frontmatter + 指令正文
-│       ├── scripts/               # 可选：可执行脚本（交给 studio 容器，§22.8）
-│       ├── references/            # 可选：参考资料（模型按需读）
-│       └── assets/                # 可选：模板与静态资源
 ├── proto/                         # gRPC 契约（V4，§22.8）
 │   └── webagent/studio/v1/
 │       └── studio.proto           # service Studio { Exec, Health }
@@ -890,7 +884,8 @@ web_agent/
 - **V3.2**：Agent 工具调用闭环——内置工具注册表（`now` / `calc`）、模型要工具 → 执行 →
   结果回灌 → 模型继续、配置期校验未注册的工具名（**已完成**，见 §17）
 - **V4**：MCP 工具——把 V3.2 的工具来源从「代码内置」扩到「MCP 服务器」，闭环本身不用改
-  （**设计已完成**，见 §21）；Skill 指令包——可复用的领域知识，正文进提示词、资源按需读，
+  （**设计已完成**，见 §21）；Skill 指令包——可复用的领域知识，**内容与资源全部存数据库**
+  （与「配置即数据」一致，`SKILL.md` 降为导出格式）、正文进提示词、资源按需读，
   脚本经 gRPC 交给**独立的 studio 容器**执行、不在本进程起子进程（**设计已完成**，见 §22，
   服务侧见 [`docs/skill-service.md`](skill-service.md)）；
   可观测性（OpenTelemetry 链路追踪、token 成本统计）
@@ -2659,21 +2654,23 @@ Agent 的 `system_prompt` 是一个字符串。它能装下一段话，装不下
 流程——因为流程往往要带参考资料、模板、示例、脚本，一段纯文本装不下，而且没法被多个 Agent
 复用、没法单独版本管理。
 
-本轮引入 **Skill（Agent Skills）**：一个**目录**，里面有一个 `SKILL.md`（元数据 + 指令正文）
-和若干可选的资源文件。运维把目录放进部署里，Agent 绑定它，指令正文进系统提示词，资源文件按需读，
-`scripts/` 里的脚本交给**独立的 studio 容器**执行。
+本轮引入 **Skill（Agent Skills）**：一个**技能包**，里面有一个 `SKILL.md`（元数据 + 指令正文）
+和若干可选的资源文件。技能包**存放在数据库里**（§22.4），Agent 绑定它，指令正文进系统提示词，
+资源文件按需读，`scripts/` 里的脚本交给**独立的 studio 容器**执行。
 
 本轮要做的：
 
 - **Skill 包格式**：采用 [Agent Skills 开放格式](https://agentskills.io/)（`SKILL.md` + YAML
-  frontmatter + `references/` `assets/` 等目录），保证技能目录能直接别处拷来用；
+  frontmatter + `references/` `assets/` 等目录），保证技能包能通过导入 / 导出与别处互通；
 - **绑定关系**：Agent 绑定技能，绑定表落 DB；
 - **正文注入**：绑定技能的 `SKILL.md` 正文作为独立的一条 system 消息追加在 Agent 自己的
   system prompt 之后；
 - **资源读取**：内置工具 `skill_resource`，让模型按需读 `references/` 里的文件；
 - **脚本执行**：内置工具 `skill_exec`，把 `scripts/` 里的脚本交给**独立的 studio 容器**执行
   （gRPC 调用，见 §22.8）——**不在 web_agent 进程里起子进程**；
-- **索引**：启动扫描 + 手工刷新，DB 存索引与绑定。
+- **配置与治理**：技能内容与资源全部存数据库（§22.4、§22.5），后台可增删改查，**仅管理员
+  可写**，正文变更全部审计留痕；支持从目录或 zip **批量导入**（§22.11）；
+- **绑定关系**：Agent 绑定技能，绑定表落 DB。
 
 本轮**不做**：
 
@@ -2681,26 +2678,32 @@ Agent 的 `system_prompt` 是一个字符串。它能装下一段话，装不下
 | --- | --- |
 | **在 web_agent 进程内执行脚本**（`subprocess`） | 执行任意代码需要沙箱。沙箱是**studio 容器**，不是 web_agent 进程——理由见 §22.8.1 |
 | **模型自己挑技能**（动态发现） | 本项目是**配置驱动**的编排服务：运维明确知道每个节点需要哪些技能。模型「挑技能」这一步没有决策价值，只有一类新的失败模式（挑错、挑漏） |
-| **技能的上传/编辑界面** | 技能是**代码仓库里的一部分**（§22.4），它进不进得来取决于部署权限，不取决于后台按钮 |
-| **技能的版本发布与回滚** | 目录进 git，版本管理交给 git，不另造一套 |
-| **多租户技能隔离** | `skills/` 目录是部署级的。租户隔离要先把目录布局与租户模型对齐（§22.12 第 8 条） |
+| **多租户技能隔离** | 技能表目前没有租户维度。租户隔离要先把「数据模型 ↔ 租户模型」对齐，而本项目目前没有租户概念（§1.1 的目标是单部署多 Agent） |
 
 ### 22.2 Skill 是什么
 
-一个技能目录：
+一个技能包**导出后**的目录形态（§22.4：这是导出格式，不是存储格式）：
 
 ```text
-skills/
-└── financial-report/
-    ├── SKILL.md          # 必需：frontmatter + 指令正文
-    ├── scripts/          # 可选：可执行脚本（交给 studio 容器跑，§22.8）
-    │   └── extract.py
-    ├── references/       # 可选：参考资料（按需读）
-    │   ├── METRICS.md
-    │   └── TAX_RULES.md
-    └── assets/           # 可选：模板、表格、示例
-        └── report-template.xlsx
+financial-report/                    # 导出时的目录名 = skill.code
+├── SKILL.md          # 必需：frontmatter + 指令正文
+├── scripts/          # 可选：可执行脚本（交给 studio 容器跑，§22.8）
+│   └── extract.py
+├── references/       # 可选：参考资料（按需读）
+│   ├── METRICS.md
+│   └── TAX_RULES.md
+└── assets/           # 可选：模板、表格、示例
+    └── report-template.xlsx
 ```
+
+**它怎么落在数据库里**：
+
+| 目录里的东西 | 数据库里的位置 |
+| --- | --- |
+| 目录名 | `skill.code` |
+| `SKILL.md` 的 frontmatter | `skill` 表的若干列（§22.5） |
+| `SKILL.md` 的正文 | `skill.body` |
+| `scripts/` `references/` `assets/` 里的文件 | `skill_resource` 表，一行一个文件 |
 
 `SKILL.md` = YAML frontmatter + Markdown 正文：
 
@@ -2729,7 +2732,7 @@ frontmatter 字段（规范原样，本项目**不做扩展**——扩展字段�
 
 | 字段 | 必填 | 约束 | 本项目的用法 |
 | --- | --- | --- | --- |
-| `name` | 是 | 1–64 字符，小写字母/数字/连字符，不以连字符开头结尾，不连续连字符，**须与目录名一致** | 同时是 DB 里的 `skill.code` |
+| `name` | 是 | 1–64 字符，小写字母/数字/连字符，不以连字符开头结尾，不连续连字符 | 同时是 DB 里的 `skill.code`（两者必须一致） |
 | `description` | 是 | 1–1024 字符 | 后台列表展示 + 「这技能干什么用」的说明 |
 | `license` | 否 | 许可证名或文件名 | 原样存 |
 | `compatibility` | 否 | ≤ 500 字符 | 原样存（如「需要内网访问」） |
@@ -2739,9 +2742,11 @@ frontmatter 字段（规范原样，本项目**不做扩展**——扩展字段�
 正文部分**没有格式约束**，写什么都行。本项目额外加两条自己的约束（§22.6）：正文长度有上限，
 引用文件路径只能相对技能根目录。
 
-> **为什么沿用开放格式而不是自定义一套**：技能目录里的 `SKILL.md` 是**可移植资产**——别人写的
-> 技能目录能直接拷进 `skills/` 就用，本项目也能把别人的目录拷走。格式一旦自定义，生态就用不上了。
-> 参考实现见 [agentskills.io](https://agentskills.io/) 与其校验工具 `skills-ref`。
+> **为什么沿用开放格式而不是自定义一套**：`SKILL.md` 是**可移植资产**——别人写的技能包能直接
+> 导入进来用，本项目也能把技能导出成目录给别人。格式一旦自定义，生态就用不上了。
+> **注意存的是 DB、不是目录**：可移植性由「导入 / 导出」这对接口保证（§22.4），不需要靠
+> 部署目录来保证。参考实现见 [agentskills.io](https://agentskills.io/) 与其校验工具
+> `skills-ref`。
 
 ### 22.3 渐进披露在本项目里的三种形态
 
@@ -2772,54 +2777,116 @@ Agent Skills 的标准做法是**三级渐进披露**：
 
 省掉 ① ② 的代价是明确的：**技能绑多了，提示词会变长**。这由 §22.6 的预算处理。
 
-### 22.4 存放：文件系统为准，DB 做索引
+### 22.4 存放：全部在数据库里
 
-**技能内容以文件系统为准，DB 只存索引与绑定。**
+**技能内容（正文 + 资源文件）全部存在数据库里。没有「部署目录」这回事。**
 
-理由有四条：
+理由只有一条，但它压过了开放格式的便利：
 
-1. **开放格式的前提**。技能是个**目录**（多个文件、子目录），不是一条文本。DB 存多文件很别扭，
-   而文件系统天然就是「一个目录一堆文件」。
-2. **可移植**。目录直接从别处拷进 `skills/` 就能用；反过来本项目也能把目录打包带走。
-3. **版本管理天然走 git**。技能改动的 diff、review、回滚全部复用现有的仓库流程，不需要另造
-   一套发布机制。
-4. **`system_prompt` 在 DB 里，但它是「一段文本」；技能是「一个目录」**。这两者的形态不同，
-   硬塞进同一张表会两头不讨好。
+> 本项目第一条设计原则是「**配置即数据**」（§1.2）——Agent 与 Workflow 全部存 MySQL，运行期
+> 热加载。Skill 放在部署目录里，是**同一份配置的两套存储**。两套存储就是两套真相：目录里的改了
+> DB 不知道，DB 里改了目录不知道；部署时还得处理「这个目录怎么进镜像」这种跟业务无关的事。
 
-那 DB 里存什么？**索引 + 绑定**：
+Agent 的 `system_prompt` 在 DB 里、`tools` 在 DB 里、`workflow.definition` 在 DB 里——唯独技能
+在磁盘上，这个不一致没有道理。
 
-- `skill` 表：一行一个技能，记 `code` / `name` / `description` / frontmatter 其余字段 /
-  `source_path` / `content_hash` / `enabled`；
-- `agent.skills` 列：Agent 绑定了哪些技能（JSON 数组，与 `agent.tools` 同形，见 §22.5）。
+**开放格式怎么办**：`SKILL.md` 从「**存储格式**」降级为「**导出格式**」。
 
-**目录扫描**在服务启动时跑一次，另外提供手工刷新接口。扫描只做两件事：
+- DB 里的**规范形态**是「若干列（frontmatter 字段）+ 一段 body（Markdown 正文）」；
+- **导出**时按 Agent Skills 规范重新拼出 `SKILL.md`（frontmatter + body），资源按原路径还原
+  成文件——导出的目录**就是**别人能直接用的目录，可移植性一点没丢；
+- **导入**时反过来解析：读 `SKILL.md` 的 frontmatter 填列，读 body 存正文，读资源文件入库。
 
-1. 读 `skills/*/SKILL.md` 的 frontmatter，校验合法性（§22.9），写进 `skill` 表；
-2. 算 `SKILL.md` 的 `content_hash`（sha256），与库里比对，变了就更新 `updated_at`。
+导入与导出因此是**同一个格式转换的两个方向**，只有一个实现，不会出现「导出能出、导入进不去」
+的不对称。
 
-**扫描不读正文**——正文是运行时才注入的，不需要入库。
+> **顺带得到的一个好处**：技能可以被**程序化**创建与修改，不必先在本地写好文件、走部署流程。
+> 这是「配置即数据」真正的兑现——运营在后台就能改技能，改完立即生效。
 
 ### 22.5 数据模型
 
-#### `skill` 表
+三张表 + Agent 上的一个 JSON 列。
+
+#### `skill` — 技能定义
 
 ```sql
 CREATE TABLE skill (
   id            BIGINT PRIMARY KEY AUTO_INCREMENT,
-  code          VARCHAR(64)   NOT NULL UNIQUE,   -- 目录名，与 SKILL.md 的 name 一致
+  code          VARCHAR(64)   NOT NULL UNIQUE,   -- 技能标识，须与 frontmatter 的 name 一致
   name          VARCHAR(64)   NOT NULL,          -- frontmatter 的 name
-  description   VARCHAR(1024) DEFAULT '',
-  license       VARCHAR(128)  DEFAULT '',
-  compatibility VARCHAR(500)  DEFAULT '',
-  metadata      JSON          DEFAULT NULL,
-  allowed_tools VARCHAR(512)  DEFAULT '',        -- frontmatter 原样存，**仅建议**
-  source_path   VARCHAR(512)  NOT NULL,          -- skills/<code> 的绝对路径
-  content_hash  VARCHAR(64)   NOT NULL,          -- SKILL.md 的 sha256
+  description   VARCHAR(1024) DEFAULT '',        -- frontmatter 的 description
+  license       VARCHAR(128)  DEFAULT '',        -- frontmatter 的 license
+  compatibility VARCHAR(500)  DEFAULT '',        -- frontmatter 的 compatibility
+  metadata      JSON          DEFAULT NULL,      -- frontmatter 的 metadata（字符串键值对）
+  allowed_tools VARCHAR(512)  DEFAULT '',        -- frontmatter 原样存，**仅建议**（§22.9）
+  body          MEDIUMTEXT    NOT NULL,         -- SKILL.md 的正文（frontmatter 之外）
+  origin        VARCHAR(16)   NOT NULL DEFAULT 'manual',  -- manual | import
+  content_hash  VARCHAR(64)   NOT NULL,         -- 正文 + 全部资源一起算的 sha256
   enabled       TINYINT(1)    DEFAULT 1,
+  version       INT           DEFAULT 1,        -- 每次变更 +1（与 agent 表同口径）
   created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
+
+`body` 存的是 **frontmatter 之外的 Markdown 正文**——frontmatter 已经拆成列了，不必在 body
+里再存一份 YAML。导出时按规范重新拼回去（§22.4）。
+
+`content_hash` 的算法：
+
+```text
+sha256( body ‖ 逐个资源按 path 排序后的 ( path ‖ sha256(content) ) )
+```
+
+它同时管两件事：**变更检测**（后台能看出「技能有没有被改过」）与**幂等键**（`skill_exec` 的
+`request_id` 里带上它，同一版脚本的结果可复用）。
+
+#### `skill_resource` — 技能的资源文件
+
+```sql
+CREATE TABLE skill_resource (
+  id         BIGINT PRIMARY KEY AUTO_INCREMENT,
+  skill_id   BIGINT       NOT NULL,
+  path       VARCHAR(255) NOT NULL,        -- 相对技能根，如 references/METRICS.md
+  mime_type  VARCHAR(64)  DEFAULT 'application/octet-stream',
+  is_text    TINYINT(1)   DEFAULT 1,       -- 文本资源才进 SKILL.md 的引用回滚
+  content    LONGBLOB     NOT NULL,        -- 文件内容（文本与二进制同列）
+  size_bytes INT          NOT NULL,
+  updated_at DATETIME(3)  DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uk_skill_path (skill_id, path),
+  KEY idx_skill (skill_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+`references/` `assets/` `scripts/` 里的文件**全部**是这张表的一行。`is_text` 区分「能直接塞进
+提示词 / 能回灌给模型」与「只能下载」——`skill_resource` 工具对二进制资源只报元信息，不把
+字节塞进上下文。
+
+**一张表存文本与二进制**：MySQL 的 `LONGBLOB` 对两种都够用，且避免了「文本在一张表、二进制
+在对象存储」带来的跨源一致性问题。代价是单行不能太大——**单资源上限 5 MB、单技能资源总量
+上限 20 MB**，超了拒。
+
+#### `skill_revision` — 变更审计
+
+```sql
+CREATE TABLE skill_revision (
+  id         BIGINT PRIMARY KEY AUTO_INCREMENT,
+  skill_id   BIGINT      NOT NULL,
+  version    INT         NOT NULL,
+  body       MEDIUMTEXT  NOT NULL,          -- 正文快照
+  resources  JSON        DEFAULT NULL,      -- 资源清单：[{path, sha256, is_text, text?}]
+  author     VARCHAR(64) DEFAULT '',        -- 谁改的
+  note       VARCHAR(255) DEFAULT '',       -- 改了什么（一句话）
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_skill_version (skill_id, version),
+  KEY idx_skill (skill_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+**为什么需要它**：技能进了 DB 就没有 git 了，改错了没法回滚。这张表是 DB 版的版本历史。
+
+`resources` 快照里**文本资源带内容、二进制资源只带摘要**——所以**文本资源可以回滚，二进制
+资源不能**。这是明确的取舍，写进 §22.12 的已知限制。
 
 #### `agent.skills` 列
 
@@ -2827,14 +2894,18 @@ CREATE TABLE skill (
 ALTER TABLE agent ADD COLUMN skills JSON DEFAULT NULL;
 ```
 
-与 `tools` **同形**：存技能 code 的数组，不存正文。理由同 §17.2——**配置只放名字，正文与资源
-从文件系统取**。这样「模型能用的技能」与「服务端能提供的技能」仍然是同一张表（`skill` 表 +
-目录），对不上就在保存期拒。
+与 `tools` **同形**：存技能 code 的数组，不存正文。理由同 §17.2——**配置只放名字，内容从
+`skill` / `skill_resource` 取**。这样「模型能用的技能」与「服务端能提供的技能」仍然是同一张
+表，对不上就在保存期拒。
 
 **读的时候宽容，写的时候严格**（与 §17.2、§21.8 一致）：
 
-- 写（`normalize_skill_codes`）：未注册的 code **保存期就拒**（400）；
+- 写（`normalize_skill_codes`）：未注册的 code **保存期就拒**（400）；被禁用的技能
+  （`enabled=0`）也拒——绑一个用不了的技能是配置错误，不该留到运行期才发现；
 - 读（`known_skill_codes`）：历史脏数据里的未知 code **丢掉**，不能让 Agent 列表接口 500。
+
+**绑定不级联删除**：删技能不自动解绑 Agent，被绑的 Agent 在读路径上丢掉那个 code（宽容
+路径），并在 `GET /api/skills` 里标出「有几个 Agent 还绑着它」——让运营知道该去解绑。
 
 ### 22.6 Skill 怎么进入提示词
 
@@ -2867,7 +2938,7 @@ messages[2] = { role: "system", content: <技能 2 的 SKILL.md 正文> }
 
 | 上限 | 默认 | 挡什么 |
 | --- | --- | --- |
-| 单个 `SKILL.md` 正文字符数 | 20000 | 一个巨型技能撑爆上下文 |
+| 单个技能正文字符数 | 20000 | 一个巨型技能撑爆上下文 |
 | 技能正文**总**字符数 | 4000（`settings.skill_prompt_budget`） | 绑了太多技能 |
 | 参与注入的技能数 | 5（`settings.skill_max_count`） | 同上 |
 
@@ -2882,8 +2953,8 @@ messages[2] = { role: "system", content: <技能 2 的 SKILL.md 正文> }
 模型的 prompt，LLM 边界那次裁剪（§14.3 / `_split_turns`）是最后一道。
 
 **技能正文不过敏感词过滤**。§20 的前置过滤拦的是**用户输入**——那是不可信输入。技能正文是
-**运维放进部署目录的内容**，它的信任级别跟代码仓库一样。在它上面套一层敏感词过滤，只会
-制造「改个技能正文要绕过过滤器」的荒唐场面。技能正文的准入靠的是**目录权限**（§22.10）。
+**管理员写进数据库的部署内容**。在它上面套一层敏感词过滤，只会制造「改个技能正文要绕过
+过滤器」的荒唐场面。技能正文的准入靠的是**写权限与审计**（§22.10）。
 
 ### 22.7 Skill 资源读取工具 `skill_resource`
 
@@ -2892,12 +2963,13 @@ messages[2] = { role: "system", content: <技能 2 的 SKILL.md 正文> }
 ```python
 # app/core/tools.py（新增一条内置工具）
 async def _skill_resource(args: dict) -> str:
-    """读取技能目录里的一个文件。"""
+    """读取技能的一个资源文件。"""
     code = args.get("skill")
     rel = args.get("path")
     # 1. 校验 code 在该 Agent 绑定的技能里（白名单）
-    # 2. 解析路径，**必须仍在技能根目录内**
-    # 3. 读文件，按 tool_result_max_chars 截断
+    # 2. 校验 path 的**格式**（相对路径、无 ..、字符集白名单）
+    # 3. 按 (skill_id, path) 精确查 skill_resource
+    # 4. 文本按 tool_result_max_chars 截断；二进制只回元信息
 ```
 
 参数：
@@ -2905,30 +2977,53 @@ async def _skill_resource(args: dict) -> str:
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `skill` | string | 技能 code |
-| `path` | string | **相对技能根目录**的路径，如 `references/METRICS.md` |
+| `path` | string | 相对技能根的路径，如 `references/METRICS.md` |
 
-**路径穿越防护**（这是这个工具的**全部**风险所在）：
+#### 路径穿越问题消失了
+
+这是「技能从文件系统挪进数据库」最实在的一个收益，必须写清楚。
+
+原来这个工具的**全部**风险都在路径解析上——要防 `../../etc/passwd`、要防符号链接指向目录
+外、要防绝对路径。现在**没有任何目录可解析**了：
 
 ```python
-root = (skills_root / code).resolve()
-target = (root / rel).resolve()
-if not target.is_relative_to(root):   # 逃出技能目录 → 拒绝
-    raise ToolCallError("路径超出技能目录范围")
+row = await db.execute(
+    select(SkillResource).where(
+        SkillResource.skill_id == skill_id,
+        SkillResource.path == rel,      # 精确匹配，不是路径拼接
+    )
+)
 ```
 
-四条一起做，缺一不可：
+`path` 是**一个查表的键**，不是一条路径。`../../etc/passwd` 查不到任何一行，就什么也读不到。
+**没有 `resolve()`，没有 `is_relative_to`，没有符号链接**——一整类漏洞从根上没了。
 
-1. **解析后再判定**（`resolve()` 之后再 `is_relative_to`）——只做字符串前缀判断会被
-   `../../etc/passwd` 与符号链接绕过；
-2. **拒绝绝对路径**；
-3. **符号链接指向目录外时拒绝**——`resolve()` 已经把符号链接解开了，判定自然覆盖；
-4. **不读 `skills/` 目录之外的任何路径**，即使模型给的是一个看起来像别的技能目录的绝对路径。
+但**输入格式校验还是要做**（防御性，且挡住无意义的查询与脏数据）：
 
-**大小上限**：单文件最多读 `tool_result_max_chars`（默认 4000 字符）——与工具结果回灌同一条
-上限，避免一次读取把上下文撑爆。
+| 校验 | 规则 |
+| --- | --- |
+| 长度 | ≤ 255 |
+| 绝对路径 | 以 `/` 开头 → 拒 |
+| 上跳 | 任何路径段是 `..` → 拒 |
+| 空段 | 出现 `//` → 拒 |
+| 反斜杠 | 含 `\` → 拒（Windows 风格分隔符） |
+| 字符集 | 只允许 `[A-Za-z0-9._/-]` |
+| 深度 | 路径段 ≤ 8 |
 
-**`scripts/` 里的文件也可以读**（当参考资料读）。但**读 ≠ 执行**：执行是另一条路——`skill_exec`
-工具把脚本正文交给 studio 容器（§22.8），web_agent 自己**从不**执行它。
+**写入期做同样的校验**（`skill_resource` 表的写入路径）：不合规的 path 直接 400，不入库。
+读宽松、写严格——与 §17.2 同一口径。
+
+#### 大小与类型
+
+- **文本资源**：最多读 `tool_result_max_chars`（默认 4000 字符）——与工具结果回灌同一条上限，
+  避免一次读取把上下文撑爆；
+- **二进制资源**（`is_text=0`）：**不把字节塞进上下文**，只回「文件名 + 大小 + mimeType」，
+  模型知道有这么个文件在就行。
+
+#### `scripts/` 里的文件
+
+也可以读（当参考资料读）。但**读 ≠ 执行**：执行是另一条路——`skill_exec` 工具把脚本正文交给
+studio 容器（§22.8），web_agent 自己**从不**执行它。
 
 ### 22.8 脚本执行：gRPC 调用 studio 容器
 
@@ -2960,7 +3055,7 @@ if not target.is_relative_to(root):   # 逃出技能目录 → 拒绝
 | --- | --- |
 | 形态 | 独立容器、独立镜像，与 web_agent 同级部署 |
 | 职责 | 接收「一段脚本 + 一组参数」，在受限环境里执行，回传 stdout / stderr / exit code |
-| 状态 | **无状态**：不落盘、不缓存、不认识用户、不认识技能目录 |
+| 状态 | **无状态**：不落盘、不缓存、不认识用户、不认识技能 |
 | 与 web_agent 的关系 | 只被 gRPC 单向调用；它不依赖 web_agent 的任何接口 |
 
 #### 22.8.3 契约
@@ -3043,8 +3138,9 @@ message LanguageInfo {
   没有卷依赖，两个容器可以独立扩缩、独立升级。代价是请求体变大——脚本通常几 KB 到几十 KB，
   可接受。
 - **`script` 与 `content` 分开**：`script` 是**审计用的标识**（哪个技能、哪个文件），`content`
-  才是真正被执行的东西。studio **不**校验 `script` 路径，也**不**解析技能目录——它没有技能
-  目录的概念。路径校验因此必须留在 web_agent 侧（复用 §22.7 的穿越防护）。
+  才是真正被执行的东西。studio **不**校验 `script` 路径，也**不**解析技能——它没有技能的概念，
+  技能在 web_agent 的数据库里（§22.4）。路径校验因此必须留在 web_agent 侧（复用 §22.7 的
+  格式校验）。
 - **`error` 与 `stderr` 分开**：脚本自己写到 stderr 的是「脚本的输出」，原样回灌给模型；
   `error` 是「studio 这次没跑起来」（超时、容器被杀、镜像缺运行时）。两者语义不同，模型
   看到它们的反应也不同。
@@ -3062,8 +3158,8 @@ async def _skill_exec(args: dict) -> str:
     script = args.get("script")
     argv = args.get("args") or []
     # 1. 校验 code 在该 Agent 绑定的技能里（白名单）
-    # 2. 校验 script 路径仍在技能根目录内（复用 §22.7 的穿越防护）
-    # 3. 读脚本正文（限长）
+    # 2. 校验 script 的路径格式（复用 §22.7 的格式校验）
+    # 3. 从 skill_resource 读脚本正文（限长）
     # 4. 调 studio 的 Exec
     # 5. 拼成「退出码 + stdout (+ stderr)」返回给模型
 ```
@@ -3170,29 +3266,46 @@ studio 容器应满足：
 
 **Skill 是提示词内容。进了 prompt 的文字，模型会当成指令执行。**
 
-所以技能的可信级别 = **能往 `skills/` 目录里写文件的人的级别**。这句话必须写在文档最显眼
-的地方：
+所以技能的可信级别 = **能写 `skill` 表的人的级别**。这句话必须写在文档最显眼的地方：
 
-> 拿到 `skills/` 目录的写权限 ≈ 拿到提示词注入权限 ≈ 能改模型的行为。
+> 能写 `skill` 表的人 ≈ 拿到了提示词注入权限 ≈ 能改模型的行为。
 > 这与「拿到代码仓库写权限 ≈ 能改代码」是同一句话。
 
-由此得出几条硬约束：
+**但技能进了数据库之后，这句话的重量变了，必须重新说清楚。**
 
-1. **技能只从受控目录读**（部署里的 `skills/`），**不进数据库、不接受 HTTP 上传**。要装一个
-   技能 = 往目录里放文件 + 走部署流程。这是有意的摩擦：技能是代码级的资产。
-2. **`allowed-tools` 不授权**（§22.9）。技能正文不能扩大 Agent 的工具白名单。
-3. **frontmatter 严格校验**：缺 `name` / `description`、`name` 超过 64 字符、含大写字母、
-   `name` 与目录名不一致 → **该技能直接不导入**，并记日志。规范给了 `skills-ref validate`
-   可用，但那是外部工具；本项目至少要把上面几条自己守住。
-4. **长度与预算上限**（§22.6）：单文件上限、总预算上限、注入技能数上限，三道都卡死。
-5. **web_agent 进程里没有脚本执行器**。正文里的代码块不会被运行；`scripts/` 里的脚本**只**能
+技能放在部署目录里时，「能改技能」需要**改代码 + 走部署**——那是一道物理阻力。现在技能在
+DB 里、后台就能改，这道阻力**没了**。所以权限必须从别处补回来，而且要明确补在哪：
+
+1. **写技能是管理员专属**，与「注册 MCP 服务器」同一级别（§21.10 第 1 条）。**能编辑 Agent
+   配置的用户不能编辑技能**——Agent 配置影响「用哪些工具」，技能正文影响「模型按什么步骤
+   做事」，后者更接近代码。
+2. **每一次正文与资源的变更都写审计**（`skill_revision`）：版本号、谁改的、改了什么。
+3. **导入路径要单独设一道闸**：导入的技能 `origin='import'` 且**默认 `enabled=0`**，必须由
+   管理员显式启用才能被 Agent 绑定。理由：导入内容的来源**不可信**（别人写的技能包），
+   而手工创建的技能来源可信（管理员自己写的）。这条是「手工 / 导入」唯一的差别。
+4. **`allowed-tools` 不授权**（§22.9）。技能正文不能扩大 Agent 的工具白名单。
+5. **frontmatter 与字段在保存期就拒**：缺 `name` / `description`、`name` 超过 64 字符、含
+   大写字母、`code` 与 `name` 不一致 → **API 直接 400**，不落库。（原来是「不导入」，现在是
+   「不让它进来」。）
+6. **长度与预算上限**（§22.6）：正文单文件上限、资源单文件 5 MB / 单技能总量 20 MB、技能正文
+   总预算、注入技能数上限，四道都卡死。
+7. **web_agent 进程里没有脚本执行器**。正文里的代码块不会被运行；`scripts/` 里的脚本**只**能
    经 `skill_exec` 交给 studio 容器执行（§22.8），web_agent 侧**没有** `subprocess` 这条路。
-6. **技能正文不参与敏感词前置过滤**（§22.6），因为它是受信任的部署内容。
+8. **技能正文不参与敏感词前置过滤**（§22.6）。它是管理员写进数据库的内容，不是用户输入。
+
+**导入路径的三道额外防护**（`POST /api/skills/import`）：
+
+| 防护 | 挡什么 |
+| --- | --- |
+| **zip slip**：逐个 entry 校验目标路径必须在解压根内，拒绝绝对路径与 `..` | 解压把文件写到目标目录之外 |
+| **拒绝符号链接 entry**（zip 里的 symlink） | 软链到宿主文件 |
+| **zip bomb**：限制 entry 数、单文件大小、**解压后总大小**、压缩比 | 一个 zip 撑爆磁盘/内存 |
+| 无关文件（`.DS_Store`、`__MACOSX/`）**跳过**；路径非法的 entry **报错**（不静默跳过） | 静默跳过会让「导入成功但少文件」 |
 
 **脚本执行是另一条信任边界**，单独说：
 
 > 技能脚本会**真的被执行**。它由**模型指定的参数**驱动，而模型会被提示词注入影响。
-> 所以「谁能写 `skills/`」的级别 = **能让任意代码在 studio 容器里跑**的级别。
+> 所以「谁能写 `skill` 表」的级别 = **能让任意代码在 studio 容器里跑**的级别。
 
 studio 容器是这条边界的**唯一**实现手段，它必须满足（§22.8.7）：**零凭据、只读根文件系统、
 仅 `/tmp` 可写、禁出网、CPU/内存/时限受限、非 root**。
@@ -3208,13 +3321,46 @@ studio 容器是这条边界的**唯一**实现手段，它必须满足（§22.8
 
 ### 22.11 API 设计
 
+技能进了数据库，就有了**读**与**写**两套接口。写接口全部是**管理员专属**（§22.10）。
+
+#### 只读（普通运营可用）
+
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/skills` | 技能目录：`code` / `name` / `description` / `source_path` / `content_hash` / 被哪些 Agent 绑定 |
-| GET | `/api/skills/:code` | 详情 + `SKILL.md` 原文（只读） |
-| POST | `/api/skills/refresh` | 重扫 `skills/` 目录，更新索引 |
+| GET | `/api/skills` | 技能列表：`code` / `name` / `description` / `origin` / `version` / `content_hash` / `enabled` / 被哪些 Agent 绑定 |
+| GET | `/api/skills/:code` | 详情 + 正文 + frontmatter 字段 |
+| GET | `/api/skills/:code/resources` | 资源清单（path / 大小 / mimeType / sha256） |
+| GET | `/api/skills/:code/resources/*path` | 单个资源内容（二进制走 `Content-Disposition: attachment`） |
+| GET | `/api/skills/:code/export` | **导出标准技能包**：重新拼出 `SKILL.md`（frontmatter + body），资源按原路径还原。可选 `?format=zip` |
+| GET | `/api/skills/:code/revisions` | 变更历史（版本 / 作者 / 说明 / 时间） |
 | GET | `/api/agents/:code/prompt-preview` | **生效提示词预览**：`system_prompt` + 各技能正文，与实际发给模型的逐字一致 |
 | GET | `/api/studio` | studio 状态：可达性、版本、可用运行时（`HealthResponse`） |
+
+#### 写入（**管理员**）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/skills` | 创建技能。`origin='manual'`，写审计 |
+| PUT | `/api/skills/:code` | 更新（正文 / frontmatter）。`version+1`，写审计 |
+| DELETE | `/api/skills/:code` | 删除技能（含资源与修订历史） |
+| POST | `/api/skills/:code/resources` | 上传或替换一个资源文件 |
+| DELETE | `/api/skills/:code/resources/*path` | 删除一个资源文件 |
+| POST | `/api/skills/import` | **批量导入**：multipart 传一个 zip，或传一个目录结构。`origin='import'`，**默认 `enabled=0`** |
+| POST | `/api/skills/:code/rollback` | 回滚到指定历史版本（正文 + 文本资源；二进制资源不回滚，§22.12） |
+
+**导出的对称性**：`export` 出的东西正好是 `import` 能吃进去的东西——`import` 吃一个「导出物」，
+`export` 吐一个「导出物」。这条对称性是 §22.4 那段「只有一个格式转换实现」的落地保证。
+
+**导入的两种输入形式**：
+
+| 形式 | 怎么来的 | 注意 |
+| --- | --- | --- |
+| **zip** | 前端上传 | 必须防 zip slip 与 zip bomb（§22.10 的三道防护） |
+| **目录结构**（JSON：`[{path, contentBase64}]`） | 后台批量粘贴 / 脚本调用 | 走**同一套**路径格式校验，不需要解压逻辑 |
+
+两者最终都落到同一组校验上：**path 格式合规 + 内容大小上限 +（仅 zip）zip slip / bomb 防护**。
+
+#### 工具目录
 
 `GET /api/tools` 里会多出两条内置工具（与 `now` / `calc` 同级），运营可以在 Agent 的工具
 白名单里勾上或取消——**不勾模型就用不到**：
@@ -3238,33 +3384,51 @@ studio 容器是这条边界的**唯一**实现手段，它必须满足（§22.8
 5. **模型不自己挑技能**（§22.3）。技能绑多了只能靠预算截断，靠后被砍掉的技能模型完全看不见。
 6. **技能正文占固定成本**。每个绑定的技能，每一轮模型调用都要带一遍（system 消息在多轮里
    会被重复发送）。技能多、正文长时 token 成本上升明显。
-7. **技能变更不是实时的**。改了 `SKILL.md` 要刷新索引（重启或 `POST /api/skills/refresh`）
-   才会更新 `content_hash`，但**正文是运行时读的**，所以其实改完立刻生效——只是后台显示的
-   哈希与「已加载」状态会滞后。这是一个刻意的取舍：**内容实时、索引滞后**。
-8. **多租户隔离没做**。`skills/` 是部署级目录。租户隔离要先把「目录布局 ↔ 租户模型」对齐，
-   而本项目目前没有租户概念（§1.1 的目标是单部署多 Agent）。
-9. **技能没有版本与回滚机制**。靠 git。
-10. **`allowed-tools` 不做自动授权**，只做提示（§22.9）。
-11. **`skill_resource` 只能读技能目录内的文件**，读不了部署里别处的文件——本项目没有通用的
+7. **二进制资源的回滚不支持**。`skill_revision` 存正文快照 + 资源清单（文本资源带内容，
+   二进制资源只带 sha256），所以**文本资源能回滚、二进制资源不能**。这是明确的取舍——
+   快照所有二进制会让审计表体积翻倍，不值。
+8. **资源总量有上限**。单资源 5 MB、单技能总量 20 MB。这挡得住「把整个数据集塞进技能」
+   这类用法，但也意味着**技能不能当数据仓库用**。
+9. **技能表没有租户维度**。多租户隔离没做——要先把「数据模型 ↔ 租户模型」对齐，而本项目目前
+   没有租户概念（§1.1 的目标是单部署多 Agent）。
+10. **正文与资源存在数据库里，没有 git 的 diff/review**。`skill_revision` 给的是「谁在什么时候
+    改了什么」与版本快照，**不是**逐行 diff。真要 review 文本改动，得靠导出后在外面比。
+11. **没有草稿态**。技能要么是当前版本，要么是历史版本，没有「编辑中未发布」的中间态。
+12. **删除是硬删除**。`DELETE /api/skills/:code` 会连同资源与修订历史一起删掉。软删除（`enabled=0`
+    之外再加个 `deleted_at`）本轮不做。
+13. **`allowed-tools` 不做自动授权**，只做提示（§22.9）。
+14. **`skill_resource` 只能读技能自己的资源**，读不了部署里别处的文件——本项目没有通用的
     文件读取工具（模型侧的文件访问能力为零）。
-12. **脚本语言受 studio 镜像限制**。镜像里装了哪几种运行时就是哪几种，`HealthResponse.language_info`
+15. **脚本语言受 studio 镜像限制**。镜像里装了哪几种运行时就是哪几种，`HealthResponse.language_info`
     把它报出来；配置期按它校验（§22.8.8），但**新增语言要改 studio 镜像**。
 
 ### 22.13 实施要点与验收标准
 
-- [ ] `skills/` 目录里放一个合法技能 → 启动扫描后 `skill` 表里出现对应行，`content_hash` 与
-      `sha256(SKILL.md)` 一致。
-- [ ] 放一个 `name` 与目录名不一致的技能 → **不导入**，日志写明原因，其它技能照常导入
-      （一个坏技能不能拖垮整次扫描）。
+- [ ] `POST /api/skills` 建一个技能 → `skill` 表出现对应行，`content_hash` 与
+      `sha256(body ‖ 各资源摘要)` 一致，`version=1`，`origin='manual'`。
+- [ ] 建一个 `code` 与 `name` 不一致、或 `name` 含大写字母的技能 → **API 直接 400**，库里没有
+      这行（是「不让它进来」，不是「先存着再说」）。
+- [ ] **非管理员**调 `POST` / `PUT` / `DELETE /api/skills*` → 403，且**不写任何数据**。
+- [ ] 管理员改一次正文 → `version` +1，`skill_revision` 多一行（作者、note、时间），资源清单
+      也在快照里。
+- [ ] `GET /api/skills/:code/export` → 拿到的 `SKILL.md` 能被 `POST /api/skills/import` 原样
+      吃回去（导入后 `content_hash` 与导出前一致）。
+- [ ] 导入一个 zip → 技能 `origin='import'` 且 **`enabled=0`**；Agent 绑它 → **保存期就拒**。
+- [ ] 导入一个含 `../../etc/passwd` 条目的 zip → **导入失败并报错**，不落库（zip slip）。
+- [ ] 导入一个解压后 10 GB 的 zip → **导入失败并报错**（zip bomb），不撑爆磁盘。
+- [ ] 导入一个含符号链接条目的 zip → **导入失败并报错**。
 - [ ] Agent 绑定技能 → 发给 LLM 的 messages 里出现一条独立的 `role=system` 消息，内容是
-      `SKILL.md` 正文，**且在 Agent 自己的 system_prompt 之后**。
+      技能正文，**且在 Agent 自己的 system_prompt 之后**。
 - [ ] 后台的「生效提示词预览」与实际发给 LLM 的内容**逐字一致**（同一份拼装函数）。
 - [ ] 绑 6 个技能、总正文超过预算 → 只有靠前的 5 个（或预算内的部分）被注入，后面的**整个**
       不出现，且事件流里有一条 `skill_skipped` 说明是哪个、为什么。
 - [ ] `skill_resource` 读 `references/METRICS.md` → 返回文件内容。
-- [ ] `skill_resource` 读 `../../../../etc/passwd` → 拒绝，返回错误说明，**不泄露任何内容**。
-- [ ] `skill_resource` 读一个指向目录外的符号链接 → 拒绝。
+- [ ] `skill_resource` 读 `../../../../etc/passwd` → **查不到任何资源行**，返回错误说明，
+      **不泄露任何内容**（不再有文件系统可穿越）。
 - [ ] `skill_resource` 读一个没绑定的技能 → 拒绝（白名单校验）。
+- [ ] `skill_resource` 读一个二进制资源 → 只回「文件名 + 大小 + mimeType」，**不把字节塞进
+      上下文**。
+- [ ] 上传一个路径含 `..` 或绝对路径的资源 → **400，不入库**。
 - [ ] 技能声明了 `allowed-tools: get_quarter_metrics`，而 Agent 白名单里没有它 → 后台给出
       **提示**，但保存**不被拒**。
 - [ ] `skill_exec` 执行 `scripts/extract.py` → 脚本**在 studio 容器里**跑，web_agent 进程内
