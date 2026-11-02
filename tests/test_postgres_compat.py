@@ -60,6 +60,9 @@ _EXPECTED_TABLES = {
     "skill",
     "skill_resource",
     "skill_revision",
+    # V4：MCP（§21.6）
+    "mcp_server",
+    "mcp_tool",
 }
 
 

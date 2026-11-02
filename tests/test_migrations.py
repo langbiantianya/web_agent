@@ -27,6 +27,8 @@ EXPECTED_TABLES = {
     "skill",
     "skill_resource",
     "skill_revision",
+    "mcp_server",
+    "mcp_tool",
 }
 
 

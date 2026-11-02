@@ -11,6 +11,8 @@ from app.models.enums import (
     RunStatus,
     StepStatus,
 )
+from app.models.mcp_server import McpServer
+from app.models.mcp_tool import McpTool
 from app.models.message import Message
 from app.models.run import Run, RunStep
 from app.models.run_approval import RunApproval
@@ -27,6 +29,8 @@ __all__ = [
     "Message",
     "MessageRole",
     "MessageStatus",
+    "McpServer",
+    "McpTool",
     "Run",
     "RunApproval",
     "RunEvent",
