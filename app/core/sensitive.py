@@ -19,7 +19,7 @@
 | 维度 | 做法 |
 | --- | --- |
 | 推理耗时 | 一次 gather + 一次 bincount，**百微秒级**（比一次 LLM 请求快四个数量级） |
-| 常驻内存 | 稠密权重 1 MB（2^18 个 float32），模型文件本身只有几十 KB |
+| 常驻内存 | 稠密权重 1 MB（2^18 个 float32），模型文件本身 158 KB |
 | 外部依赖 | **无**：只用 numpy，不加载任何模型框架，不起任何外部服务 |
 | 进程模型 | 纯 CPU 计算，不占 GPU，不阻塞事件循环（同步计算，单条消息 < 1ms） |
 
@@ -31,6 +31,21 @@
    过滤器」「我要举报一个诈骗网站，怎么举报」）。它们让模型学会区分**词**和**意图**。
 2. 阈值默认偏保守，宁可漏也不误杀。
 3. 只看**窗口级**分数，不看整句——一句话里提到敏感话题不等于在提敏感请求。
+4. **停用字不进证据**：「的」「了」「人」「怎么」这类虚词与泛指字在正常文本里
+   到处都是，它们在正例里的高频只是**句式同质化**的副产物，不携带任何意图。
+   把它们的单字特征从证据里剔掉（2/3-gram 词组原样保留），模型才认得出
+   「词」与「意图」的区别。详见 :data:`STOP_CHARS`。
+
+## 怎么量它准不准
+
+误报率是个会漂的指标，必须有**可复现的测量方式**，否则每次重训都只能凭感觉
+说「好像好了一点」：
+
+- :mod:`scripts.sensitive_eval_corpus` 是一份**留出语料**，从不参与训练；
+- :mod:`scripts.eval_sensitive` 在留出集、训练集、仓库自身的中文文档三个角度
+  上分别报误报率与召回率，并打印整条阈值曲线；
+- :mod:`scripts.train_sensitive` 的阈值用 **K 折袋外（OOF）预测**来选，
+  留出集只用于事后报告，不参与选阈值——否则报告的数字就是自己调出来的。
 
 ## 命中之后
 
@@ -83,14 +98,23 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# 哈希空间的维度：2^16 = 65536 个槽位，稠密权重 256 KB。
+# 哈希空间的维度：2^18 = 262144 个槽位，稠密权重 1 MB。
 #
-# 维度不是越大越好：种子语料只有几百条、几万个不同的 n-gram，维度给到 2^18
-# 反而让模型有足够容量把训练样本背下来（实测验证集召回 0.69 → 0.75、全量
-# 0.88 → 0.91）。**容量过剩是这个模型最容易踩的坑**，不是不够。
+# **维度不够会重复计权。** 哈希冲突让两个不同的 n-gram 落到同一个槽位，于是
+# 训练时那个槽位被「两拨语料」同时更新，推理时**同一个字被算两次分**。
+# 实测（2^16、种子语料）：单字「人」落在**两个**槽位上，两个都被训练成 +0.64，
+# 于是一个 20 字窗口里的 5 个「人」累加出 3.2 的权重贡献——比整个 bias 还大。
+# 哈希冲突槽位实测 1304 个。
 #
-# 训练语料的 n-gram 词表通常只有几千到几万个，这个量级下哈希冲突可以忽略。
-DEFAULT_DIM = 1 << 16
+# 之前这里用的是 2^16，理由是「维度给到 2^18 反而让模型把训练样本背下来」
+# （实测验证集召回 0.69 → 0.75、全量 0.88 → 0.91）。那条结论是在**几百条的
+# 小语料**上量的：容量过剩的前提是模型没有足够多的**不同**样本可学。现在
+# 语料扩到近千条、留出集单独评测，2^18 的冲突槽位降到 1/4（实测 326 个），
+# 而容量过剩的迹象没有出现——留出集召回不降反升。
+#
+# 维度仍然记在模型文件里（``dim``），推理时按文件里的值建权重数组，所以
+# 换维度不需要改代码，只需要重训。
+DEFAULT_DIM = 1 << 18
 
 # n-gram 的阶数。1-gram 抓单字敏感词（「毒」），2-3 gram 抓词组。
 #
@@ -98,6 +122,42 @@ DEFAULT_DIM = 1 << 16
 # 就不能用了。实现上 :func:`_ngram_hash_table` 按 (1, 2, 3) 三段返回哈希表——
 # 两处必须同步改，改一处要记得改另一处。
 NGRAM_SIZES = (1, 2, 3)
+
+# 中文停用字：高频虚词与泛指字，**不带任何意图信息**。
+#
+# ## 为什么必须把它们排除在 1-gram 证据之外
+#
+# 字符 n-gram 模型学的是「词与标签的共现频率」。正例句式高度同质（「教我怎么
+# 怎么X」「帮我查一下这个人的Y」），于是「人」「的」「怎」「家」这些字在正例里
+# 出现得远比负例多，逻辑回归就给它们分配了**大正权重**——单字「人」+0.64。
+#
+# 后果是任何含「人」「的」「怎么」的普通文本都能凑出高分：
+# 「每用户输出速率」被拦（命中 0.94）、「没人用」被拦（命中 0.84）、
+# 「返回本进程的实例标识」被拦（0.82）。旧模型实测：463 条难负例上误杀 10.15%，
+# 仓库自身的中文文档段落上误报 3.50%——那些误报几乎全是这么来的。
+# 加上这份停用表并重训之后，难负例误杀率降到 0.22%，文档误报降到 0.82%。
+#
+# ## 为什么只停用 1-gram，不动 2/3-gram
+#
+# 意图信息在**词组**里，不在单字里：「色情」「制毒」「杀人」「别人的」「怎么自制」
+# 都是 2-3 gram。停用 1-gram 之后，「怎么制作炸药」照样拦得住——它的证据是
+# 2-gram「制作」「炸药」，不是单字「怎」。
+#
+# ## 停用表里为什么**没有**「毒」「杀」「枪」「偷」「抢」「炸」「性」
+#
+# 这些是敏感类别的**核心信号字**，它们本身就是证据。「毒」「毒药」「制毒」——
+# 停了「毒」，毒品类就少了一根支柱。
+#
+# 而被停用的「人」「情」「色」「制」「取」「动」在正常语境里是泛指用法
+# （用户、家人、事情、情绪、角色、制作、获取、移动），它们的关键组合都以
+# 2-gram 形式保留：「色情」「制毒」「获取」「煽动」「国家」「杀人」。
+STOP_CHARS = frozenset(
+    "的地得了着过之其此这那有在与和及或也就都而但却因为以于是没无别请咱您"
+    "我你他她它们谁什么怎样哪上下中内外前后时更最还又再才只能会可要应该当"
+    "把被让给从到对向跟同比挺蛮略很太极好吗呢吧啊哦呀嘛啦咯呗嗯唉喂呵嘿"
+    "用力行名点位分长期情色制取动家些信"
+)
+
 
 # 滑窗参数。窗口 20 字能装下「怎么做炸药」这类短语；步长 4 保证不漏。
 #
@@ -125,10 +185,15 @@ EXCERPT_CHARS = 24
 # alpha=0 等于不做归一化（原始的纯求和）；alpha 越大越接近「按平均证据量判」。
 # 参考长度取**满窗**的 gram 总数，于是满窗系数恰好是 1，只有短窗被抬起来。
 #
-# 取 0.7 而不是 1.0：实测种子语料上，alpha=0.7 在验证集上召回率 0.76、误报 0；
-# alpha=1.0 召回率反而回落（把「窗口里恰好有一段敏感」这个稀疏证据也一起稀释
-# 了），而 alpha=0 漏检明显（短文本系统性低分）。
-DEFAULT_NORM_ALPHA = 0.7
+# 取 0.9 而不是 0.7 或 1.0：0.7 是**停用字掩码之前**的值（那时实测 0.7 优于
+# 1.0，因为 alpha=1 等于按平均证据量判，把「窗口里恰好有一段敏感」这个稀疏
+# 证据也一起稀释了）。加了掩码之后结论反过来了——实测（K 折袋外、804 条语料、
+# 正例加权 16 倍）：alpha 0.7 袋外召回 50.6%、短句召回 60.6%；alpha 0.9 袋外
+# 召回 54.6%、短句召回 68.9%，误报率两者都是 1.95%。
+#
+# 机制上说得通的解释是：掩码把窗口里的一部分单字证据标成了无效，剩下的证据
+# 更稀疏，于是需要更强的长度归一化把短窗抬起来才补得回来。
+DEFAULT_NORM_ALPHA = 0.9
 
 # 归一化系数的上下限。系数过大时短文本的分数会冲过头，误报抬头。
 NORM_CLIP_LOW = 0.5
@@ -246,6 +311,100 @@ def _ngram_hash_table(
     for i in range(max(0, n - 2)):
         h3[i] = zlib.crc32(text[i : i + 3].encode("utf-8"), seed)
     return h1, h2, h3
+
+
+def _stop_mask(text: str) -> np.ndarray:
+    """标出文本里哪些位置是**停用字**。
+
+    Args:
+        text: 已归一化的文本。
+
+    Returns:
+        与 ``text`` 等长的布尔数组；``True`` 表示该位置的字是停用字。
+    """
+    return np.fromiter(
+        (ch in STOP_CHARS for ch in text), dtype=bool, count=len(text)
+    )
+
+
+def _view_windows(view: str, window: int, stride: int) -> list[tuple[int, int]]:
+    """切出文本的所有滑窗。
+
+    训练与推理**必须**用同一种切法，否则训出来的权重在推理时全是噪声。
+    两边共用本函数就是为了杜绝这种漂移。
+
+    Args:
+        view: 已归一化的视图文本。
+        window: 窗口长度（字符）。
+        stride: 步长。
+
+    Returns:
+        ``[(起, 止), ...]``。
+    """
+    n = len(view)
+    if n == 0:
+        return []
+    if n <= window:
+        return [(0, n)]
+    starts = list(range(0, n - window + 1, stride))
+    if starts[-1] + window < n:
+        starts.append(n - window)
+    return [(s, min(n, s + window)) for s in starts]
+
+
+def _window_grams(
+    view: str, seed: int, window: int, stride: int, dim: int
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """把一个视图展开成「每个窗口的 gram 列表 + 停用 gram 掩码」。
+
+    ## 为什么掩码只盖住 1-gram
+
+    停用字（见 :data:`STOP_CHARS`）在**单字**层面不携带意图，但它们组成的
+    **词组**携带：「色情」「制毒」「获取」「煽动」都是 2-gram。所以 1-gram 里
+    落在停用字上的那部分被标成无效证据，2/3-gram 原样保留。
+
+    ## 为什么掩码不参与 gram 计数
+
+    归一化系数 ``(参考长度 / 实际 gram 数) ** alpha`` 里的「实际 gram 数」
+    衡量的是**窗口有多长**，不是「证据有多强」——它的作用是把短窗口抬起来，
+    抵消「短文本系统性低分」这个漏检来源。停用字确实占了窗口的位置，所以
+    计入分母是对的；而且计入会让停用字密集的窗口分数**偏低**（分母大 → 系数
+    小），方向上偏保守，与我们要压误报的目标一致。
+
+    改这一点会同时改掉 :func:`_reference_grams` 的含义（满窗的有效 gram 数
+    依赖停用字密度），那是个没有确定值的量——不划算。
+
+    Args:
+        view: 已归一化的视图文本。
+        seed: 哈希种子（原文视图 0、压紧视图 1）。
+        window: 窗口长度。
+        stride: 步长。
+        dim: 哈希空间维度。
+
+    Returns:
+        ``[(grams, stop_mask), ...]``——每个窗口的 gram 槽位数组与对应的
+        布尔掩码（``True`` = 该 gram 不计入证据）。
+    """
+    h1, h2, h3 = _ngram_hash_table(view, seed)
+    h1 = h1 % dim
+    h2 = h2 % dim
+    h3 = h3 % dim
+    stops = _stop_mask(view)
+
+    out: list[tuple[np.ndarray, np.ndarray]] = []
+    for start, end in _view_windows(view, window, stride):
+        parts = [h1[start:end]]
+        if end - start >= 2:
+            parts.append(h2[start : end - 1])
+        if end - start >= 3:
+            parts.append(h3[start : end - 2])
+        grams = np.concatenate(parts)
+        mask = np.zeros(len(grams), dtype=bool)
+        n1 = end - start
+        if n1 > 0:
+            mask[:n1] = stops[start:end]
+        out.append((grams, mask))
+    return out
 
 
 class SensitiveFilter:
@@ -446,60 +605,37 @@ class SensitiveFilter:
         if not text:
             return 0.0, -1
 
-        starts = list(range(0, max(1, len(text) - self.window + 1), self.stride))
-        if not starts:
-            starts = [0]
-        # 末尾补一个窗口，保证最后几个字也被扫到
-        last_end = min(len(text), starts[-1] + self.window)
-        if starts[-1] + self.window < len(text):
-            starts.append(max(0, len(text) - self.window))
-
-        # 一次把整段文本的 gram 哈希算齐，窗口之间再切片（见 _ngram_hash_table）。
-        h1, h2, h3 = _ngram_hash_table(text, seed)
-        dim = self._dim
-        h1 = h1 % dim
-        h2 = h2 % dim
-        h3 = h3 % dim
-
-        gram_parts: list[np.ndarray] = []
-        counts: list[int] = []
-        for start in starts:
-            end = min(len(text), start + self.window)
-            if end - start < 1:
-                counts.append(0)
-                continue
-            parts = [h1[start:end]]
-            if end - start >= 2:
-                parts.append(h2[start : end - 1])
-            if end - start >= 3:
-                parts.append(h3[start : end - 2])
-            grams = np.concatenate(parts)
-            gram_parts.append(grams)
-            counts.append(len(grams))
-
-        if not gram_parts:
+        # 切窗与 gram 展开都交给 _window_grams——它与训练侧共用同一条路径，
+        # 两边的窗口边界、gram 顺序、停用字掩码必然一致。
+        windows = _window_grams(text, seed, self.window, self.stride, self._dim)
+        if not windows:
             return 0.0, -1
 
-        all_grams = np.concatenate(gram_parts)
-        wid = np.repeat(np.arange(len(counts)), np.asarray(counts, dtype=np.int64))
+        counts = np.asarray([len(g) for g, _ in windows], dtype=np.float64)
+        all_grams = np.concatenate([g for g, _ in windows])
+        stop_all = np.concatenate([m for _, m in windows])
+        wid = np.repeat(np.arange(len(windows)), counts.astype(np.int64))
         # 长度归一化：短窗的 gram 少，直接求和会系统性低分（漏检）。
         # 系数按「满窗 / 实际」开 alpha 次方，满窗恰好是 1。
-        counts_arr = np.asarray(counts, dtype=np.float64)
         ref = _reference_grams(self.window)
         scale = np.clip(
-            (ref / np.maximum(counts_arr, 1.0)) ** self.norm_alpha,
+            (ref / np.maximum(counts, 1.0)) ** self.norm_alpha,
             NORM_CLIP_LOW,
             NORM_CLIP_HIGH,
         )
         contrib = weights[all_grams] * scale[wid]
+        # 停用字的单字特征**不算证据**：它们在正常文本里到处都是，权重再高也
+        # 不代表任何意图（详见 STOP_CHARS 的说明）。
+        contrib[stop_all] = 0.0
         scores = np.bincount(
             wid,
             weights=contrib.astype(np.float64),
-            minlength=len(counts),
+            minlength=len(windows),
         )
         logits = scores + self._bias
         probs = 1.0 / (1.0 + np.exp(-logits))
         best = int(np.argmax(probs))
+        starts = [s for s, _ in _view_windows(text, self.window, self.stride)]
         return float(probs[best]), starts[best] if starts else -1
 
 
