@@ -67,6 +67,10 @@ class EventType(StrEnum):
     # V4：某个技能因为预算或数量上限**没有注入**提示词（§22.6）。
     # 不是终止事件——它只是告诉运维「为什么这个技能没生效」。
     SKILL_SKIPPED = "skill_skipped"
+    # V4：某台 MCP 服务器不可用（§21.12）。不是终止事件——工具失败按 §17.5
+    # 的口径回灌给模型，run 该继续还是继续；这条只是让前端提示「这个 Agent
+    # 的一部分能力现在用不了」。
+    MCP_UNAVAILABLE = "mcp_unavailable"
     ERROR = "error"
     DONE = "done"
     # V3.1：人工审批的三个事件。它们都**不是**终止事件——「等审批」时流要继续

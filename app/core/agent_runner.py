@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -20,6 +21,7 @@ from openai import APIError, AsyncOpenAI, NOT_GIVEN
 from app.config.settings import settings
 from app.core.crypto import decrypt
 from app.core.errors import RunCancelled, SensitiveContentError, ToolLoopExceeded
+from app.core.mcp.naming import is_mcp_name, parse_qualified_name
 from app.core.run_hub import RunEventDTO, RunHub
 from app.core.sensitive import screen_text
 from app.core.tools import build_openai_tools, execute_tool, known_tool_names
@@ -45,6 +47,40 @@ def _truncate(text: str) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + f"\n…（结果过长，已截断到 {limit} 字符）"
+
+
+def _tool_source(tool_calls: list[dict]) -> str:
+    """一批工具调用的来源：``builtin`` 还是 ``mcp``。
+
+    Args:
+        tool_calls: OpenAI 的 tool_calls 列表。
+
+    Returns:
+        只要有一个是 MCP 限定名就返回 ``"mcp"``，否则返回 ``"builtin"``。
+    """
+    for tc in tool_calls or ():
+        fn = (tc or {}).get("function") or {}
+        if is_mcp_name(fn.get("name") or ""):
+            return "mcp"
+    return "builtin"
+
+
+def _mcp_server_of(tool_name: str) -> str | None:
+    """工具名属于哪台 MCP 服务器。
+
+    Args:
+        tool_name: 模型请求的工具名。
+
+    Returns:
+        服务器 code；不是 MCP 工具或名字形状不对时返回 ``None``。
+    """
+    if not is_mcp_name(tool_name):
+        return None
+    try:
+        server_code, _ = parse_qualified_name(tool_name)
+    except ValueError:
+        return None
+    return server_code
 
 
 @dataclass(slots=True)
@@ -213,7 +249,7 @@ class AgentRunner:
 
         try:
             while True:
-                kwargs = self._build_kwargs(messages, want_usage)
+                kwargs = await self._build_kwargs(messages, want_usage)
                 try:
                     stream = await client.chat.completions.create(**kwargs)
                     break
@@ -266,7 +302,13 @@ class AgentRunner:
                 result.tool_calls = [pending_tool_calls[i] for i in sorted(pending_tool_calls)]
                 await self._emit(
                     EventType.TOOL_CALL,
-                    {"node": self.node_id, "toolCalls": result.tool_calls},
+                    {
+                        "node": self.node_id,
+                        "toolCalls": result.tool_calls,
+                        # 源信息让前端能区分「内置工具」与「外部服务器工具」
+                        # （§21.12）。一批调用里只要有一个是 MCP 的，整批就算 MCP。
+                        "source": _tool_source(result.tool_calls),
+                    },
                 )
             return result
 
@@ -362,14 +404,28 @@ class AgentRunner:
             for tc in result.tool_calls:
                 fn = tc.get("function") or {}
                 name = fn.get("name") or ""
+                started = time.monotonic()
                 ok, output = await execute_tool(
                     name, fn.get("arguments") or "{}", allowed=self._allowed_tools()
                 )
+                duration_ms = int((time.monotonic() - started) * 1000)
                 output = _truncate(output)
+                server = _mcp_server_of(name)
                 await self._emit(
                     EventType.TOOL_RESULT,
-                    {"tool": name, "ok": ok, "summary": output[:200]},
+                    {
+                        "tool": name,
+                        "ok": ok,
+                        "summary": output[:200],
+                        # §21.12：外部工具比内置工具慢得多，前端要给不同的
+                        # 超时观感，所以耗时与来源都要带出来。
+                        "source": "mcp" if server else "builtin",
+                        "server": server,
+                        "durationMs": duration_ms,
+                    },
                 )
+                if server and not ok:
+                    await self._maybe_emit_mcp_unavailable(server, name)
                 convo.append({
                     "role": "tool",
                     "tool_call_id": tc.get("id") or "",
@@ -378,6 +434,29 @@ class AgentRunner:
                 })
 
         raise ToolLoopExceeded(max_rounds)
+
+    async def _maybe_emit_mcp_unavailable(self, server: str, tool: str) -> None:
+        """MCP 工具调不通、且服务器已被判为不可用时，发一条 ``mcp_unavailable``。
+
+        这条事件是**非终止**的（§21.12）：它只告诉前端「这个 Agent 的一部分
+        能力现在不可用」，run 该继续还是继续——工具失败按 §17.5 的口径回灌给
+        模型，让模型自己决定换一条路。
+
+        只在「连接管理器确实把这台服务器标成不可用」时才发：工具本身报错
+        （参数不对、工具抛异常）不代表服务器掉线。
+        """
+        from app.core.mcp.manager import mcp_manager
+
+        if mcp_manager.is_available(server):
+            return
+        await self._emit(
+            EventType.MCP_UNAVAILABLE,
+            {
+                "server": server,
+                "reason": mcp_manager.unavailable_reason(server) or "连接不可用",
+                "tool": tool,
+            },
+        )
 
     # ------------------------------------------------------------- 内部
 
@@ -527,7 +606,7 @@ class AgentRunner:
         kept.reverse()
         return [m for turn in [head, *kept] for m in turn]
 
-    def _build_kwargs(self, messages: list[dict], want_usage: bool) -> dict[str, Any]:
+    async def _build_kwargs(self, messages: list[dict], want_usage: bool) -> dict[str, Any]:
         """拼 ``chat.completions.create`` 的参数。
 
         ``extra_params`` 里的自定义键（top_p、seed、thinking 等）在最后覆盖基础
@@ -552,7 +631,7 @@ class AgentRunner:
             "max_tokens": self.agent.max_tokens or 2048,
             "stream": True,
         }
-        tools = build_openai_tools(self.agent.tools)
+        tools = await build_openai_tools(self.agent.tools)
         if tools:
             kwargs["tools"] = tools
             if extra.get("tool_choice") is not None:

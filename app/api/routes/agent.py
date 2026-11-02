@@ -33,7 +33,20 @@ async def _skill_code_sets(db) -> tuple[set[str], set[str]]:
     return all_codes, enabled
 
 
-def _to_out(agent, known_skills: set[str] | None = None) -> AgentOut:
+async def _known_mcp_names(db) -> set[str]:
+    """已发现的 MCP 工具限定名集合。
+
+    内置工具的名字在注册表里，是全集；MCP 工具的名字得从 ``mcp_tool`` 快照查
+    ——服务器从没连过时快照是空的，于是保存期直接拒（§21.8）。
+    """
+    from app.repo.mcp_repo import mcp_tool_repo
+
+    return await mcp_tool_repo.qualified_names(db)
+
+
+def _to_out(
+    agent, known_skills: set[str] | None = None, known_mcp: set[str] | None = None
+) -> AgentOut:
     """ORM ``Agent`` → 对外响应模型（内部转换层，不直接暴露给调用方）。
 
     这一层同时是**密钥边界**：``api_key_cipher`` 绝不外泄，只暴露
@@ -48,6 +61,7 @@ def _to_out(agent, known_skills: set[str] | None = None) -> AgentOut:
     Args:
         agent: ORM ``Agent`` 实例（来自 repo 查询）。
         known_skills: 库里已存在的技能 code 集合，用来过滤失效的绑定。
+        known_mcp: 已发现的 MCP 工具限定名集合，用来过滤失效的绑定。
 
     Returns:
         ``AgentOut``。``tools`` 只保留**已注册**的工具名（V3.2）——读的时候
@@ -64,7 +78,7 @@ def _to_out(agent, known_skills: set[str] | None = None) -> AgentOut:
         base_url=agent.base_url,
         temperature=float(agent.temperature or 0.7),
         max_tokens=agent.max_tokens or 2048,
-        tools=known_tool_names(agent.tools),
+        tools=known_tool_names(agent.tools, known_mcp),
         skills=known_skill_codes(agent.skills, known_skills),
         extra_params=agent.extra_params,
         enabled=bool(agent.enabled),
@@ -84,6 +98,7 @@ async def create_agent(payload: AgentCreate, db: DbSession) -> AgentOut:
     if await agent_repo.get_by_code(db, payload.code):
         raise ConflictError(f"Agent code 已存在：{payload.code}")
     all_codes, enabled_codes = await _skill_code_sets(db)
+    known_mcp = await _known_mcp_names(db)
     try:
         skills = normalize_skill_codes(payload.skills, enabled_codes)
     except SkillConfigError as exc:
@@ -99,12 +114,12 @@ async def create_agent(payload: AgentCreate, db: DbSession) -> AgentOut:
         api_key_cipher=encrypt(payload.api_key),
         temperature=payload.temperature,
         max_tokens=payload.max_tokens,
-        tools=normalize_tool_names(payload.tools),
+        tools=normalize_tool_names(payload.tools, known_mcp),
         skills=skills,
         extra_params=payload.extra_params,
         enabled=1 if payload.enabled else 0,
     )
-    return _to_out(agent, all_codes)
+    return _to_out(agent, all_codes, known_mcp)
 
 
 @router.get("", response_model=list[AgentOut])
@@ -122,7 +137,8 @@ async def list_agents(
     """
     agents = await agent_repo.list(db, only_enabled=only_enabled, limit=limit, offset=offset)
     all_codes, _ = await _skill_code_sets(db)
-    return [_to_out(a, all_codes) for a in agents]
+    known_mcp = await _known_mcp_names(db)
+    return [_to_out(a, all_codes, known_mcp) for a in agents]
 
 
 @router.get("/{code}", response_model=AgentOut)
@@ -135,7 +151,8 @@ async def get_agent(code: str, db: DbSession) -> AgentOut:
     if agent is None:
         raise NotFoundError(f"Agent 不存在：{code}")
     all_codes, _ = await _skill_code_sets(db)
-    return _to_out(agent, all_codes)
+    known_mcp = await _known_mcp_names(db)
+    return _to_out(agent, all_codes, known_mcp)
 
 
 @router.put("/{code}", response_model=AgentOut)
@@ -147,8 +164,9 @@ async def update_agent(code: str, payload: AgentUpdate, db: DbSession) -> AgentO
     fields = payload.model_dump(exclude_unset=True)
     if "api_key" in fields:
         fields["api_key_cipher"] = encrypt(fields.pop("api_key"))
+    known_mcp = await _known_mcp_names(db)
     if "tools" in fields:
-        fields["tools"] = normalize_tool_names(fields["tools"])
+        fields["tools"] = normalize_tool_names(fields["tools"], known_mcp)
     if "skills" in fields:
         _, enabled_codes = await _skill_code_sets(db)
         try:
@@ -164,7 +182,7 @@ async def update_agent(code: str, payload: AgentUpdate, db: DbSession) -> AgentO
     if agent is None:
         raise NotFoundError(f"Agent 不存在：{code}")
     all_codes, _ = await _skill_code_sets(db)
-    return _to_out(agent, all_codes)
+    return _to_out(agent, all_codes, known_mcp)
 
 
 @router.get("/{code}/prompt-preview", response_model=SkillPromptPreviewOut)

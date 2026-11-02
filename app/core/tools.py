@@ -19,6 +19,21 @@ schema 展开给模型，执行逻辑也从注册表里取。
 
 ``tools`` 里写的是名字，schema 与执行器都从同一张表取，因此「模型看到的描述」
 与「服务端实际做的事」不可能对不上——这是透传方案的根本缺陷。
+
+## V4：MCP 工具进了同一张表（§21）
+
+MCP 把「表的另一半」交给外部：工具的 schema 与执行器**天然同源**——MCP 服务器
+自己声明参数形状、自己执行（§21.2）。所以这里不是「多了一个工具来源」，而是
+**同一个契约的两种填表方式**。
+
+名字形态上分成两类：
+
+- 内置名（``calc``）——从 :data:`TOOL_REGISTRY` 取；
+- MCP 限定名（``mcp__<server>__<tool>``）——从 ``mcp_tool`` 快照取。
+
+四个对外函数（:func:`normalize_tool_names` / :func:`known_tool_names` /
+:func:`build_openai_tools` / :func:`execute_tool`）都按这个前缀分流，**闭环本身
+一个字都不改**（§21.13）。
 """
 
 from __future__ import annotations
@@ -32,7 +47,8 @@ from typing import Any
 
 from app.config.settings import settings
 from app.core.arith import ArithError, evaluate
-from app.core.errors import BadRequestError
+from app.core.errors import BadRequestError, SensitiveContentError
+from app.core.mcp.naming import is_mcp_name
 
 logger = logging.getLogger(__name__)
 
@@ -257,7 +273,9 @@ def get_tool(name: str) -> ToolSpec | None:
     return TOOL_REGISTRY.get(name)
 
 
-def normalize_tool_names(raw: Any) -> list[str] | None:
+def normalize_tool_names(
+    raw: Any, known_mcp: set[str] | None = None
+) -> list[str] | None:
     """把 agent 的 ``tools`` 配置规整成「已注册的工具名」列表。
 
     接受 ``None``（不用工具）、字符串数组、单个字符串。不认识的工具名
@@ -265,6 +283,8 @@ def normalize_tool_names(raw: Any) -> list[str] | None:
 
     Args:
         raw: 原始配置值。
+        known_mcp: 已发现的 MCP 限定名集合。``None`` 表示「没有可用的 MCP 工具」
+            （没查库，或一台都没发现）——此时任何 ``mcp__`` 名字都会被拒。
 
     Returns:
         去重后的工具名列表；没有工具时返回 ``None``。
@@ -289,7 +309,16 @@ def normalize_tool_names(raw: Any) -> list[str] | None:
         name = item.strip()
         if not name:
             continue
-        if name not in TOOL_REGISTRY:
+        if is_mcp_name(name):
+            # MCP 限定名要到 ``mcp_tool`` 快照里查（§21.8）。服务器从未连过时
+            # 快照是空的 → 400，并提示先刷新目录——宁可让配置保存失败并给出
+            # 可执行的提示，也不要留一个「配了但模型看不见」的哑配置。
+            if known_mcp is None or name not in known_mcp:
+                raise ToolConfigError(
+                    f"未知 MCP 工具「{name}」。它要么还不存在，要么所属的服务器"
+                    "尚未发现工具——先到「MCP 服务器」里刷新一次工具目录。"
+                )
+        elif name not in TOOL_REGISTRY:
             raise ToolConfigError(
                 f"未知工具「{name}」，可用的有：{'、'.join(tool_names())}"
             )
@@ -298,7 +327,7 @@ def normalize_tool_names(raw: Any) -> list[str] | None:
     return names or None
 
 
-def known_tool_names(raw: Any) -> list[str] | None:
+def known_tool_names(raw: Any, known_mcp: set[str] | None = None) -> list[str] | None:
     """宽容地读出库里存的工具名——**只读，不报错**。
 
     与 :func:`normalize_tool_names` 相反的方向：那个用于**写入**（配置不合法就
@@ -310,18 +339,32 @@ def known_tool_names(raw: Any) -> list[str] | None:
 
     Args:
         raw: 库里存的值（通常是 list，也可能是 None 或别的形状）。
+        known_mcp: 已发现的 MCP 限定名集合。给了就把不在集合里的 MCP 名字丢掉
+            （服务器被删了之后，残留的绑定不该继续显示）；没给就只做形状检查。
 
     Returns:
-        已注册的工具名列表；一个都没有时返回 ``None``。
+        可用的工具名列表；一个都没有时返回 ``None``。
     """
     if not isinstance(raw, list):
         return None
-    names = [n for n in raw if isinstance(n, str) and n in TOOL_REGISTRY]
+    names: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if not name:
+            continue
+        if is_mcp_name(name):
+            if known_mcp is None or name in known_mcp:
+                names.append(name)
+            continue
+        if name in TOOL_REGISTRY:
+            names.append(name)
     # 去重但保持原有顺序
     return list(dict.fromkeys(names)) or None
 
 
-def build_openai_tools(names: list[str] | None) -> list[dict] | None:
+async def build_openai_tools(names: list[str] | None) -> list[dict] | None:
     """把工具名列表展开成 OpenAI 的 ``tools`` 参数。
 
     **先按字符串过滤**：``tools`` 列是 JSON，V3.2 之前存过 OpenAI 的 function
@@ -329,6 +372,11 @@ def build_openai_tools(names: list[str] | None) -> list[dict] | None:
     ``TypeError: cannot use 'dict' as a dict key``——而这个异常在运行期被编排器
     当成「节点失败」重试 3 次，最后 run 以一条看不懂的 TypeError 收尾。
     读路径上有 :func:`known_tool_names` 做同样的宽容处理，运行期这里也要有。
+
+    MCP 工具（``mcp__`` 开头）的 schema 从 ``mcp_tool`` 快照取。**离线服务器的
+    工具不展开**（§21.9）——模型看不见就不会去调一个调不通的工具；这比「照常
+    展开、每次调用都失败」好：后者会让模型反复重试同一个坏工具，白烧轮次与
+    token，最后撞上轮次上限失败。
 
     Args:
         names: 工具名列表。
@@ -338,12 +386,20 @@ def build_openai_tools(names: list[str] | None) -> list[dict] | None:
     """
     if not names:
         return None
+    mcp_specs = await _mcp_openai_specs(names)
     specs: list[dict] = []
     for name in names:
         if not isinstance(name, str):
             # 脏数据（V3.2 之前的 function schema）：读路径已经宽容过，
             # 运行期也必须宽容——这里抛出去会让整个节点失败。
             logger.warning("跳过非法工具配置：%r", name)
+            continue
+        if is_mcp_name(name):
+            spec = mcp_specs.get(name)
+            if spec is None:
+                logger.warning("跳过不可用的 MCP 工具：%s", name)
+                continue
+            specs.append(spec)
             continue
         spec = TOOL_REGISTRY.get(name)
         if spec is None:
@@ -352,6 +408,50 @@ def build_openai_tools(names: list[str] | None) -> list[dict] | None:
             continue
         specs.append(spec.to_openai())
     return specs or None
+
+
+async def _mcp_openai_specs(names: list[str]) -> dict[str, dict]:
+    """把 MCP 工具名展开成 OpenAI function schema。
+
+    只展开**在线**服务器的工具：离线服务器的工具仍在快照里（保存期校验、后台
+    勾选框都要用），但不给模型看。
+
+    Args:
+        names: 工具名列表（只有 ``mcp__`` 开头的会被处理）。
+
+    Returns:
+        限定名 → OpenAI function 条目的字典。
+    """
+    wanted = [n for n in names if isinstance(n, str) and is_mcp_name(n)]
+    if not wanted:
+        return {}
+    from app.config.db import SessionLocal
+    from app.core.mcp.manager import mcp_manager
+    from app.repo.mcp_repo import mcp_server_repo, mcp_tool_repo
+
+    out: dict[str, dict] = {}
+    async with SessionLocal() as db:
+        rows = await mcp_tool_repo.list_all(db)
+        servers = await mcp_server_repo.map_by_id(db)
+    for row in rows:
+        if row.qualified_name not in wanted:
+            continue
+        server = servers.get(row.server_id)
+        if server is None or not server.enabled:
+            continue
+        if not mcp_manager.is_available(server.code):
+            # 服务器不可用 → 不展开（§21.9）
+            continue
+        schema = row.input_schema or {"type": "object", "properties": {}}
+        out[row.qualified_name] = {
+            "type": "function",
+            "function": {
+                "name": row.qualified_name,
+                "description": row.description or f"MCP 工具 {row.tool_name}",
+                "parameters": schema,
+            },
+        }
+    return out
 
 
 async def execute_tool(
@@ -376,6 +476,9 @@ async def execute_tool(
     """
     if allowed is not None and name not in allowed:
         return False, f"工具「{name}」不在本 Agent 的授权列表里，不能调用。"
+    if is_mcp_name(name):
+        # MCP 分支：名字 → 服务器 → tools/call（§21.9）。白名单已经校验过。
+        return await _execute_mcp_tool(name, arguments)
     spec = TOOL_REGISTRY.get(name)
     if spec is None:
         return False, (
@@ -392,9 +495,75 @@ async def execute_tool(
     except ToolCallError as exc:
         # 参数/输入不合法：消息本身就是给模型看的说明，原样回灌
         return False, f"错误：{exc}"
+    except SensitiveContentError:
+        # 敏感内容**不回灌**（§20 的口径）：它一路往上抛，让 run 以敏感内容
+        # 错误收尾，而不是把这段内容塞回给模型。
+        raise
     except Exception as exc:  # noqa: BLE001 - 工具是第三方边界，异常一律回灌给模型
         logger.warning("工具 %s 执行失败：%s", name, exc)
         return False, f"错误：工具执行失败（{type(exc).__name__}）：{exc}"
+
+
+async def _execute_mcp_tool(name: str, arguments: str | dict) -> tuple[bool, str]:
+    """执行一个 MCP 工具。
+
+    分发规则（§21.9）：``mcp__<server>__<tool>`` → 查服务器 → ``tools/call`` →
+    结果映射成 ``(ok, text)``。
+
+    Args:
+        name: MCP 限定名。
+        arguments: 工具参数。
+
+    Returns:
+        ``(ok, text)``。``ok`` 为 False 时 ``text`` 是给模型看的错误说明。
+    """
+    from app.config.db import SessionLocal
+    from app.core.mcp.manager import mcp_manager
+    from app.core.mcp.mapping import map_call_result
+    from app.core.mcp.naming import parse_qualified_name
+    from app.core.sensitive import screen_text
+    from app.repo.mcp_repo import mcp_server_repo
+
+    try:
+        server_code, tool_name = parse_qualified_name(name)
+    except ValueError as exc:
+        return False, f"错误：{exc}"
+
+    try:
+        args = _parse_args(arguments)
+    except ToolCallError as exc:
+        return False, f"错误：{exc}"
+
+    async with SessionLocal() as db:
+        server = await mcp_server_repo.get_by_code(db, server_code)
+    if server is None:
+        return False, f"错误：MCP 服务器「{server_code}」不存在。"
+    if not server.enabled:
+        return False, f"错误：MCP 服务器「{server_code}」已停用。"
+
+    try:
+        result = await mcp_manager.call_tool(
+            server, tool_name, args, timeout=float(server.timeout_sec or 30)
+        )
+    except Exception as exc:  # noqa: BLE001 - 外部边界，错误一律回灌给模型
+        logger.warning("MCP 工具 %s 调用失败：%s", name, exc)
+        return False, f"错误：MCP 工具调用失败（{type(exc).__name__}）：{exc}"
+
+    ok, text = map_call_result(result, max_chars=settings.tool_result_max_chars)
+
+    # 工具结果会**直接进 prompt**，它来自第三方服务器，可能含提示词注入或敏感
+    # 内容。§20 的过滤点在「内容进 LLM 之前」，MCP 工具结果与用户输入位置
+    # 一样、性质也一样——不能只过滤用户输入（§21.10 第 ④ 条）。
+    verdict = screen_text(text)
+    if verdict is not None and verdict.hit:
+        logger.warning(
+            "MCP 工具结果命中敏感词：分数 %.3f，位置 %d", verdict.score, verdict.position
+        )
+        raise SensitiveContentError(
+            "工具返回的内容包含不被允许的信息，本次调用已中止",
+            data={"score": verdict.score, "excerpt": verdict.excerpt},
+        )
+    return ok, text
 
 
 def _parse_args(arguments: str | dict) -> dict:
