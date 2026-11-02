@@ -46,6 +46,14 @@ from app.core.errors import (
 )
 from app.core.run_graph import NodeRunner, RunRejected, build_run_graph, recursion_limit
 from app.core.run_hub import RunHub, get_hub
+from app.core.skill_context import (
+    SkillPrompt,
+    SkillPromptPlan,
+    build_skill_messages,
+    reset_current_skill_codes,
+    set_current_skill_codes,
+)
+from app.core.skill_names import known_skill_codes
 from app.core.workflow_def import WorkflowDefinition, WorkflowNode
 from app.models.enums import (
     EventType,
@@ -60,6 +68,7 @@ from app.repo.conversation_repo import conversation_repo
 from app.repo.message_repo import message_repo
 from app.repo.run_approval_repo import run_approval_repo
 from app.repo.run_repo import run_repo
+from app.repo.skill_repo import skill_repo
 from app.repo.workflow_repo import workflow_repo
 
 logger = logging.getLogger(__name__)
@@ -531,82 +540,128 @@ class Orchestrator:
         attempts = settings.node_max_retries + 1
         last_exc: Exception | None = None
 
-        for attempt in range(1, attempts + 1):
-            if self.hub.is_cancelled(run_id):
-                raise RunCancelled("用户取消")
-            try:
-                messages = (
-                    [{"role": MessageRole.SYSTEM.value, "content": agent.system_prompt}]
-                    + context
-                    + [{"role": MessageRole.USER.value, "content": rendered_input}]
-                )
-                await self._start_step(run_id, node, agent, {"input": rendered_input})
-
-                runner = AgentRunner(
-                    agent=agent,
-                    node_id=node.id,
-                    run_id=run_id,
-                    hub=self.hub,
-                    is_cancelled=lambda: self.hub.is_cancelled(run_id),
-                    # **用户撰写的文本**才需要过筛：会话历史里的用户消息 +
-                    # 本轮原始输入。渲染后的 inputTemplate 里混着上游节点的模型
-                    # 产出，那部分已经进过模型了，筛它只会把上游的回答变成下游
-                    # 的「内容违规」，还把责任算到用户头上。
-                    user_texts=[
-                        m["content"]
-                        for m in context
-                        if m.get("role") == MessageRole.USER.value
-                    ]
-                    + [user_input],
-                )
-                result = await runner.run_with_tools(messages)
-                await self._finish_step(
-                    run_id,
-                    node.id,
-                    StepStatus.DONE,
-                    {
-                        "text": result.text,
-                        "toolCalls": result.tool_calls,
-                        "toolRounds": result.tool_rounds,
-                    },
-                )
-                return result
-
-            except RunCancelled:
-                await self._finish_step(run_id, node.id, StepStatus.ERROR, None, "已取消")
-                raise
-            except SensitiveContentError as exc:
-                # 内容被前置过滤拦下：**不重试**。重试同一段内容只会得到同样的
-                # 判定，纯属白等两轮退避。与工具死循环同理——不可恢复的错误要
-                # 立刻失败，而不是拿重试次数去赌。
-                await self._finish_step(
-                    run_id, node.id, StepStatus.ERROR, None, str(exc)
-                )
-                logger.warning("run %s 节点 %s 内容被敏感词过滤拦下", run_id, node.id)
-                raise
-            except ToolLoopExceeded as exc:
-                # 工具死循环**不重试**：重试同一个节点，模型大概率还是同样地陷住，
-                # 白烧一轮 token。直接失败并把「陷住了」告诉用户。
-                await self._finish_step(
-                    run_id, node.id, StepStatus.ERROR, None, str(exc)
-                )
-                logger.warning("run %s 节点 %s 工具调用陷入死循环：%s", run_id, node.id, exc)
-                raise
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                logger.warning(
-                    "run %s 节点 %s 第 %s/%s 次失败：%s",
-                    run_id, node.id, attempt, attempts, exc,
-                )
-                await self._finish_step(run_id, node.id, StepStatus.ERROR, None, str(exc))
-                if attempt >= attempts:
-                    break
-                await asyncio.sleep(settings.node_retry_base_delay * (2 ** (attempt - 1)))
+        # 技能正文与技能白名单在**重试循环之前**取一次：重试是为了让同一个节点
+        # 再试一次，不是让它看到不同的技能版本。
+        skill_plan = await self._build_skill_plan(agent)
+        # 白名单给的是**实际注入了**的那些技能：被预算挡掉的技能，模型压根没
+        # 收到它的指令，自然也不该读到它的资源。
+        token = set_current_skill_codes(set(skill_plan.codes))
+        try:
+            for attempt in range(1, attempts + 1):
                 if self.hub.is_cancelled(run_id):
-                    raise RunCancelled("用户取消") from exc
+                    raise RunCancelled("用户取消")
+                try:
+                    messages = (
+                        [{"role": MessageRole.SYSTEM.value, "content": agent.system_prompt}]
+                        + skill_plan.messages
+                        + context
+                        + [{"role": MessageRole.USER.value, "content": rendered_input}]
+                    )
+                    await self._start_step(run_id, node, agent, {"input": rendered_input})
 
-        assert last_exc is not None
-        raise last_exc
+                    runner = AgentRunner(
+                        agent=agent,
+                        node_id=node.id,
+                        run_id=run_id,
+                        hub=self.hub,
+                        is_cancelled=lambda: self.hub.is_cancelled(run_id),
+                        # **用户撰写的文本**才需要过筛：会话历史里的用户消息 +
+                        # 本轮原始输入。渲染后的 inputTemplate 里混着上游节点的模型
+                        # 产出，那部分已经进过模型了，筛它只会把上游的回答变成下游
+                        # 的「内容违规」，还把责任算到用户头上。
+                        user_texts=[
+                            m["content"]
+                            for m in context
+                            if m.get("role") == MessageRole.USER.value
+                        ]
+                        + [user_input],
+                    )
+                    result = await runner.run_with_tools(messages)
+                    await self._finish_step(
+                        run_id,
+                        node.id,
+                        StepStatus.DONE,
+                        {
+                            "text": result.text,
+                            "toolCalls": result.tool_calls,
+                            "toolRounds": result.tool_rounds,
+                        },
+                    )
+                    return result
+
+                except RunCancelled:
+                    await self._finish_step(run_id, node.id, StepStatus.ERROR, None, "已取消")
+                    raise
+                except SensitiveContentError as exc:
+                    # 内容被前置过滤拦下：**不重试**。重试同一段内容只会得到同样的
+                    # 判定，纯属白等两轮退避。与工具死循环同理——不可恢复的错误要
+                    # 立刻失败，而不是拿重试次数去赌。
+                    await self._finish_step(
+                        run_id, node.id, StepStatus.ERROR, None, str(exc)
+                    )
+                    logger.warning("run %s 节点 %s 内容被敏感词过滤拦下", run_id, node.id)
+                    raise
+                except ToolLoopExceeded as exc:
+                    # 工具死循环**不重试**：重试同一个节点，模型大概率还是同样地陷住，
+                    # 白烧一轮 token。直接失败并把「陷住了」告诉用户。
+                    await self._finish_step(
+                        run_id, node.id, StepStatus.ERROR, None, str(exc)
+                    )
+                    logger.warning("run %s 节点 %s 工具调用陷入死循环：%s", run_id, node.id, exc)
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    logger.warning(
+                        "run %s 节点 %s 第 %s/%s 次失败：%s",
+                        run_id, node.id, attempt, attempts, exc,
+                    )
+                    await self._finish_step(run_id, node.id, StepStatus.ERROR, None, str(exc))
+                    if attempt >= attempts:
+                        break
+                    await asyncio.sleep(settings.node_retry_base_delay * (2 ** (attempt - 1)))
+                    if self.hub.is_cancelled(run_id):
+                        raise RunCancelled("用户取消") from exc
+
+            assert last_exc is not None
+            raise last_exc
+        finally:
+            # 必须复位：不复位的话下一个节点会继承上一个节点的技能白名单，
+            # 于是它能读到不该读的资源。
+            reset_current_skill_codes(token)
+
+    async def _build_skill_plan(self, agent) -> SkillPromptPlan:
+        """读出该 Agent 绑定的技能正文，拼成 system 消息（设计文档 §22.6）。
+
+        技能正文取的是**执行时刻**数据库里的内容——技能改了，下一次节点执行就用
+        新的版本。已在跑的 run 不受影响（它每次进节点都重新读）。
+
+        停用的技能不进提示词：绑着不等于生效，停用是「先别用它」的意思。
+
+        Args:
+            agent: ORM ``Agent`` 实例。
+
+        Returns:
+            :class:`SkillPromptPlan`：要注入的消息、被跳过的技能与原因、实际
+            注入的技能 code。
+        """
+        codes = known_skill_codes(agent.skills)
+        if not codes:
+            return SkillPromptPlan(messages=[], skipped=[], codes=[])
+        async with SessionLocal() as db:
+            rows = await skill_repo.list_by_codes(db, codes)
+        prompts = [
+            SkillPrompt(code=s.code, name=s.name, version=s.version, body=s.body)
+            for s in rows
+            if s.enabled
+        ]
+        plan = build_skill_messages(
+            prompts,
+            budget=settings.skill_prompt_budget,
+            max_count=settings.skill_max_count,
+        )
+        for code, reason in plan.skipped:
+            logger.warning("技能 %s 未注入：%s", code, reason)
+        return plan
 
     # ------------------------------------------------------------- 辅助
 

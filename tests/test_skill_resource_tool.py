@@ -11,8 +11,12 @@ _counter = itertools.count()
 
 
 async def _make_skill(db, code: str | None = None):
-    """建一个技能，返回它。"""
-    code = code or f"sk_{next(_counter)}"
+    """建一个技能，返回它。
+
+    code 前缀与别的测试文件错开：测试库是 session 级建表、用例之间不清理，
+    同名技能会撞唯一约束。
+    """
+    code = code or f"res_{next(_counter)}"
     return await skill_repo.create(
         db, code=code, name=code, description="d", body="b", content_hash="h"
     )

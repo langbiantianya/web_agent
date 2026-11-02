@@ -19,7 +19,7 @@ Agent Skills 的标准做法是三级渐进披露：发现（name+description）
 from __future__ import annotations
 
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,9 @@ class SkillPromptPlan:
     messages: list[dict]
     # 被跳过的技能与原因：(code, reason)。
     skipped: list[tuple[str, str]]
+    # **实际注入了**的技能 code。工具侧的技能白名单要用它——被预算挡掉的技能，
+    # 模型压根没收到它的指令，自然也不该读到它的资源。
+    codes: list[str] = field(default_factory=list)
 
 
 def build_skill_messages(
@@ -57,6 +60,7 @@ def build_skill_messages(
     """
     messages: list[dict] = []
     skipped: list[tuple[str, str]] = []
+    codes: list[str] = []
     used = 0
     for index, skill in enumerate(skills):
         if index >= max_count:
@@ -68,7 +72,8 @@ def build_skill_messages(
             continue
         used += cost
         messages.append({"role": "system", "content": skill.body})
-    return SkillPromptPlan(messages=messages, skipped=skipped)
+        codes.append(skill.code)
+    return SkillPromptPlan(messages=messages, skipped=skipped, codes=codes)
 
 
 # ---------------------------------------------------------------- 上下文变量
