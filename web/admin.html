@@ -93,6 +93,15 @@
   .tool-pick input { width: auto; margin: 2px 0 0; }
   .tool-pick .tn { display: inline; margin: 0; font-size: 13px; color: var(--text); font-weight: 600; min-width: 46px; }
   .tool-pick .td { display: inline; margin: 0; font-size: 12px; color: var(--dim); }
+  /* MCP 工具按服务器分组（设计文档 §21.12）：一个长列表里
+     mcp__weather__get_weather 和 mcp__weather__get_forecast 混在一起，
+     看不出来自哪台服务器。 */
+  .tool-grp { margin-bottom: 10px; }
+  .tool-grp-hd {
+    display: block; font-size: 11px; letter-spacing: .04em; color: var(--dim);
+    text-transform: uppercase; margin-bottom: 5px; padding-bottom: 3px;
+    border-bottom: 1px solid var(--border);
+  }
 
   .items { max-height: calc(100vh - 230px); overflow-y: auto; }
   .items > div[data-act] {
@@ -297,6 +306,39 @@ async function loadTools() {
   }
 }
 
+/** 渲染工具勾选框：内置工具一组，MCP 工具**按服务器分组**（设计文档 §21.12）。
+
+    一个长列表里 mcp__weather__get_weather 和 mcp__weather__get_forecast 混在
+    一起，看不出来自哪台服务器——分组之后一眼就知道每个工具归谁管。
+
+    @param {Array} tools  /api/tools 返回的条目（带 source 与 server 字段）。
+    @param {Set} picked   已勾选的工具名。
+    @returns {string} HTML 片段。
+*/
+function renderToolGroups(tools, picked) {
+  if (!tools || !tools.length) {
+    return '<div class="muted">服务端没有可用工具（工具目录拉取失败？）</div>';
+  }
+  const BUILTIN = "__builtin__";
+  const groups = new Map();
+  for (const t of tools) {
+    const key = t.source === "mcp" ? (t.server || "未分组") : BUILTIN;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  }
+  const rows = (list) => list.map(t => `
+        <label class="tool-pick">
+          <input type="checkbox" data-tool="${esc(t.name)}" ${picked.has(t.name) ? "checked" : ""}>
+          <span class="tn">${esc(t.name)}</span><span class="td">${esc(t.description)}</span>
+        </label>`).join("");
+  const out = [];
+  for (const [key, list] of groups) {
+    const title = key === BUILTIN ? "内置工具" : "MCP · " + key;
+    out.push(`<div class="tool-grp"><span class="tool-grp-hd">${esc(title)}</span>${rows(list)}</div>`);
+  }
+  return out.join("");
+}
+
 async function loadAgents() {
   state.agents = await api("/api/agents?limit=200");
   const el = $("agentList");
@@ -332,13 +374,7 @@ function renderAgentForm() {
   const keyHint = a.isNew ? "" : (a.has_api_key ? "已配置；留空表示保持不变" : "尚未配置");
   // 工具勾选：选项来自服务端注册表，已勾的按 Agent 已存的名字回填
   const picked = new Set(Array.isArray(a.tools) ? a.tools : []);
-  const toolRows = state.tools.length
-    ? state.tools.map(t => `
-        <label class="tool-pick">
-          <input type="checkbox" data-tool="${esc(t.name)}" ${picked.has(t.name) ? "checked" : ""}>
-          <span class="tn">${esc(t.name)}</span><span class="td">${esc(t.description)}</span>
-        </label>`).join("")
-    : '<div class="muted">服务端没有可用工具（工具目录拉取失败？）</div>';
+  const toolRows = renderToolGroups(state.tools, picked);
 
   box.innerHTML = `
     <div class="grid2">
