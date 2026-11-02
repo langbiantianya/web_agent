@@ -245,9 +245,44 @@ async def _skill_exec(args: dict) -> str:
             timeout_ms=raw_timeout,
             allowed_codes=current_skill_codes(),
         )
+    # 无论成功还是失败，脚本输出都要过一遍敏感词过滤——失败的 stderr 里同样可能
+    # 带敏感内容，而它照样会被回灌给模型（§22.13）。
+    _screen_tool_output(text, "skill_exec")
     if not ok:
         raise ToolCallError(text)
     return text
+
+
+def _screen_tool_output(text: str, tool_name: str) -> None:
+    """工具结果回灌前的敏感词兜底（§20、§21.10 第 ④ 条、§22.13）。
+
+    工具结果会**直接进 prompt**，它来自第三方（MCP 服务器、技能脚本），可能含
+    提示词注入内容，也可能是敏感内容。§20 的过滤点在「内容进 LLM 之前」，
+    工具结果与用户输入位置一样、性质也一样——不能只过滤用户输入。
+
+    命中时按「拒绝」处理：**不回灌**，一路抛上去让 run 以敏感内容错误收尾。
+
+    Args:
+        text: 工具返回的文本。
+        tool_name: 工具名（日志里用）。
+
+    Raises:
+        SensitiveContentError: 命中敏感词。
+    """
+    from app.core.sensitive import screen_text
+
+    verdict = screen_text(text)
+    if verdict is not None and verdict.hit:
+        logger.warning(
+            "工具 %s 的结果命中敏感词：分数 %.3f，位置 %d",
+            tool_name,
+            verdict.score,
+            verdict.position,
+        )
+        raise SensitiveContentError(
+            "工具返回的内容包含不被允许的信息，本次调用已中止",
+            data={"score": verdict.score, "excerpt": verdict.excerpt},
+        )
 
 
 # 注册表：名字 → 工具。**加新工具只需要在这里加一条**。
@@ -650,7 +685,6 @@ async def _execute_mcp_tool(name: str, arguments: str | dict) -> tuple[bool, str
     from app.core.mcp.manager import mcp_manager
     from app.core.mcp.mapping import map_call_result
     from app.core.mcp.naming import parse_qualified_name
-    from app.core.sensitive import screen_text
     from app.repo.mcp_repo import mcp_server_repo
 
     try:
@@ -683,15 +717,7 @@ async def _execute_mcp_tool(name: str, arguments: str | dict) -> tuple[bool, str
     # 工具结果会**直接进 prompt**，它来自第三方服务器，可能含提示词注入或敏感
     # 内容。§20 的过滤点在「内容进 LLM 之前」，MCP 工具结果与用户输入位置
     # 一样、性质也一样——不能只过滤用户输入（§21.10 第 ④ 条）。
-    verdict = screen_text(text)
-    if verdict is not None and verdict.hit:
-        logger.warning(
-            "MCP 工具结果命中敏感词：分数 %.3f，位置 %d", verdict.score, verdict.position
-        )
-        raise SensitiveContentError(
-            "工具返回的内容包含不被允许的信息，本次调用已中止",
-            data={"score": verdict.score, "excerpt": verdict.excerpt},
-        )
+    _screen_tool_output(text, name)
     return ok, text
 
 
