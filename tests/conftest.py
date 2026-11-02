@@ -38,6 +38,9 @@ for _stale in (
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB.as_posix()}"
 os.environ["SECRET_KEY"] = "test-secret-key-0123456789"
 os.environ["DEBUG"] = "false"
+# 管理员门禁的密钥（V4）。测试里要能以管理员身份调写接口；「未配置即拒绝」那条
+# fail-closed 的行为由 tests/test_admin.py 用 monkeypatch 单独钉住。
+os.environ["ADMIN_KEY"] = "test-admin-key"
 # 让批量落库在测试里几乎立即发生，但不关掉批量逻辑本身
 os.environ["EVENT_BATCH_SIZE"] = "5"
 os.environ["EVENT_FLUSH_INTERVAL"] = "0.02"

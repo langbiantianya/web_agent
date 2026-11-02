@@ -72,6 +72,20 @@ class Settings(BaseSettings):
     # 工具结果回灌给模型时的最大字符数：太长会挤爆下一轮的 prompt。
     tool_result_max_chars: int = 4000
 
+    # ---- 管理员门禁（V4，§22.10）----
+    # 写技能 / 注册 MCP 服务器这类「部署级」操作的凭证。**未配置 = 一律拒绝**
+    # （fail-closed）——默认开着等于没有门：技能正文会进 prompt，而 prompt 就是
+    # 模型的行为。
+    admin_key: str = ""
+    # 审计里记的调用方标识。
+    admin_author: str = "admin"
+
+    # ---- 技能（V4，§22.6）----
+    # 技能正文进提示词的总字符预算。超出预算的技能**整个不注入**（宁少勿半）。
+    skill_prompt_budget: int = 4000
+    # 一次最多注入几个技能。
+    skill_max_count: int = 5
+
     # ---- LLM ----
     openai_timeout: float = 120.0
 

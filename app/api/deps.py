@@ -8,6 +8,7 @@ from fastapi import Depends, Header, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.db import get_db
+from app.core.admin import require_admin
 from app.core.errors import UnauthorizedError
 from app.core.ticket import verify_ticket
 
@@ -48,11 +49,32 @@ def resume_from_seq(
 ResumeFrom = Annotated[int, Depends(resume_from_seq)]
 
 
+def admin_key(
+    key: Annotated[
+        str | None, Header(alias="X-Admin-Key", description="管理员密钥")
+    ] = None,
+) -> str:
+    """管理员门禁依赖。
+
+    未配置 ``ADMIN_KEY`` 时一律 401（fail-closed）——这道门后面是「谁能改模型的
+    行为」，默认开着等于没有门。
+
+    Returns:
+        管理员标识，写进审计的 ``author``。
+    """
+    return require_admin(key)
+
+
+AdminDep = Annotated[str, Depends(admin_key)]
+
+
 __all__ = [
+    "AdminDep",
     "DbSession",
     "ResumeFrom",
     "TicketDep",
     "UnauthorizedError",
+    "admin_key",
     "get_db",
     "resume_from_seq",
     "sse_ticket",
