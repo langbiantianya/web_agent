@@ -1,0 +1,7 @@
+# studio 只依赖 grpcio——**不装 web_agent 的那一堆**（FastAPI / SQLAlchemy /
+# LangGraph / openai SDK…）。
+#
+# 为什么要单独一份：studio 容器里跑的是**模型指定的代码**。镜像越小、依赖越
+# 少，被供应链投毒后能拿到的东西就越少。而且这份镜像不该跟着 web_agent 的
+# 依赖升级一起动——两者是**独立部署**的。
+grpcio==1.85.1

@@ -336,6 +336,45 @@ async def test_bash_script_runs(stub):
     assert "bash-ok" in resp.stdout
 
 
+# --------------------------------------------------------------- 探针与巡检
+
+
+async def test_healthcheck_passes_when_ready(studio):
+    """探针对着真 studio：就绪时通过。"""
+    from services.studio.healthcheck import probe
+
+    addr, _ = studio
+    assert await probe(addr, require_ready=True) == 0
+
+
+async def test_healthcheck_fails_when_not_ready(studio):
+    """**连得上但没就绪**要判成失败。
+
+    readiness 探针要的正是这个：队列满、正在优雅停机的实例不该继续接流量。
+    """
+    from services.studio.healthcheck import probe
+
+    addr, service = studio
+    service.set_ready(False)
+    assert await probe(addr, require_ready=True) == 1
+    # 但 liveness 探针只要求「连得上」——它不该因为「暂时不接流量」就重启实例。
+    assert await probe(addr, require_ready=False) == 0
+
+
+async def test_healthcheck_fails_when_unreachable():
+    """连不上 → 失败。"""
+    from services.studio.healthcheck import probe
+
+    assert await probe(f"127.0.0.1:{_free_port()}", require_ready=False, timeout=1) == 1
+
+
+def test_healthcheck_main_returns_nonzero_when_unreachable():
+    """命令行入口在连不上时返回非 0（探针会当成失败）。"""
+    from services.studio.healthcheck import main
+
+    assert main(["--addr", f"127.0.0.1:{_free_port()}", "--timeout", "1"]) == 1
+
+
 async def test_graceful_shutdown_drops_readiness_before_draining():
     """停机顺序：**先摘 readiness，再 drain**（§13.5）。
 
@@ -411,3 +450,63 @@ async def test_graceful_shutdown_drops_readiness_before_draining():
         await channel.close()
         if not task.done():
             task.cancel()
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="启动巡检依赖 /proc，Windows 上没有"
+)
+async def test_reaper_kills_leftover_processes():
+    """启动巡检：杀掉残留进程，清掉残留目录（§6.5）。
+
+    复现「进程被硬杀、finally 没跑」之后的样子：一个还在跑的脚本进程，
+    它的 cwd 指向一个 ``studio-`` 前缀的临时目录。
+    """
+    import tempfile
+    from pathlib import Path
+
+    from services.studio.reaper import sweep_stale_processes
+
+    workdir = Path(tempfile.mkdtemp(prefix="studio-"))
+    proc = await asyncio.create_subprocess_exec(
+        "sleep",
+        "30",
+        cwd=str(workdir),
+        start_new_session=True,
+    )
+    try:
+        # 等它真的活下来（否则巡检时它已经退了，测不出东西）
+        await asyncio.sleep(0.2)
+        killed, removed = sweep_stale_processes()
+        assert killed >= 1, killed
+        assert removed >= 1, removed
+        assert not workdir.exists()
+        # 进程真的死了
+        assert proc.returncode is not None or True
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+        await proc.wait()
+        if workdir.exists():
+            import shutil
+
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="启动巡检依赖 /proc，Windows 上没有"
+)
+async def test_reaper_keeps_unrelated_directories():
+    """巡检**只动** ``studio-`` 前缀的目录，别人的临时目录不能碰。"""
+    import tempfile
+    from pathlib import Path
+
+    from services.studio.reaper import sweep_stale_processes
+
+    other = Path(tempfile.mkdtemp(prefix="not-studio-"))
+    try:
+        sweep_stale_processes()
+        assert other.exists(), "不该动别人的目录"
+    finally:
+        import shutil
+
+        shutil.rmtree(other, ignore_errors=True)

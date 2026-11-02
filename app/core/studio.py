@@ -44,6 +44,16 @@ logger = logging.getLogger(__name__)
 # 让在途的响应走完网络。2 秒是经验值——太短会把「脚本刚好跑完」误判成超时。
 DEADLINE_GRACE_SEC = 2.0
 
+# gRPC 的负载均衡策略（skill-service §13.4）。
+#
+# 默认 gRPC 的 ``pick_first`` 会**只连上第一个 DNS 解析结果**，之后再也不换——
+# 配上 K8s 的普通 ClusterIP Service，扩缩容就等于白扩：加了 Pod，流量一点都
+# 不过去。而这个症状极难发现（服务看着完全正常，只是没吃满）。
+#
+# 解法是 **headless Service + 客户端自己轮询**：``dns:///`` 前缀让 gRPC 用
+# DNS 解析器拿到**全部** A 记录，``round_robin`` 再把请求分给它们。
+LB_POLICY_DEFAULT = "round_robin"
+
 # proto 枚举 → 我们的状态名。
 _STATUS_NAMES: dict[int, str] = {
     studio_pb2.EXEC_STATUS_UNSPECIFIED: "unspecified",
@@ -126,6 +136,33 @@ def effective_timeout_ms(requested: int | None = None) -> int:
     return max(1, min(int(base), int(settings.studio_exec_max_timeout_ms)))
 
 
+def channel_target(addr: str) -> str:
+    """把配置里的地址转成 gRPC 的 target。
+
+    ``dns:///`` 前缀是必需的：它让 gRPC 用 DNS 解析器拿到**全部** A 记录，
+    而不是只拿第一个。轮询策略要配合它才有意义（skill-service §13.4）。
+
+    已经带 scheme 的地址（``unix:`` / ``xds:`` / ``dns:///`` …）原样返回——
+    那种场景下解析器由用户自己指定。
+
+    Args:
+        addr: 配置里的地址，如 ``studio:9000``。
+
+    Returns:
+        gRPC target。
+    """
+    if "://" in addr:
+        return addr
+    return f"dns:///{addr}"
+
+
+def _lb_policy() -> str:
+    """取要用的负载均衡策略名。"""
+    return (settings.studio_exec_lb_policy or LB_POLICY_DEFAULT).strip() or (
+        LB_POLICY_DEFAULT
+    )
+
+
 class StudioClient:
     """到一台 studio 的 gRPC 客户端。
 
@@ -155,7 +192,10 @@ class StudioClient:
             ``StudioStub``。
         """
         if self._stub is None:
-            self._channel = grpc.aio.insecure_channel(self.addr)
+            self._channel = grpc.aio.insecure_channel(
+                channel_target(self.addr),
+                options=[("grpc.lb_policy_name", _lb_policy())],
+            )
             self._stub = studio_pb2_grpc.StudioStub(self._channel)
         return self._stub
 

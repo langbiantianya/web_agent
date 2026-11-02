@@ -26,6 +26,8 @@ from app.core.studio import (
     StudioError,
     StudioTimeoutError,
     StudioUnavailableError,
+    _lb_policy,
+    channel_target,
     close_studio_client,
     configure_studio,
     effective_timeout_ms,
@@ -255,3 +257,59 @@ def test_studio_configured_follows_settings(monkeypatch):
     assert studio_configured() is False
     monkeypatch.setattr(settings, "studio_exec_addr", "studio:9000")
     assert studio_configured() is True
+
+
+# --------------------------------------------------------------- 负载均衡
+
+
+def test_channel_target_uses_dns_resolver():
+    """普通地址要加 ``dns:///`` 前缀。
+
+    加了它，gRPC 的 DNS 解析器才会返回**全部** A 记录——轮询策略要靠这个
+    才轮得起来（skill-service §13.4）。
+    """
+    assert channel_target("studio:9000") == "dns:///studio:9000"
+    assert channel_target("127.0.0.1:9000") == "dns:///127.0.0.1:9000"
+
+
+def test_channel_target_keeps_explicit_scheme():
+    """已经带 scheme 的地址原样返回。"""
+    assert channel_target("unix:///tmp/s.sock") == "unix:///tmp/s.sock"
+    assert channel_target("dns:///studio:9000") == "dns:///studio:9000"
+
+
+def test_lb_policy_defaults_to_round_robin(monkeypatch):
+    """默认策略是 ``round_robin``，不是 gRPC 的 ``pick_first``。
+
+    ``pick_first`` 只连第一个解析结果——配上 headless Service，扩缩容就等于
+    白扩，而且症状极难发现（服务看着完全正常，只是没吃满）。
+    """
+    monkeypatch.setattr(settings, "studio_exec_lb_policy", "round_robin")
+    assert _lb_policy() == "round_robin"
+    # 配置为空或全是空白时退回默认值，而不是传一个空策略给 gRPC
+    monkeypatch.setattr(settings, "studio_exec_lb_policy", "   ")
+    assert _lb_policy() == "round_robin"
+
+
+async def test_channel_is_created_with_the_lb_policy(monkeypatch):
+    """建通道时真的把策略传下去了。"""
+    captured: dict = {}
+    real_channel = grpc.aio.insecure_channel
+
+    def _fake_channel(target, options=None):
+        """记下建通道用的参数，不真的连。"""
+        captured["target"] = target
+        captured["options"] = options
+        return real_channel(target, options=options)
+
+    monkeypatch.setattr(grpc.aio, "insecure_channel", _fake_channel)
+    monkeypatch.setattr(settings, "studio_exec_lb_policy", "round_robin")
+
+    client = StudioClient("studio:9000")
+    try:
+        await client._get_stub()
+    finally:
+        await client.close()
+
+    assert captured["target"] == "dns:///studio:9000"
+    assert ("grpc.lb_policy_name", "round_robin") in captured["options"]

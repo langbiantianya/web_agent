@@ -124,6 +124,11 @@ class Settings(BaseSettings):
     studio_exec_max_timeout_ms: int = 60000
     # 脚本正文长度上限（字符）。
     studio_exec_max_script_chars: int = 200000
+    # gRPC 的负载均衡策略。默认 ``round_robin``：配合 K8s 的 **headless
+    # Service**，请求会轮询到所有后端 Pod 上。用默认的 ``pick_first`` 的话，
+    # gRPC 会一直连着第一个解析结果——**扩缩容等于白扩**，而且极难发现
+    # （skill-service §13.4）。排查问题时可以临时改成 ``pick_first``。
+    studio_exec_lb_policy: str = "round_robin"
 
     # ---- LLM ----
     openai_timeout: float = 120.0
