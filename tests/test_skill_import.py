@@ -17,6 +17,7 @@ from app.core.skill_import import (
 
 
 def _zip(entries: dict[str, bytes]) -> bytes:
+    """做一个 zip。"""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for name, data in entries.items():

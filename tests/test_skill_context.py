@@ -6,6 +6,7 @@ from app.core.skill_context import SkillPrompt, build_skill_messages
 
 
 def _skill(code: str, body: str) -> SkillPrompt:
+    """造一条待注入的技能。"""
     return SkillPrompt(code=code, name=code, version=1, body=body)
 
 

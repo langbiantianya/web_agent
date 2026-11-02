@@ -75,6 +75,7 @@ async def llm_factory():
     started: list[FakeLLM] = []
 
     async def _make(**kwargs) -> FakeLLM:
+        """起一个假 LLM 并登记到清理列表。"""
         s = FakeLLM(**kwargs)
         s.start()
         started.append(s)
@@ -91,8 +92,7 @@ async def llm_factory():
 
 async def _make_skill(code: str, body: str) -> str:
     """建一个技能，返回它的 code。"""
-    async with SessionLocal() as db:
-        await skill_repo.create(
+    async with SessionLocal() as db:        await skill_repo.create(
             db,
             code=code,
             name=code,
@@ -265,3 +265,44 @@ async def test_disabled_skill_is_not_injected(
 
     messages = llm.calls[0]["messages"]
     assert "停用技能的正文不该出现。" not in json.dumps(messages, ensure_ascii=False)
+
+
+async def test_skipped_skill_emits_event(
+    client: httpx.AsyncClient, llm_factory, monkeypatch
+):
+    """技能被预算挡掉时，事件流里有一条 `skill_skipped` 说明是哪个、为什么。
+
+    技能被**静默**丢掉是最坏的一种情况：配置里明明绑了，模型却没拿到任何
+    指令，而界面上看不出任何异常。
+    """
+    from app.config.settings import settings
+
+    monkeypatch.setattr(settings, "skill_max_count", 1)
+    llm = await llm_factory(texts=["收到"])
+    await _make_skill("skip_first", "第一个技能。")
+    await _make_skill("skip_second", "第二个技能。")
+
+    await _make_agent(
+        client, "skip_agent", llm, skills=["skip_first", "skip_second"]
+    )
+    wf = await _make_workflow(client, ["skip_agent"])
+    conv = await _new_conversation(client, wf["code"])
+    sent = await client.post(
+        f"/api/conversations/{conv['id']}/messages", json={"content": "你好"}
+    )
+    assert sent.status_code == 202, sent.text
+    run_id = sent.json()["run_id"]
+    ticket = await _ticket(client)
+    events = await _read_sse(
+        client, f"/api/runs/{run_id}/stream?ticket={ticket}&last_seq=0"
+    )
+
+    skipped = [d for e, _, d in events if e == "skill_skipped"]
+    assert skipped, [e for e, _, _ in events]
+    assert skipped[0]["skill"] == "skip_second"
+    assert "上限" in skipped[0]["reason"]
+
+    # 被挡掉的技能正文确实没进提示词
+    messages = llm.calls[0]["messages"]
+    assert "第一个技能。" in json.dumps(messages, ensure_ascii=False)
+    assert "第二个技能。" not in json.dumps(messages, ensure_ascii=False)

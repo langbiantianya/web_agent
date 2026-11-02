@@ -58,7 +58,9 @@ class SkillCreate(BaseModel):
     """创建技能。"""
 
     code: str = Field(min_length=1, max_length=64, pattern=CODE_PATTERN)
-    name: str = Field(default="", max_length=64)
+    # name 是 frontmatter 的 name，而规范要求 **name 等于目录名**——在本项目里
+    # 目录名就是 code。所以传了就必须与 code 一致，不一致直接拒；不传就用 code。
+    name: str | None = Field(default=None, max_length=64)
     description: str = Field(min_length=1, max_length=1024)
     license: str = Field(default="", max_length=128)
     compatibility: str = Field(default="", max_length=500)

@@ -803,8 +803,14 @@ web_agent/
 │   │   │   ├── transport.py       # stdio / Streamable HTTP 两种传输
 │   │   │   ├── catalog.py         # tools/list 发现与快照落库
 │   │   │   └── mapping.py         # CallToolResult → (ok, text)
-│   │   ├── skill.py               # Skill 读取与提示词拼装（V4，见 §22）
-│   │   ├── studio.py              # studio gRPC 客户端（V4，脚本执行，见 §22.8）
+│   │   ├── skill_paths.py          # 资源路径格式规整（V4，§22）
+│   │   ├── skill_pack.py           # SKILL.md 解析 / 拼装 / 内容指纹（V4，§22）
+│   │   ├── skill_context.py        # 提示词注入与预算 + 技能白名单 contextvar（V4，§22）
+│   │   ├── skill_reader.py         # 读技能资源（V4，§22）
+│   │   ├── skill_names.py          # Agent 的 skills 字段规整（V4，§22）
+│   │   ├── skill_import.py         # 技能包导入导出 + zip 防护（V4，§22）
+│   │   ├── admin.py                # 管理员门禁（共享密钥，V4，§22.10）
+│   │   ├── studio.py               # studio gRPC 客户端（V4，脚本执行，见 §22.8）
 │   │   ├── arith.py               # 算术求值（ast 白名单，不用 eval，V3.2）
 │   │   ├── checkpoint.py          # LangGraph checkpointer（审批暂停点，V3.1）
 │   │   ├── agent_runner.py        # 单 Agent 执行（AsyncOpenAI）
@@ -861,7 +867,8 @@ web_agent/
 ├── alembic/
 │   ├── env.py
 │   └── versions/                  # 0001 初始 / 0002 workflow version / 0003 run_approval
-│                                  # 0004 mcp_server + mcp_tool + skill + agent.skills（V4）
+│                                  # 0004 run_step attempts / 0005 skill 三张表（V4，§22.5）
+│                                  # 0006 agent.skills 列（V4，§22.5）
 ├── docs/design.md
 ├── scripts/
 │   ├── seed.py                    # 演示数据
@@ -889,6 +896,14 @@ web_agent/
   脚本经 gRPC 交给**独立的 studio 容器**执行、不在本进程起子进程（**设计已完成**，见 §22，
   服务侧见 [`docs/skill-service.md`](skill-service.md)）；
   可观测性（OpenTelemetry 链路追踪、token 成本统计）
+
+  V4 分三个 Phase 落地，各自可交付：
+
+  | Phase | 内容 | 状态 |
+  | --- | --- | --- |
+  | **Phase 1** | Skill 基础：三张表 + CRUD + 导入导出 + 审计 + 提示词注入 + `skill_resource` 工具 + 提示词预览 | **已完成**（§22.13） |
+  | **Phase 2** | MCP 客户端：连接管理、工具目录快照、`mcp__` 命名分发、API | 待做（§21） |
+  | **Phase 3** | studio 服务与 `skill_exec`：proto、gRPC 客户端、容器部署 | 待做（§22.8） |
 
 ---
 
@@ -2824,13 +2839,21 @@ CREATE TABLE skill (
   content_hash  VARCHAR(64)   NOT NULL,         -- 正文 + 全部资源一起算的 sha256
   enabled       TINYINT(1)    DEFAULT 1,
   version       INT           DEFAULT 1,        -- 每次变更 +1（与 agent 表同口径）
-  created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  created_at    DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at    DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
 `body` 存的是 **frontmatter 之外的 Markdown 正文**——frontmatter 已经拆成列了，不必在 body
 里再存一份 YAML。导出时按规范重新拼回去（§22.4）。
+
+`name` 恒等于 `code`：规范要求 frontmatter 的 `name` 等于目录名，而本项目里「目录名」
+就是 `code`。所以 `POST /api/skills` 传了 `name` 就必须与 `code` 一致，不一致直接 400
+（§22.10 第 5 条）。这样导出的 `SKILL.md` 永远是合规的。
+
+时间列用 `DATETIME(3)`：裸 `DATETIME`（fsp=0）在 MySQL 上把时间截到整秒，而且与 ORM 的
+`DATETIME3` 对不上——`alembic` 开了 `compare_type=True`，此后每次 autogenerate 都会持续产出
+一条多余的 ALTER 差异。
 
 `content_hash` 的算法：
 
@@ -2874,16 +2897,20 @@ CREATE TABLE skill_revision (
   skill_id   BIGINT      NOT NULL,
   version    INT         NOT NULL,
   body       MEDIUMTEXT  NOT NULL,          -- 正文快照
-  resources  JSON        DEFAULT NULL,      -- 资源清单：[{path, sha256, is_text, text?}]
+  resources  JSON        DEFAULT NULL,      -- 资源清单：[{path, sha256, is_text, size_bytes, text?}]
   author     VARCHAR(64) DEFAULT '',        -- 谁改的
   note       VARCHAR(255) DEFAULT '',       -- 改了什么（一句话）
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
   UNIQUE KEY uk_skill_version (skill_id, version),
   KEY idx_skill (skill_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
 **为什么需要它**：技能进了 DB 就没有 git 了，改错了没法回滚。这张表是 DB 版的版本历史。
+
+`(skill_id, version)` 是唯一的，所以**每一次写入都要让 `skill.version` 往前走**——改正文、
+写资源、删资源、回滚都算。于是「版本号」唯一对应一份内容，回滚到 `v3` 才有确定含义。
+回滚本身是**新版本**（内容回到旧样子，版本继续递增），版本号单调递增、不会自我覆盖。
 
 `resources` 快照里**文本资源带内容、二进制资源只带摘要**——所以**文本资源可以回滚，二进制
 资源不能**。这是明确的取舍，写进 §22.12 的已知限制。
@@ -2904,8 +2931,13 @@ ALTER TABLE agent ADD COLUMN skills JSON DEFAULT NULL;
   （`enabled=0`）也拒——绑一个用不了的技能是配置错误，不该留到运行期才发现；
 - 读（`known_skill_codes`）：历史脏数据里的未知 code **丢掉**，不能让 Agent 列表接口 500。
 
-**绑定不级联删除**：删技能不自动解绑 Agent，被绑的 Agent 在读路径上丢掉那个 code（宽容
-路径），并在 `GET /api/skills` 里标出「有几个 Agent 还绑着它」——让运营知道该去解绑。
+**绑定不级联删除**：删技能**不**自动解绑 Agent。但删的时候会被拦下——还被 Agent 绑着的
+技能，`DELETE /api/skills/:code` 直接 **409**，并在报错里列出是哪几个 Agent 绑着它。
+理由：删掉技能会让那些 Agent **静默失去**那段指令，而模型行为的变化不会在界面上显式提示，
+那是最难排查的一类问题。想停用就 `PUT enabled=false`，或者先解绑。
+
+读路径上仍然是宽容的：技能被删掉之后，Agent 上残留的绑定在读的时候被丢掉（`known_skill_codes`
+按「库里已存在的 code」过滤），不让一个 NULL 或失效引用把整个列表接口带崩。
 
 ### 22.6 Skill 怎么进入提示词
 
@@ -3331,10 +3363,10 @@ studio 容器是这条边界的**唯一**实现手段，它必须满足（§22.8
 | GET | `/api/skills/:code` | 详情 + 正文 + frontmatter 字段 |
 | GET | `/api/skills/:code/resources` | 资源清单（path / 大小 / mimeType / sha256） |
 | GET | `/api/skills/:code/resources/*path` | 单个资源内容（二进制走 `Content-Disposition: attachment`） |
-| GET | `/api/skills/:code/export` | **导出标准技能包**：重新拼出 `SKILL.md`（frontmatter + body），资源按原路径还原。可选 `?format=zip` |
+| GET | `/api/skills/:code/export` | **导出标准技能包**：重新拼出 `SKILL.md`（frontmatter + body），资源按原路径还原。`?format=zip`（默认，打包成 zip）/ `?format=md`（只给 SKILL.md 原文） |
 | GET | `/api/skills/:code/revisions` | 变更历史（版本 / 作者 / 说明 / 时间） |
 | GET | `/api/agents/:code/prompt-preview` | **生效提示词预览**：`system_prompt` + 各技能正文，与实际发给模型的逐字一致 |
-| GET | `/api/studio` | studio 状态：可达性、版本、可用运行时（`HealthResponse`） |
+| GET | `/api/studio` | studio 状态：可达性、版本、可用运行时（`HealthResponse`）——**Phase 3 才实现** |
 
 #### 写入（**管理员**）
 
@@ -3342,10 +3374,11 @@ studio 容器是这条边界的**唯一**实现手段，它必须满足（§22.8
 | --- | --- | --- |
 | POST | `/api/skills` | 创建技能。`origin='manual'`，写审计 |
 | PUT | `/api/skills/:code` | 更新（正文 / frontmatter）。`version+1`，写审计 |
-| DELETE | `/api/skills/:code` | 删除技能（含资源与修订历史） |
-| POST | `/api/skills/:code/resources` | 上传或替换一个资源文件 |
+| DELETE | `/api/skills/:code` | 删除技能（含资源与修订历史）。**还被 Agent 绑着 → 409**，先解绑或停用 |
+| POST | `/api/skills/:code/resources` | 上传或替换一个资源文件。请求体是**原始字节**（`Content-Type` 别用 `application/json`），路径放 query 参数或 `X-Resource-Path` 头 |
 | DELETE | `/api/skills/:code/resources/*path` | 删除一个资源文件 |
-| POST | `/api/skills/import` | **批量导入**：multipart 传一个 zip，或传一个目录结构。`origin='import'`，**默认 `enabled=0`** |
+| POST | `/api/skills/import` | **导入（zip 形式）**：multipart 传一个 zip。`origin='import'`，**默认 `enabled=0`** |
+| POST | `/api/skills/import/entries` | **导入（目录结构形式）**：JSON `{entries:[{path, content_base64}], enabled}`。同样默认 `enabled=0` |
 | POST | `/api/skills/:code/rollback` | 回滚到指定历史版本（正文 + 文本资源；二进制资源不回滚，§22.12） |
 
 **导出的对称性**：`export` 出的东西正好是 `import` 能吃进去的东西——`import` 吃一个「导出物」，
@@ -3353,12 +3386,28 @@ studio 容器是这条边界的**唯一**实现手段，它必须满足（§22.8
 
 **导入的两种输入形式**：
 
-| 形式 | 怎么来的 | 注意 |
+| 形式 | 入口 | 注意 |
 | --- | --- | --- |
-| **zip** | 前端上传 | 必须防 zip slip 与 zip bomb（§22.10 的三道防护） |
-| **目录结构**（JSON：`[{path, contentBase64}]`） | 后台批量粘贴 / 脚本调用 | 走**同一套**路径格式校验，不需要解压逻辑 |
+| **zip** | `POST /api/skills/import`（multipart） | 必须防 zip slip 与 zip bomb（§22.10 的三道防护） |
+| **目录结构**（JSON：`[{path, contentBase64}]`） | `POST /api/skills/import/entries` | 走**同一套**路径格式校验，不需要解压逻辑 |
 
 两者最终都落到同一组校验上：**path 格式合规 + 内容大小上限 +（仅 zip）zip slip / bomb 防护**。
+
+**为什么分成两个端点而不是一个**：multipart 与 JSON body 在 FastAPI 里没法塞进同一个函数
+签名（`UploadFile` 与 JSON 模型二选一）。分成两个端点后，它们仍然落到**同一组**校验上
+（同一套 `validate_resource_path` + 同一套体积上限 + 同一个 `parse_skill_package`），
+所以「两条路会不会校验得不一样」这个问题不存在。
+
+**版本号与修订快照的对应关系**：`skill_revision` 的唯一键是 `(skill_id, version)`，
+所以**每一次写入都要让 `skill.version` 往前走**——改正文、写资源、删资源、回滚，都算。
+于是「版本号」唯一对应一份内容，回滚到 `v3` 才有确定的含义。回滚本身是**新版本**
+（内容回到旧样子，版本继续递增），所以版本号单调递增、不会自我覆盖。
+
+**请求体上限的按路径放宽**：全局上限是 2 MB（§8），而「单资源 5 MB」这条领域约束在
+HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀有专属上限
+（`SKILL_UPLOAD_MAX_BYTES`，默认 8 MB），但**只对带对管理员密钥的请求生效**：
+未认证的调用方在同一条路径上仍然受 2 MB 全局上限约束。加个上传功能不该顺手把
+未认证流量能撑的缓冲口放大。
 
 #### 工具目录
 
@@ -3401,48 +3450,66 @@ studio 容器是这条边界的**唯一**实现手段，它必须满足（§22.8
     文件读取工具（模型侧的文件访问能力为零）。
 15. **脚本语言受 studio 镜像限制**。镜像里装了哪几种运行时就是哪几种，`HealthResponse.language_info`
     把它报出来；配置期按它校验（§22.8.8），但**新增语言要改 studio 镜像**。
+16. **管理员是共享密钥，不是用户体系**。审计里的 `author` 只有一个固定值（`ADMIN_AUTHOR`）——
+    多人共用一把密钥时，审计能回答「什么时候改的」，但回答不了「是谁改的」。有了用户
+    体系之后把 `require_admin` 换成按用户查权限即可，调用点不用动。
+17. **后台页还没有技能管理界面**。API 全齐了（§22.11），但 `web/admin.html` 里没有技能面板：
+    创建 / 编辑 / 导入 / 导出 / 绑定都还没有 UI，只能走 API 或脚本。
+18. **技能正文不过敏感词前置过滤**。§20 那道过滤只拦**用户输入**；技能正文是管理员写的，
+    准入靠 admin 权限 + 审计留痕，而不是靠过滤器。
+19. **技能上传的请求体上限与管理员门禁共用同一把密钥**。放宽只对带对 `X-Admin-Key` 的请求
+    生效（§22.11），所以密钥一旦泄露，放宽后的上限也一起泄露了——两者是同一条信任边界。
 
 ### 22.13 实施要点与验收标准
 
-- [ ] `POST /api/skills` 建一个技能 → `skill` 表出现对应行，`content_hash` 与
+> 勾选状态对应 **Phase 1（Skill 基础）**的落地情况。标 **Phase 3** 的是 studio 与
+> `skill_exec` 那部分，本轮不实现。
+
+- [x] `POST /api/skills` 建一个技能 → `skill` 表出现对应行，`content_hash` 与
       `sha256(body ‖ 各资源摘要)` 一致，`version=1`，`origin='manual'`。
-- [ ] 建一个 `code` 与 `name` 不一致、或 `name` 含大写字母的技能 → **API 直接 400**，库里没有
-      这行（是「不让它进来」，不是「先存着再说」）。
-- [ ] **非管理员**调 `POST` / `PUT` / `DELETE /api/skills*` → 403，且**不写任何数据**。
-- [ ] 管理员改一次正文 → `version` +1，`skill_revision` 多一行（作者、note、时间），资源清单
+- [x] 建一个 `code` 与 SKILL.md 的 name 规则不符（大小写、下划线、连续连字符）的技能 →
+      **API 直接 400**，库里没有这行（是「不让它进来」，不是「先存着再说」）。
+- [x] **非管理员**调 `POST` / `PUT` / `DELETE /api/skills*` → **401**，且**不写任何数据**。
+      （用 401 而不是 403：共享密钥判的是「你是谁」，不是「你能不能」——没带对密钥就是
+      没认证过；等有了用户体系，403 才是对的。）
+- [x] 管理员改一次正文 → `version` +1，`skill_revision` 多一行（作者、note、时间），资源清单
       也在快照里。
-- [ ] `GET /api/skills/:code/export` → 拿到的 `SKILL.md` 能被 `POST /api/skills/import` 原样
-      吃回去（导入后 `content_hash` 与导出前一致）。
-- [ ] 导入一个 zip → 技能 `origin='import'` 且 **`enabled=0`**；Agent 绑它 → **保存期就拒**。
-- [ ] 导入一个含 `../../etc/passwd` 条目的 zip → **导入失败并报错**，不落库（zip slip）。
-- [ ] 导入一个解压后 10 GB 的 zip → **导入失败并报错**（zip bomb），不撑爆磁盘。
-- [ ] 导入一个含符号链接条目的 zip → **导入失败并报错**。
-- [ ] Agent 绑定技能 → 发给 LLM 的 messages 里出现一条独立的 `role=system` 消息，内容是
+- [x] `GET /api/skills/:code/export` → 拿到的包能被 `POST /api/skills/import` 原样吃回去
+      （导出物 = 导入物）。
+- [x] 导入一个 zip → 技能 `origin='import'` 且 **`enabled=0`**；Agent 绑它 → **保存期就拒**。
+- [x] 导入一个含 `../../etc/passwd` 条目的 zip → **导入失败并报错**，不落库（zip slip）。
+- [x] 导入一个解压后远超上限的 zip → **导入失败并报错**（zip bomb：条目数 / 单文件 / 总量 /
+      压缩比四道，压缩比在**解压之前**判）。
+- [x] 导入一个含符号链接条目的 zip → **导入失败并报错**。
+- [x] Agent 绑定技能 → 发给 LLM 的 messages 里出现一条独立的 `role=system` 消息，内容是
       技能正文，**且在 Agent 自己的 system_prompt 之后**。
-- [ ] 后台的「生效提示词预览」与实际发给 LLM 的内容**逐字一致**（同一份拼装函数）。
-- [ ] 绑 6 个技能、总正文超过预算 → 只有靠前的 5 个（或预算内的部分）被注入，后面的**整个**
-      不出现，且事件流里有一条 `skill_skipped` 说明是哪个、为什么。
-- [ ] `skill_resource` 读 `references/METRICS.md` → 返回文件内容。
-- [ ] `skill_resource` 读 `../../../../etc/passwd` → **查不到任何资源行**，返回错误说明，
+- [x] 后台的「生效提示词预览」与实际发给 LLM 的内容**逐字一致**（同一份拼装函数
+      `Orchestrator._build_skill_plan`）。
+- [x] 绑超过上限的技能 → 只有靠前的几个被注入，后面的**整个**不出现，且事件流里有一条
+      `skill_skipped` 说明是哪个、为什么。
+- [x] `skill_resource` 读 `references/METRICS.md` → 返回文件内容。
+- [x] `skill_resource` 读 `../../../../etc/passwd` → **查不到任何资源行**，返回错误说明，
       **不泄露任何内容**（不再有文件系统可穿越）。
-- [ ] `skill_resource` 读一个没绑定的技能 → 拒绝（白名单校验）。
-- [ ] `skill_resource` 读一个二进制资源 → 只回「文件名 + 大小 + mimeType」，**不把字节塞进
+- [x] `skill_resource` 读一个没绑定的技能 → 拒绝（白名单校验），且回复**不因技能存不存在
+      而不同**（否则那是个探测接口）。
+- [x] `skill_resource` 读一个二进制资源 → 只回「文件名 + 大小 + mimeType」，**不把字节塞进
       上下文**。
-- [ ] 上传一个路径含 `..` 或绝对路径的资源 → **400，不入库**。
+- [x] 上传一个路径含 `..` 或绝对路径的资源 → **400，不入库**。
 - [ ] 技能声明了 `allowed-tools: get_quarter_metrics`，而 Agent 白名单里没有它 → 后台给出
-      **提示**，但保存**不被拒**。
+      **提示**，但保存**不被拒**。（字段已存、授权仍只看 `agent.tools`；后台提示 UI 待做，
+      见第 17 条。）
 - [ ] `skill_exec` 执行 `scripts/extract.py` → 脚本**在 studio 容器里**跑，web_agent 进程内
-      **没有**起任何子进程（用 `ps` 或打桩断言验证）；退出码与 stdout 原样回灌给模型。
+      **没有**起任何子进程（用 `ps` 或打桩断言验证）；退出码与 stdout 原样回灌给模型。**Phase 3**
 - [ ] `skill_exec` 的脚本参数含 `../../etc/passwd` 式的路径 → **在 web_agent 侧**就被拒，
-      请求**根本没发出去** studio（studio 收到的一定是已校验过的脚本正文）。
+      请求**根本没发出去** studio（studio 收到的一定是已校验过的脚本正文）。**Phase 3**
 - [ ] 脚本超时 → studio 侧超时生效、进程组被杀；web_agent 侧拿到 `status=TIMEOUT` 与 `error`
-      说明，节点**不失败**（§17.5 口径）。
-- [ ] studio 不可达 → **服务启动失败**（§22.8.6），而不是运行期才炸。
+      说明，节点**不失败**（§17.5 口径）。**Phase 3**
+- [ ] studio 不可达 → **服务启动失败**（§22.8.6），而不是运行期才炸。**Phase 3**
 - [ ] `STUDIO_EXEC_REQUIRED=false` 且 studio 不可达 → 服务正常启动，但 `skill_exec` 不注册，
-      且保存期拒绝把 `skill_exec` 加进 Agent 的工具白名单。
+      且保存期拒绝把 `skill_exec` 加进 Agent 的工具白名单。**Phase 3**
 - [ ] 脚本 stdout 里包含一段敏感内容 → 回灌前**被 §20 的过滤器拦下**（与 MCP 工具结果同一
-      条规矩，§21.10 第 4 条）。
-- [ ] 全量回归不破：现有 166 个测试（§17.9）全绿。
+      条规矩，§21.10 第 4 条）。**Phase 3**
+- [x] 全量回归不破：现有 166 个测试（§17.9）全绿（Phase 1 落地后为 **358 passed / 19 skipped**）。
 
 ---
 

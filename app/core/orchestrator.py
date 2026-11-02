@@ -547,6 +547,14 @@ class Orchestrator:
         # 收到它的指令，自然也不该读到它的资源。
         token = set_current_skill_codes(set(skill_plan.codes))
         try:
+            for code, reason in skill_plan.skipped:
+                # 事件流里说明「哪个技能没生效、为什么」——技能被静默丢掉是最坏
+                # 的一种情况：配置里明明绑了，模型却没拿到任何指令。
+                await self.hub.emit(
+                    run_id,
+                    EventType.SKILL_SKIPPED,
+                    {"skill": code, "reason": reason},
+                )
             for attempt in range(1, attempts + 1):
                 if self.hub.is_cancelled(run_id):
                     raise RunCancelled("用户取消")

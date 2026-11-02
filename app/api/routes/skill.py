@@ -315,10 +315,17 @@ async def create_skill(payload: SkillCreate, db: DbSession, author: AdminDep) ->
     """创建技能。``origin='manual'``，并写一条审计快照。"""
     if await skill_repo.get_by_code(db, payload.code):
         raise ConflictError(f"技能 code 已存在：{payload.code}")
+    if payload.name and payload.name != payload.code:
+        # 规范要求 frontmatter 的 name 等于目录名，而目录名在这里就是 code。
+        # 存一个不一样的 name，导出的 SKILL.md 就不是合规的了。
+        raise BadRequestError(
+            f"name 必须与 code 一致（规范要求 name 等于目录名）："
+            f"code={payload.code}，name={payload.name}"
+        )
     skill = await skill_repo.create(
         db,
         code=payload.code,
-        name=payload.name or payload.code,
+        name=payload.code,
         description=payload.description,
         license=payload.license,
         compatibility=payload.compatibility,

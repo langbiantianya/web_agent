@@ -64,6 +64,9 @@ class EventType(StrEnum):
     # V3.2：工具执行结果。与 TOOL_CALL 配对——模型要了工具，这里告诉前端
     # 「调完了、结果是什么、成功还是失败」。
     TOOL_RESULT = "tool_result"
+    # V4：某个技能因为预算或数量上限**没有注入**提示词（§22.6）。
+    # 不是终止事件——它只是告诉运维「为什么这个技能没生效」。
+    SKILL_SKIPPED = "skill_skipped"
     ERROR = "error"
     DONE = "done"
     # V3.1：人工审批的三个事件。它们都**不是**终止事件——「等审批」时流要继续

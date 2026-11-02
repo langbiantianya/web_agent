@@ -131,6 +131,31 @@ async def test_invalid_code_rejected(client):
     assert resp.status_code == 400, resp.text
 
 
+async def test_name_must_equal_code(client):
+    """``name`` 必须与 ``code`` 一致——规范要求 name 等于目录名。
+
+    存一个不一样的 name，导出的 SKILL.md 就不是合规的了。
+    """
+    resp = await client.post(
+        "/api/skills",
+        json={"code": "namediff", "name": "别的名字", "description": "d"},
+        headers=ADMIN_HEADERS,
+    )
+    assert resp.status_code == 400, resp.text
+    assert "name 必须与 code 一致" in resp.json()["message"]
+
+
+async def test_name_equal_to_code_accepted(client):
+    """name 与 code 一致就接受。"""
+    resp = await client.post(
+        "/api/skills",
+        json={"code": "namesame", "name": "namesame", "description": "d"},
+        headers=ADMIN_HEADERS,
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["name"] == "namesame"
+
+
 async def test_get_missing_skill_is_404(client):
     """不存在的技能 → 404。"""
     assert (await client.get("/api/skills/nope")).status_code == 404
