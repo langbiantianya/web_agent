@@ -6,15 +6,33 @@ from fastapi import APIRouter, Query
 
 from app.api.deps import DbSession
 from app.core.crypto import encrypt
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import BadRequestError, ConflictError, NotFoundError
+from app.core.skill_names import SkillConfigError, known_skill_codes, normalize_skill_codes
 from app.core.tools import known_tool_names, normalize_tool_names
 from app.repo.agent_repo import agent_repo
+from app.repo.skill_repo import skill_repo
 from app.schemas.agent import AgentCreate, AgentOut, AgentUpdate
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
-def _to_out(agent) -> AgentOut:
+async def _skill_code_sets(db) -> tuple[set[str], set[str]]:
+    """库里已存在的技能 code 集合与其中已启用的那部分。
+
+    两个集合用途不同：
+
+    - **全部存在的**：读路径用它把 Agent 上残留的失效绑定丢掉——技能被删掉之后，
+      那个绑定就该消失，而不是继续显示一个指向空壳的名字；
+    - **已启用的**：写路径用它校验——技能正文会进 prompt，而 prompt 就是模型的
+      行为，绑一个停用中的技能等于绑了一条不会生效的指令。
+    """
+    rows = await skill_repo.list(db, limit=1000)
+    all_codes = {s.code for s in rows}
+    enabled = {s.code for s in rows if s.enabled}
+    return all_codes, enabled
+
+
+def _to_out(agent, known_skills: set[str] | None = None) -> AgentOut:
     """ORM ``Agent`` → 对外响应模型（内部转换层，不直接暴露给调用方）。
 
     这一层同时是**密钥边界**：``api_key_cipher`` 绝不外泄，只暴露
@@ -28,6 +46,7 @@ def _to_out(agent) -> AgentOut:
 
     Args:
         agent: ORM ``Agent`` 实例（来自 repo 查询）。
+        known_skills: 库里已存在的技能 code 集合，用来过滤失效的绑定。
 
     Returns:
         ``AgentOut``。``tools`` 只保留**已注册**的工具名（V3.2）——读的时候
@@ -45,6 +64,7 @@ def _to_out(agent) -> AgentOut:
         temperature=float(agent.temperature or 0.7),
         max_tokens=agent.max_tokens or 2048,
         tools=known_tool_names(agent.tools),
+        skills=known_skill_codes(agent.skills, known_skills),
         extra_params=agent.extra_params,
         enabled=bool(agent.enabled),
         version=agent.version or 1,
@@ -57,10 +77,16 @@ async def create_agent(payload: AgentCreate, db: DbSession) -> AgentOut:
     """创建 Agent。配置即数据——新增 Agent 无需改代码、无需发版。
 
     ``tools`` 存的是**工具名**，未注册的名字在这里就拒（400）——配置根本进不了
-    库，也就不会有「模型能调、服务端执行不了」的工具。
+    库，也就不会有「模型能调、服务端执行不了」的工具。``skills`` 同理：绑一个
+    库里没有或已停用的技能，在这里就拒。
     """
     if await agent_repo.get_by_code(db, payload.code):
         raise ConflictError(f"Agent code 已存在：{payload.code}")
+    all_codes, enabled_codes = await _skill_code_sets(db)
+    try:
+        skills = normalize_skill_codes(payload.skills, enabled_codes)
+    except SkillConfigError as exc:
+        raise BadRequestError(str(exc)) from exc
     agent = await agent_repo.create(
         db,
         code=payload.code,
@@ -73,10 +99,11 @@ async def create_agent(payload: AgentCreate, db: DbSession) -> AgentOut:
         temperature=payload.temperature,
         max_tokens=payload.max_tokens,
         tools=normalize_tool_names(payload.tools),
+        skills=skills,
         extra_params=payload.extra_params,
         enabled=1 if payload.enabled else 0,
     )
-    return _to_out(agent)
+    return _to_out(agent, all_codes)
 
 
 @router.get("", response_model=list[AgentOut])
@@ -93,7 +120,8 @@ async def list_agents(
     时请另走管理端统计。响应中只有 ``has_api_key``，不会回显密钥。
     """
     agents = await agent_repo.list(db, only_enabled=only_enabled, limit=limit, offset=offset)
-    return [_to_out(a) for a in agents]
+    all_codes, _ = await _skill_code_sets(db)
+    return [_to_out(a, all_codes) for a in agents]
 
 
 @router.get("/{code}", response_model=AgentOut)
@@ -105,7 +133,8 @@ async def get_agent(code: str, db: DbSession) -> AgentOut:
     agent = await agent_repo.get_by_code(db, code)
     if agent is None:
         raise NotFoundError(f"Agent 不存在：{code}")
-    return _to_out(agent)
+    all_codes, _ = await _skill_code_sets(db)
+    return _to_out(agent, all_codes)
 
 
 @router.put("/{code}", response_model=AgentOut)
@@ -119,12 +148,22 @@ async def update_agent(code: str, payload: AgentUpdate, db: DbSession) -> AgentO
         fields["api_key_cipher"] = encrypt(fields.pop("api_key"))
     if "tools" in fields:
         fields["tools"] = normalize_tool_names(fields["tools"])
+    if "skills" in fields:
+        _, enabled_codes = await _skill_code_sets(db)
+        try:
+            normalized = normalize_skill_codes(fields["skills"], enabled_codes)
+        except SkillConfigError as exc:
+            raise BadRequestError(str(exc)) from exc
+        # 显式传 null 或 [] 表示「解绑全部」。仓储层的约定是「值为 None 的键跳过」，
+        # 所以这里用空列表表达「清空」——空列表不是 None，会被真的写进去。
+        fields["skills"] = [] if normalized is None else normalized
     if "enabled" in fields and fields["enabled"] is not None:
         fields["enabled"] = 1 if fields["enabled"] else 0
     agent = await agent_repo.update(db, code, fields, bump_version=True)
     if agent is None:
         raise NotFoundError(f"Agent 不存在：{code}")
-    return _to_out(agent)
+    all_codes, _ = await _skill_code_sets(db)
+    return _to_out(agent, all_codes)
 
 
 @router.delete("/{code}", status_code=204)

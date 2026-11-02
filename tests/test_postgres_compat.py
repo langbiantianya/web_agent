@@ -7,7 +7,7 @@
    并且 PG 该用的类型真的出现了（``BIGSERIAL``、``JSON``、
    ``TIMESTAMP WITHOUT TIME ZONE``）。
 2. **迁移脚本能不能在 PG 上跑**。用 ``alembic upgrade head --sql`` 离线生成
-   PG 的 DDL：不需要 PG 服务器，却能把三个迁移脚本连同方言分支一起验一遍。
+   PG 的 DDL：不需要 PG 服务器，却能把全部迁移脚本连同方言分支一起验一遍。
 3. **会话时区钉不钉得住**。PG 的 ``now()`` 返回带时区的时间，落到无时区的
    ``TIMESTAMP`` 列时按**会话时区**折算；不钉成 UTC，中国本机写出来的
    时间戳会整整差 8 小时。
@@ -44,6 +44,23 @@ _MYSQL_ONLY_MARKERS = (
     "ENGINE=",
     "UNSIGNED",
 )
+
+# 三种方言必须共享的表清单。写成显式集合而不是只数个数：新增表时断言会直接
+# 告诉你少了哪张，而不是只说「数量变了」。
+_EXPECTED_TABLES = {
+    "agent",
+    "conversation",
+    "message",
+    "run",
+    "run_approval",
+    "run_event",
+    "run_step",
+    "workflow",
+    # V4：技能（§22.5）
+    "skill",
+    "skill_resource",
+    "skill_revision",
+}
 
 
 def _ddl_for(dialect) -> str:
@@ -123,7 +140,7 @@ def test_three_dialects_share_the_same_tables_and_columns():
 
     assert pg == my, "PG 与 MySQL 的表/列不一致"
     assert pg == lite, "PG 与 SQLite 的表/列不一致"
-    assert len(pg) == 8, f"表数量变了：{sorted(pg)}"
+    assert set(pg) == _EXPECTED_TABLES, f"表数量变了：{sorted(pg)}"
 
 
 def test_migration_scripts_generate_postgresql_sql():

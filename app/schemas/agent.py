@@ -25,6 +25,9 @@ class AgentBase(BaseModel):
     # 工具名列表（V3.2）。**不是** OpenAI 的 function schema——填的是注册表里
     # 的工具名，schema 与执行器都由服务端从同一张表取。
     tools: list[str] | None = None
+    # 绑定的技能 code 列表（V4，§22.5）。技能只贡献**指令正文**，不授予任何
+    # 工具权限——能不能调工具仍然只看 tools。
+    skills: list[str] | None = None
     extra_params: dict | None = None
     enabled: bool = True
 
@@ -56,6 +59,7 @@ class AgentUpdate(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
     tools: list[str] | None = None
+    skills: list[str] | None = None
     extra_params: dict | None = None
     enabled: bool | None = None
 
@@ -77,6 +81,7 @@ class AgentOut(ORMBase):
     temperature: float
     max_tokens: int
     tools: list[str] | None = None
+    skills: list[str] | None = None
     extra_params: dict | None = None
     enabled: bool
     version: int
