@@ -1,0 +1,142 @@
+# 完整的一体化实验栈：web_agent + studio（skill-service §7、§11、§13）。
+#
+# 与同目录的 `docker-compose.yml`（只有 studio）不同，这里把**两个服务**都拉起来，
+# 并且**真的把 studio 的出网掐掉**——这是 §7「禁出网」那条要求在 Docker 上唯一
+# 能落地的做法：
+#
+# ```text
+#   lab_egress（普通网络，有默认网关）
+#       └── web_agent  ← 需要出网调 LLM
+#
+#   lab_internal（internal: true，**没有**默认网关）
+#       ├── web_agent
+#       └── studio    ← 只有这一张网卡，出不去
+# ```
+#
+# studio 只挂在 ``lab_internal`` 上：它能跟 web_agent 说话（gRPC），
+# 但**没有任何路由能出网**——要外传数据没有路可走。
+#
+# ## 用法
+#
+# ```sh
+# # 宿主机上先备好数据库（已有 MySQL/Redis 时跳过）
+# docker run -d --name mysql ...   # 见 /docker/docker-compose.yml
+#
+# # 配置
+# cp .env.example .env && $EDITOR .env
+#
+# # 起
+# docker compose -f deploy/docker-compose.lab.yml up -d --build
+# ```
+#
+# MySQL / Redis 用**宿主机已发布的端口**接入（``host.docker.internal``），
+# 而不是给 compose 加一个数据库服务——这台机器上数据库已经跑着了。
+
+name: web-agent-lab
+
+services:
+  studio:
+    build:
+      context: ..
+      dockerfile: services/studio/Dockerfile
+      args:
+        # 国内构建时换成镜像源：https://mirrors.aliyun.com/pypi/simple/
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        # 国内构建时换成镜像源：mirrors.aliyun.com
+        APT_MIRROR: ${APT_MIRROR:-}
+    image: webagent/studio:1.0.0
+    container_name: studio
+    restart: unless-stopped
+    # **零凭据**：这里只有 STUDIO_* 自己的运行参数。
+    # studio 执行的是模型指定的代码，容器里只要有一个能用的 key，
+    # 一次提示词注入就够把它偷出去（§7 的重点）。
+    environment:
+      STUDIO_HOST: "0.0.0.0"
+      STUDIO_PORT: "9000"
+      STUDIO_MAX_CONCURRENCY: "2"
+      STUDIO_MAX_QUEUE: "4"
+      STUDIO_MAX_TIMEOUT_MS: "30000"
+      STUDIO_MAX_STDOUT_BYTES: "1048576"
+      STUDIO_MAX_STDERR_BYTES: "262144"
+      STUDIO_DRAIN_TIMEOUT_SEC: "30"
+      STUDIO_PROFILE: "fast"
+      STUDIO_VERSION: "1.0.0"
+      TMPDIR: "/tmp"
+    # 只挂在内部网络里——**没有出网路径**（§7 / §11.1）。
+    networks:
+      - lab_internal
+    ports:
+      # 只绑回环：外网要连 studio 的话从 web_agent 走，不直接暴露。
+      - "127.0.0.1:9000:9000"
+    # 脚本的工作目录。tmpfs 占的是容器内存，所以单独限额。
+    tmpfs:
+      - /tmp:size=64m
+    # §7 的容器级加固，逐条对着来。
+    read_only: true
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web-agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: webagent/web-agent:1.0.0
+    container_name: web-agent
+    restart: unless-stopped
+    # 凭据从 .env 读，**不烘进镜像**。
+    env_file:
+      - ../.env
+    environment:
+      # 容器里跑要连宿主机上已发布的 MySQL / Redis。
+      DATABASE_URL: "mysql+asyncmy://root:666666@host.docker.internal:3306/web_agent"
+      REDIS_URL: "redis://host.docker.internal:6379/0"
+      # studio 在内部网络里，服务名就是 DNS 名。
+      STUDIO_EXEC_ADDR: "studio:9000"
+      STUDIO_EXEC_REQUIRED: "true"
+      STUDIO_EXEC_LB_POLICY: "round_robin"
+      CHECKPOINT_SQLITE_PATH: "/tmp/checkpoints.db"
+      TMPDIR: "/tmp"
+    networks:
+      - lab_internal
+      - lab_egress
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      # Linux 上让容器能用宿主机名访问宿主机已发布的端口。
+      - "host.docker.internal:host-gateway"
+    tmpfs:
+      - /tmp:size=64m
+    read_only: true
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 640m
+    cpus: 1.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  # 有默认网关——web_agent 要靠它出网调 LLM。
+  lab_egress:
+    driver: bridge
+  # **没有**默认网关：挂在这张网上的容器出不去。
+  lab_internal:
+    driver: bridge
+    internal: true

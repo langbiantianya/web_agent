@@ -17,6 +17,11 @@ services:
     build:
       context: ..
       dockerfile: services/studio/Dockerfile
+      args:
+        # 国内构建时换成镜像源：https://mirrors.aliyun.com/pypi/simple/
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        # 国内构建时换成镜像源：mirrors.aliyun.com
+        APT_MIRROR: ${APT_MIRROR:-}
     image: webagent/studio:1.0.0
     container_name: webagent-studio
     ports:
