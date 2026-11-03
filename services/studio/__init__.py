@@ -14,8 +14,39 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 from collections.abc import Callable
+
+# ---------------------------------------------------------------- gRPC 的 fork 支持
+#
+# **必须在 import grpc 之前**设好——gRPC 的 C 核心在**首次初始化**时读这个变量，
+# 之后再改就晚了。
+#
+# 为什么关掉：studio 跑脚本要 fork 子进程（:mod:`services.studio.executor` 用
+# ``preexec_fn`` 设 RLIMIT、用 ``start_new_session`` 建独立进程组），而 gRPC 的
+# C 核心为了支持多进程，会注册 ``pthread_atfork`` 处理器，在 fork 之后清理自己的
+# 状态。它在「fork 时别的线程正在 gRPC 里」的场景下会**放弃清理**：
+#
+#     I fork_posix.cc:71] Other threads are currently calling into gRPC,
+#                         skipping fork() handlers
+#     F ev_epoll1_linux.cc:1121] Check failed: next_worker->state == KICKED
+#
+# 然后**子进程**带着坏掉的 epoll 状态去 exec，exec 之前就被 glog 的断言
+# ``abort()`` 掉——脚本根本没跑起来，调用方收到的是 ``exit_code=-6``
+# （SIGABRT）、stdout/stderr 全空。
+#
+# 这个坑在本地测不出来：它要「别的线程正好在 gRPC 里」才触发，而本地测试是
+# 单线程顺序调用。真实部署里 studio 一直在跟 web_agent 保持长连接，
+# 命中率就高了（实测在真容器里连着跑，十次里有三四次直接 -6）。
+#
+# 关掉 fork 支持之后，gRPC 不再注册 atfork 处理器，fork 出来的子进程不再被
+# 它的状态拖累；子进程是脚本解释器，exec 之后也不碰 gRPC，所以没有任何副作用。
+# 代价是：**这个进程不能再 fork 出用 gRPC 的子进程**——studio 没有这个需求。
+#
+# 用 ``setdefault`` 而不是硬写：万一将来确实需要在 gRPC 进程里 fork 出另一个
+# gRPC 进程，可以显式把它设回 "1"。
+os.environ.setdefault("GRPC_ENABLE_FORK_SUPPORT", "0")
 
 from services.studio.config import StudioConfig
 from services.studio.server import StudioService

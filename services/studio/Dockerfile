@@ -30,10 +30,20 @@ ENV PYTHONUNBUFFERED=1 \
     STUDIO_PORT=9000
 
 # bash 是三种运行时之一（§10.1）；libstdc++6 是 node 二进制的动态依赖。
-RUN apt-get update \
+# tini 是 init 进程——见下面的 ENTRYPOINT。
+#
+# APT_MIRROR 做成构建参数：默认走官方源，国内构建时用
+# `--build-arg APT_MIRROR=mirrors.aliyun.com` 换镜像。官方源从国内拉经常
+# 中途断流（apt 会报 "Ign" 然后重试，一个 Packages 文件能卡十几分钟）。
+ARG APT_MIRROR=
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         bash \
         libstdc++6 \
+        tini \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
@@ -42,7 +52,11 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app
 
 COPY services/studio/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# PIP_INDEX_URL 做成构建参数：默认走官方源，国内构建时用
+# `--build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/` 换镜像，
+# 不用为了换源改镜像本身。
+ARG PIP_INDEX_URL=https://pypi.org/simple
+RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" -r requirements.txt
 
 # 只拷需要的三样：生成的桩代码、契约文件、服务端代码。
 # **不拷 web_agent 的代码**——studio 不认识 web_agent（§2.3）。
@@ -65,4 +79,14 @@ EXPOSE 9000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-m", "services.studio.healthcheck", "--addr", "127.0.0.1:9000"]
 
+# **必须用 init 进程（tini）当 PID 1**，不能直接让 python 当 PID 1。
+#
+# 原因：脚本被超时杀掉时，它自己起的子进程（孙进程）会被**重新挂到 PID 1**
+# 也就是 studio 服务底下。python 不是 init、不会回收孤儿，被杀死的孙进程
+# 会变成**僵尸**（/proc/<pid> 还在、状态 Z）——PID 表被慢慢占满，容器跑久了
+# 就「pid 耗尽」起不来新进程了。
+#
+# 实测（真容器）：一次超时 + 脚本带子进程 = 容器里留下一个僵尸。tini 会
+# 回收它，顺带把 SIGTERM 正确转发给 python（优雅停机那条路也就通了）。
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python", "-m", "services.studio"]
