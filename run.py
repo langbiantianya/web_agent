@@ -69,6 +69,10 @@ def ensure_env_file() -> None:
     不复制会怎样？Settings 会静默套用默认值，其中 ``secret_key`` 是硬编码的
     开发值，``minimax_api_key`` 为空——服务能起，但调不通模型。与其让人对着
     "Agent 一直返回 401" 猜，不如在这里给一份可编辑的骨架。
+
+    **写不了不算错**：容器化部署常用只读 rootfs（§7 的部署姿势），那时配置从
+    环境变量来（compose 的 ``env_file`` / K8s 的 ``env``），``.env`` 只是本地
+    开发的便利。这里写失败只给一句提示，不让服务起不来。
     """
     env_file = ROOT / ".env"
     example = ROOT / ".env.example"
@@ -77,7 +81,12 @@ def ensure_env_file() -> None:
     if not example.exists():
         print("⚠️  没找到 .env 和 .env.example，将使用内置默认配置启动。")
         return
-    env_file.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    try:
+        env_file.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    except OSError as exc:
+        print(f"⚠️  写不了 {env_file}（{type(exc).__name__}）：大概是只读文件系统。")
+        print("   容器化部署请用环境变量注入配置（compose 的 env_file / K8s 的 env）。")
+        return
     print("✅ 已从 .env.example 生成 .env")
     print("   ⚠️ 记得填入 MINIMAX_API_KEY，否则模型调用会失败。")
 
