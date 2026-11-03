@@ -163,3 +163,19 @@ STUDIO_EXEC_LB_POLICY=round_robin   # 默认值，显式写出来是为了让人
 10. **别用 `prctl` 设 `oom_score_adj`。** 实测它返回 0 却什么都不做；写
     `/proc/self/oom_score_adj` 才有效。所以 `STUDIO_OOM_SCORE_ADJ` 的实现是写 proc
     文件 + 回读验证（skill-service §13.2）。
+11. **指标端口也在 NetworkPolicy 的管辖下。** studio 的 `/metrics` 监听 `9090`
+    （`STUDIO_METRICS_PORT`，设成 `0` 关闭）。`studio-networkpolicy.yaml` 里
+    **必须**有一条放行 9090 的 ingress 规则给抓取器——不放行的话，指标端点在容器
+    里好好地跑着，抓取器却连不上。清单里那条规则的命名空间/标签是**占位值**，
+    按你的监控栈改。
+
+### 指标端点
+
+```bash
+# 在 studio 容器里抓一次指标
+docker exec studio python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:9090/metrics').read().decode())"
+```
+
+输出是 **Prometheus 文本 exposition 格式**（`text/plain; version=0.0.4`），
+指标清单见 skill-service §12.1。**没有引第三方库**——studio 镜像只装 grpcio +
+protobuf 是有意的原则（容器里跑的是模型指定的代码，依赖越少越好）。

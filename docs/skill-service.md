@@ -517,6 +517,17 @@ studio 容器里**看不到**任何业务文件：
 `studio_exec_failed_total{reason}` 的 `reason` 取值：`runtime_missing` / `spawn_failed` /
 `invalid_request` / `unknown_language`。
 
+**落地**（`services/studio/metrics.py`）：`/metrics` 端点监听 `STUDIO_METRICS_PORT`
+（默认 `9090`，设成 `0` 就不启用），输出 **Prometheus 文本 exposition 格式**
+（`text/plain; version=0.0.4`）。
+
+**没有引第三方库**：studio 的镜像**只装两个包**（grpcio + protobuf），这是有意的——
+容器里跑的是模型指定的代码，镜像越小、依赖越少，被供应链投毒后能拿到的东西就越少
+（`services/studio/requirements.txt` 的开头就写着这条）。为了导指标再引一个
+`prometheus_client`，等于把这条原则让出去一半。exposition 格式本身就是
+counter / gauge / histogram 三种类型，自己写一百来行就够，HTTP 端点用
+`asyncio.start_server` 起，犯不着为一个 GET 端点引一个 Web 框架。
+
 ### 12.2 日志
 
 结构化 JSON，**每条执行一条汇总日志**（不是逐行转发脚本输出——那会淹掉日志）：
@@ -531,6 +542,17 @@ studio 容器里**看不到**任何业务文件：
 
 **不要把 stdout / stderr 的内容写进日志**——脚本输出可能含敏感数据（主设计 §22.10 第 2
 条）。只记字节数与摘要。
+
+**落地**（`services/studio/exec_log.py`）：logger 名 `services.studio.exec`，每次执行
+记**一行** JSON。`status` 用 proto 的枚举名（`COMPLETED` / `FAILED` / `TIMEOUT` /
+`LIMITED` / `CANCELLED`），`stdout_digest` 带 `sha256:` 前缀，其余字段与样本一一对应。
+
+**那一行是「纯 JSON」，不带普通日志的前缀**。这个 logger 有自己的 handler（格式
+`%(message)s`），而且 `propagate=False`——不然它会往根 logger 冒泡，被普通格式化器
+再打一遍，变成「同一件事出现两次：一次纯 JSON，一次带时间戳前缀」。
+
+`stdout_bytes` / `stderr_bytes` 是**原始字节数**（不是解码后的字符数）——解码失败会
+用 `errors="replace"` 兜底，那时的字符数与字节数对不上，审计要用字节数。
 
 ### 12.3 链路追踪
 
@@ -788,10 +810,14 @@ cgroup 的 `oom_kill` 计数 +1。
       实测现象：脚本间歇性以 `exit_code=-6`（SIGABRT）收场、stdout/stderr 全空，
       而且**本地测不出来**（要「fork 时别的线程正在 gRPC 里」才触发）。
       → `tests/test_studio_runtime_guards.py`
-- [ ] 指标与结构化日志（含 `stdout_digest`，**不含**输出内容）；
-      → **未做**：studio 侧现在只有普通日志，没有 Prometheus 指标端点，也没有结构化
-      输出格式。`stdout_digest` 已经在契约里（`ExecResponse.stdout_digest`），但没有
-      围绕它建指标。
+- [x] 指标与结构化日志（含 `stdout_digest`，**不含**输出内容）；
+      → `services/studio/metrics.py`（`/metrics` 端点，Prometheus 文本格式，
+      `STUDIO_METRICS_PORT` 默认 9090、设 0 关闭）、`services/studio/exec_log.py`
+      （每次执行一条 JSON 汇总日志，logger 名 `services.studio.exec`）。
+      **没有引第三方库**——studio 镜像只装 grpcio + protobuf 是有意的原则，
+      为导指标引一个包等于把这条让出去一半。
+      → `tests/test_studio_metrics.py`（14 条：exposition 格式、标签转义、端点、
+      一次执行记全了什么、失败原因分类、日志里**没有输出内容**）
 - [x] `Health` 实现（便宜、可做探针）；
       → `services/studio/server.py::Health`；探针命令行工具 `services/studio/healthcheck.py`
       （用 exec 探针而不是 K8s 的 `grpc:` 探针——后者发的是标准健康检查协议，跟契约对不上）

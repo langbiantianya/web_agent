@@ -947,4 +947,5 @@ alembic/  tests/  docs/design.md  docs/performance.md  docs/skill-service.md
 
   V4 分三个 Phase 落地：**Phase 1（Skill 基础）已完成**——三张表 + CRUD + 导入导出 + 审计 + 提示词注入 + `skill_resource` 工具 + 提示词预览；**Phase 2（MCP 客户端）已完成**——`mcp_server` / `mcp_tool` 两张表 + stdio 与 Streamable HTTP 两种传输 + `mcp__<server>__<tool>` 命名分发 + 工具目录快照 + 管理员专属的服务器管理接口；**Phase 3（studio + `skill_exec`）已完成**——proto 契约（仓库里只有一份）+ gRPC 客户端 + `skill_exec` 工具 + 三道调用侧校验 + 启动期兼容性检查 + studio 服务侧参考实现（`services/studio/`）+ 端到端与故障注入 + 部署产物（`deploy/k8s/`）
 
-  Phase 3 之后仍未做的：V4 的可观测性（OpenTelemetry 链路追踪、token 成本统计）、`isolated` 隔离档、studio 的指标与结构化日志。
+  Phase 3 之后仍未做的：V4 的可观测性（OpenTelemetry 链路追踪、token 成本统计）、`isolated` 隔离档。
+  studio 的 **Prometheus 指标端点**（`/metrics`）与**结构化执行日志**已补上（skill-service §12）。
