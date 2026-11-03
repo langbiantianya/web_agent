@@ -55,6 +55,10 @@ httpx2>=2.10
 # 但它也带着 protoc 本体，装着省事。
 grpcio>=1.60
 grpcio-tools>=1.60
+# protobuf 是**运行期**依赖：生成的桩代码 import 的是 google.protobuf。
+# 以前只靠 grpcio-tools 传递带进来——那在开发机上恰好成立，但独立构建的
+# studio 镜像（只装 grpcio）会直接炸 "No module named 'google'"。
+protobuf>=7.35.1,<8
 
 # ---- 测试 ----
 pytest>=8.0

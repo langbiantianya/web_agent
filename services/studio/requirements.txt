@@ -1,7 +1,14 @@
-# studio 只依赖 grpcio——**不装 web_agent 的那一堆**（FastAPI / SQLAlchemy /
+# studio 只依赖两个包——**不装 web_agent 的那一堆**（FastAPI / SQLAlchemy /
 # LangGraph / openai SDK…）。
 #
 # 为什么要单独一份：studio 容器里跑的是**模型指定的代码**。镜像越小、依赖越
 # 少，被供应链投毒后能拿到的东西就越少。而且这份镜像不该跟着 web_agent 的
 # 依赖升级一起动——两者是**独立部署**的。
 grpcio==1.85.1
+# protobuf 是**运行期**依赖，不是构建期依赖：生成的桩代码
+# （webagent/studio/v1/studio_pb2.py）import 的是 google.protobuf。
+# 只装 grpcio 会在容器里炸 "No module named 'google'"——本地测试看不出来，
+# 因为开发机上 grpcio-tools 把 protobuf 一并装了。
+#
+# 下限 7.35.1 是桩代码里 ValidateProtobufRuntimeVersion 写死的那一版。
+protobuf>=7.35.1,<8
