@@ -405,3 +405,116 @@ def test_skill_exec_cannot_be_configured_when_unavailable():
         assert normalize_tool_names(["skill_exec"]) == ["skill_exec"]
     finally:
         set_optional_tools_enabled(False)
+
+
+# --------------------------------------------------- 技能 code 怎么告诉模型
+
+
+async def _skill_param_desc(codes: set[str] | None, tool: str = "skill_exec") -> str:
+    """按给定的技能白名单展开一次工具 schema，返回 ``skill`` 参数的描述。
+
+    Args:
+        codes: 技能白名单；``None`` 表示不限制。
+        tool: 工具名。
+
+    Returns:
+        ``skill`` 参数的描述文本。
+    """
+    from app.core.skill_context import (
+        reset_current_skill_codes,
+        set_current_skill_codes,
+    )
+    from app.core.tools import build_openai_tools, set_optional_tools_enabled
+
+    set_optional_tools_enabled(True)
+    token = set_current_skill_codes(codes)
+    try:
+        specs = await build_openai_tools([tool])
+        assert specs is not None
+        return specs[0]["function"]["parameters"]["properties"]["skill"]["description"]
+    finally:
+        reset_current_skill_codes(token)
+        set_optional_tools_enabled(False)
+
+
+@pytest.mark.parametrize("tool", ["skill_exec", "skill_resource"])
+async def test_skill_param_lists_the_actual_bound_codes(tool: str):
+    """``skill`` 参数的描述里要列出**实际可用的技能 code**。
+
+    模型判断「调哪个技能」的唯一依据就是提示词与工具 schema。技能正文（§22.6）
+    注入的是正文，正文里不一定写着自己的 code；原先 schema 里只有一句举例。
+    于是真模型只能**猜**——实测（真 MiniMax + 真部署）它连猜了十来个
+    （``hello``、``hello-script``、``hello-world``…），全被白名单拒掉，最后
+    撞上「工具调用超过 5 轮」失败。
+
+    这条钉住的就是：**可用的 code 必须出现在模型看得见的地方**。
+    """
+    desc = await _skill_param_desc({"financial-report", "quarterly-metrics"})
+    assert "financial-report" in desc
+    assert "quarterly-metrics" in desc
+
+
+async def test_skill_param_says_do_not_call_when_no_skills_bound():
+    """一个技能都没绑时，描述要明确说「别调这个工具」。
+
+    空列表的 schema 比泛泛的描述更能压住模型——它看到的是「本 Agent 没有技能」，
+    而不是「举例 financial-report」，于是不会去猜。
+    """
+    desc = await _skill_param_desc(set())
+    assert "没有绑定任何技能" in desc
+    assert "不要调用" in desc
+
+
+async def test_skill_param_description_does_not_leak_between_contexts():
+    """动态描述**不能**写回注册表——否则跨节点串味。
+
+    注册表里的 ``parameters`` 是全局共享的那份 dict。一次 run 里多个节点并发跑、
+    绑不同的技能时，改了它就是互相污染：节点 A 的模型会看到节点 B 的技能列表。
+    """
+    from app.core.skill_context import (
+        reset_current_skill_codes,
+        set_current_skill_codes,
+    )
+    from app.core.tools import build_openai_tools, set_optional_tools_enabled
+
+    set_optional_tools_enabled(True)
+    try:
+        token = set_current_skill_codes({"secret-skill-a"})
+        try:
+            await build_openai_tools(["skill_exec"])
+        finally:
+            reset_current_skill_codes(token)
+
+        # 换个上下文再展开一次：描述应当回到「通用」那一版
+        specs = await build_openai_tools(["skill_exec"])
+        assert specs is not None
+        desc = specs[0]["function"]["parameters"]["properties"]["skill"]["description"]
+        assert "secret-skill-a" not in desc
+
+        # 注册表本身也没被改
+        from app.core.tools import get_tool
+
+        spec = get_tool("skill_exec")
+        assert spec is not None
+        assert "secret-skill-a" not in spec.parameters["properties"]["skill"]["description"]
+    finally:
+        set_optional_tools_enabled(False)
+
+
+async def test_non_skill_tools_keep_their_static_schema():
+    """只有技能类工具会被改写——别的工具的 schema 一字不动。"""
+    from app.core.skill_context import (
+        reset_current_skill_codes,
+        set_current_skill_codes,
+    )
+    from app.core.tools import build_openai_tools, set_optional_tools_enabled
+
+    set_optional_tools_enabled(True)
+    token = set_current_skill_codes({"some-skill"})
+    try:
+        specs = await build_openai_tools(["calc"])
+        assert specs is not None
+        assert "some-skill" not in specs[0]["function"]["description"]
+    finally:
+        reset_current_skill_codes(token)
+        set_optional_tools_enabled(False)

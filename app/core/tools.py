@@ -49,6 +49,7 @@ from app.config.settings import settings
 from app.core.arith import ArithError, evaluate
 from app.core.errors import BadRequestError, SensitiveContentError
 from app.core.mcp.naming import is_mcp_name
+from app.core.skill_context import current_skill_codes
 
 logger = logging.getLogger(__name__)
 
@@ -528,10 +529,83 @@ def known_tool_names(raw: Any, known_mcp: set[str] | None = None) -> list[str] |
     return list(dict.fromkeys(names)) or None
 
 
+# 带「技能 code」参数的内置工具。它们的 ``skill`` 参数描述要按**当前上下文**
+# 动态生成——原因见 :func:`_skill_param_description`。
+_SKILL_PARAM_TOOLS = ("skill_exec", "skill_resource")
+
+
+def _skill_param_description(codes: set[str] | None) -> str:
+    """生成 ``skill`` 参数的描述——把**实际可用的 code** 列出来。
+
+    ## 为什么必须动态生成
+
+    模型判断「该调哪个技能、脚本在哪」的唯一依据就是提示词与工具 schema。
+    而技能正文（§22.6）注入的是**正文**，正文里不一定写着自己的 code；工具
+    schema 里原先也只有一句举例（「例如 financial-report」）。
+
+    于是真模型只能**猜** code。实测（真 MiniMax + 真部署）：模型连续猜了
+    ``hello``、``hello-script``、``hello-world``… 十来个，全被白名单拒掉，
+    最后撞上「工具调用超过 5 轮」失败。假 LLM 的测试测不到这个——它早就被
+    写死成正确的 code 了。
+
+    ## 为什么用执行侧同一份白名单
+
+    这里列的 code 与 :func:`app.core.skill_context.current_skill_codes` 是**同一份**
+    ——也就是执行期白名单校验用的那份。于是「模型看到的」与「服务端允许的」
+    不可能对不上：被预算挡掉的技能压根不会出现在列表里（它压根没被注入）。
+
+    Args:
+        codes: 当前上下文允许的技能 code 集合；``None`` 表示不限制。
+
+    Returns:
+        给模型看的参数描述。
+    """
+    if codes is None:
+        # 没有上下文（不在 run 里，比如后台的提示词预览）：保持通用描述。
+        return "技能 code（不是显示名），例如 financial-report"
+    if not codes:
+        return (
+            "技能 code。**本 Agent 当前没有绑定任何技能**——不要调用这个工具，"
+            "直接回答用户即可。"
+        )
+    listed = "、".join(sorted(codes))
+    return (
+        f"技能 code（不是显示名）。本 Agent 当前可用的技能只有：{listed}。"
+        "只能填这些 code，填别的会被直接拒绝。"
+    )
+
+
+def _openai_spec_for(spec: ToolSpec) -> dict:
+    """把工具 spec 转成 OpenAI 条目；技能类工具按当前上下文改写 ``skill`` 参数。
+
+    **不改注册表本身。** ``ToolSpec.parameters`` 是全局共享的那份 dict，直接改
+    它就是跨节点串味——一次 run 里多个节点并发跑、绑不同的技能时，模型会看到
+    别的节点的技能列表。所以这里逐层浅拷贝，只替换 ``skill`` 那一条。
+
+    Args:
+        spec: 工具 spec。
+
+    Returns:
+        OpenAI function-calling 的 ``tools`` 条目。
+    """
+    payload = spec.to_openai()
+    if spec.name not in _SKILL_PARAM_TOOLS:
+        return payload
+    params = payload["function"].get("parameters")
+    props = params.get("properties") if isinstance(params, dict) else None
+    if not isinstance(props, dict) or "skill" not in props:
+        return payload
+    new_props = dict(props)
+    new_props["skill"] = {
+        **new_props["skill"],
+        "description": _skill_param_description(current_skill_codes()),
+    }
+    payload["function"]["parameters"] = {**params, "properties": new_props}
+    return payload
+
+
 async def build_openai_tools(names: list[str] | None) -> list[dict] | None:
     """把工具名列表展开成 OpenAI 的 ``tools`` 参数。
-
-    **先按字符串过滤**：``tools`` 列是 JSON，V3.2 之前存过 OpenAI 的 function
     schema（dict）。曾经这里直接 ``TOOL_REGISTRY.get(name)``，遇到 dict 会抛
     ``TypeError: cannot use 'dict' as a dict key``——而这个异常在运行期被编排器
     当成「节点失败」重试 3 次，最后 run 以一条看不懂的 TypeError 收尾。
@@ -570,7 +644,7 @@ async def build_openai_tools(names: list[str] | None) -> list[dict] | None:
             # 保存期已经拦过；这里仍兜一层，防止直接写库塞进非法配置
             logger.warning("跳过未注册的工具：%s", name)
             continue
-        specs.append(spec.to_openai())
+        specs.append(_openai_spec_for(spec))
     return specs or None
 
 
