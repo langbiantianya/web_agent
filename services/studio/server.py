@@ -342,6 +342,7 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                         stdin=request.stdin,
                         timeout_ms=remaining_ms,
                         image=request.image,
+                        request_id=request.request_id,
                     )
                 )
         except LauncherUnavailableError as exc:

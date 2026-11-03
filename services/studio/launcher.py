@@ -59,6 +59,7 @@ class ExecSpec:
         timeout_ms: 执行时限（毫秒）。
         image: 镜像**目录名**（不是完整 ref）；空 = 默认镜像。只有 isolated
             档会用它，fast 档忽略。
+        request_id: 调用方的追踪键；dispatcher 用它做标签/幂等（审计用）。
     """
 
     skill: str = ""
@@ -69,6 +70,7 @@ class ExecSpec:
     stdin: str = ""
     timeout_ms: int = 0
     image: str = ""
+    request_id: str = ""
 
 
 class LauncherUnavailableError(Exception):

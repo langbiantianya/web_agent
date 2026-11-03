@@ -87,15 +87,29 @@ studio **没有技能的概念**。它收到的是「一段脚本正文 + 路径
 | `fast`（默认） | 容器内**独立进程组** + 独立临时工作目录 + 只读 rootfs | 几十~几百毫秒 | 纯计算：解析、转换、统计 |
 | `isolated` | 每次执行起一个**一次性容器** | 秒级 | 触碰第三方库、需要完整依赖树的脚本 |
 
-**`fast` 档已实现；`isolated` 档目前是「骨架 + 契约」。** Phase 0 补了请求档位、
-响应回显、`Health` 按档位报能力、启动期审计；**一次性容器执行器仍未实现**。
+**`fast` 档已实现；`isolated` 档的 Docker 后端已落地（Phase 1），K8s 后端待 Phase 2。**
+Phase 0 补了请求档位、响应回显、`Health` 按档位报能力、启动期审计；Phase 1 补了
+`services/sandbox/`（runner + 控制帧 + 镜像）与 `services/dispatcher/`（只调度的控制面）。
 
 档位由**技能声明**（`metadata.runtime-profile`）算出来，随请求的 `profile` 带到服务端；
 服务端只能升、不能降，并在响应里回显**实际**档位。`STUDIO_ISOLATED_SKILL_CODES` 是
 运维的**升级覆盖**（只升不降），`STUDIO_PROFILE` 是实例默认档；老客户端不带 `profile`
 时沿用旧路由。版本门槛见 §14.3。
 
-**骨架的具体形态**（`services/studio/launcher.py`）：
+**执行链路**（isolated）：
+
+```text
+studio.Exec(profile=isolated)
+  └─ DispatcherRuntime  ── POST /v1/exec ──▶  dispatcher
+                                               ├─ 按固定模板 create 一次性容器
+                                               ├─ put_archive(payload)
+                                               ├─ start / wait / logs
+                                               └─ remove
+                                                   └─ services/sandbox/runner
+                                                       └─ 控制帧（META/OUT/ERR/END）
+```
+
+**部件状态**：
 
 | 部件 | 状态 |
 | --- | --- |
@@ -105,12 +119,15 @@ studio **没有技能的概念**。它收到的是「一段脚本正文 + 路径
 | 请求档位 `ExecProfile` + 响应回显（Phase 0） | ✅ |
 | `Health` 按档位报能力（`profiles` / `images`，Phase 0） | ✅ |
 | 启动期版本下限 + 技能绑定审计（Phase 0） | ✅ |
-| 一次性容器执行器（`IsolatedRuntime` 接口） | ❌ **没实现**（Phase 1 Docker / Phase 2 K8s） |
-| 运行时缺失时的失败语义 | ✅ `FAILED_PRECONDITION` +「没有部署容器运行时」 |
+| Docker 执行体：`DispatcherRuntime` + dispatcher + 沙箱镜像（Phase 1） | ✅ |
+| 控制帧协议（4 KB 分片 + END 摘要） | ✅ `services/sandbox/protocol.py` |
+| 真实 Docker 环境 e2e | ⏳ 需要一台有 Docker 的机器（本机沙箱起不了子进程） |
+| K8s Job 后端 | ❌ Phase 2 |
 
 **为什么不让 studio 直接起容器**：起容器要挂 Docker socket 或给 K8s 凭据，而 studio
 里跑着模型指定的代码——这等于把宿主 root 等价权限交给脚本，与 §7 的「零凭据、无宿主
-挂载」直接冲突。正确的接法是加一个**只调度、不执行**的 dispatcher（Phase 1）。
+挂载」直接冲突。所以 Docker socket 只在 **dispatcher** 里，studio 通过内部 HTTP 调它；
+dispatcher 只按固定模板建容器，从不执行 `content`。
 
 **绝不悄悄退回 `fast` 档**：悄悄退回是最坏的一种降级——调用方以为拿到的是强隔离，
 实际不是，而且**没有任何痕迹**。所以档位不可用时必须明确说出来（§12 的失败模式表
@@ -848,10 +865,11 @@ cgroup 的 `oom_kill` 计数 +1。
    个实例是可能的。
 10. **日志里没有脚本输出**。为了不落敏感数据，stdout/stderr 只进执行结果不进日志
     （§12.2）。事后排查只能靠 `stdout_digest`。
-11. **`isolated` 档的容器执行器未实现**（§2.4）。Phase 0 已补上契约与能力协商：
-    `ExecProfile`、`Health.profiles/images`、启动期版本与绑定审计、响应档位回显对账。
-    但**强隔离本身还没有**——运行时缺失时明确报错，不会悄悄退回 fast。需要强隔离的
-    技能现在只能继续留在 `fast` 档，或者等 Phase 1 的 Docker 沙箱后端。
+11. **`isolated` 的 K8s 后端未实现**（§2.4）。Docker 后端已在 Phase 1 落地：
+    `services/sandbox/` + `services/dispatcher/` + `DispatcherRuntime`，studio 自己不挂
+    socket；控制帧、超时、OOM、取消由 dispatcher/runner 处理。**尚未在真实 Docker 上
+    跑 e2e**（本机沙箱起不了子进程）；K8s Job 后端在 Phase 2。需要 K8s 强隔离的部署
+    要等 Phase 2。
 
 ---
 
@@ -866,17 +884,18 @@ cgroup 的 `oom_kill` 计数 +1。
       一行都不用改；studio 容器不装 web_agent 的代码，只拷这个目录即可。
 - [x] studio 服务：gRPC server + 并发闸门 + 队列 + 执行器；
       → `services/studio/server.py`、`services/studio/executor.py`
-- [ ] `isolated` 隔离档（每请求起一次性容器）；
-      → **骨架 + Phase 0 契约已落地**（`services/studio/launcher.py`）：`Launcher` 抽象、
-      档位路由（实例默认 / 运维列表 / 请求档位，**只升不降**）、`isolated` 档自己的并发池与
-      等待队列（§8.4）、运行时缺失时明确的 `FAILED_PRECONDITION`（**不悄悄退回 fast 档**）。
-      Phase 0 另补：`ExecProfile` 请求/回显、`Health.profiles/images`、启动期版本与绑定审计、
-      响应档位对账。**没做的是容器执行器本身**——起容器要挂 Docker socket，与 §7 的
-      「无宿主挂载」直接冲突；接缝留在 `IsolatedRuntime` 接口上，Phase 1 由独立 dispatcher
-      接（见 `docs/superpowers/plans/2026-11-03-isolated-exec.md`）。
-      → `tests/test_studio_isolated.py`（16 条：路由、两个池互不阻塞、失败语义、
-      profile 标签、请求档位/回显、能力缺失、队列 deadline、失败不缓存）。
-      **未在真容器里验过**——Phase 1 的 Docker 后端落地后再补。
+- [x] `isolated` 隔离档的 **Docker 后端**（每请求起一次性容器）；
+      → Phase 0（`services/studio/launcher.py`）：`Launcher` 抽象、档位路由（实例默认 /
+      运维列表 / 请求档位，**只升不降**）、`isolated` 档自己的并发池与等待队列（§8.4）、
+      运行时缺失时明确的 `FAILED_PRECONDITION`（**不悄悄退回 fast 档**）、`ExecProfile`
+      请求/回显、`Health.profiles/images`、启动期版本与绑定审计、响应档位对账。
+      → Phase 1：`services/sandbox/`（runner + 控制帧 + 镜像）、`services/dispatcher/`
+      （只调度的控制面，socket 只在这里）、`services/studio/dispatcher_runtime.py`
+      （studio 用标准库 HTTP 调 dispatcher，自己不挂 socket）。
+      → 测试：`tests/test_studio_isolated.py`（16 条）+ `tests/test_sandbox_protocol.py`（8）、
+      `test_sandbox_runner.py`、`test_dispatcher.py`（8）、`test_dispatcher_runtime.py`（4）、
+      `test_docker_backend.py`（5）。
+      **真 Docker e2e 未跑**——本机沙箱起不了子进程；K8s Job 后端在 Phase 2。
 - [x] 进程隔离：新 session、独立 cwd、env 白名单、`killpg` + `wait` 回收；
       → `services/studio/executor.py`（`start_new_session` / `CREATE_NEW_PROCESS_GROUP`）
 - [x] 超时：墙钟定时器 + `RLIMIT_CPU` 双保险；

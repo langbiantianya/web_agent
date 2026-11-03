@@ -119,7 +119,26 @@ async def serve(
     # 启动巡检：清掉上次硬杀留下的孤儿进程与工作目录（§6.5）。
     killed_orphans, _removed_dirs = sweep_stale_processes()
 
-    svc = service if service is not None else StudioService(cfg)
+    runtime = None
+    if service is None and cfg.isolated_dispatcher_addr:
+        # isolated 档的执行体：把请求转给只调度的 dispatcher。studio 自己
+        # 不持有 Docker socket（§7 的「零凭据」）。
+        from services.studio.dispatcher_runtime import DispatcherRuntime
+
+        candidate = DispatcherRuntime(cfg.isolated_dispatcher_addr)
+        if await candidate.health():
+            runtime = candidate
+        else:
+            logger.warning(
+                "沙箱调度器不可达（%s），isolated 档标记为不可用",
+                cfg.isolated_dispatcher_addr,
+            )
+
+    svc = (
+        service
+        if service is not None
+        else StudioService(cfg, isolated_runtime=runtime)
+    )
     if killed_orphans:
         # 巡检发现的残留进程数（§12.1 的 studio_orphan_process_total）。
         svc.metrics.orphan_process_total.inc(killed_orphans)
@@ -166,6 +185,8 @@ async def serve(
         # 取消前者会让后面的 ``server.stop()`` 直接抛 CancelledError——停机
         # 路径整个断掉，容器被 SIGKILL 腰斩，在跑的执行全丢。
         await server.stop(grace=cfg.drain_timeout_sec)
+        if runtime is not None:
+            await runtime.close()
         if metrics_server is not None:
             metrics_server.close()
             await metrics_server.wait_closed()

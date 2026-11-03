@@ -580,21 +580,28 @@ graph TB
 **目标**：不依赖 K8s，在现有单机 Docker lab 里让 isolated 真正起一次性容器；把 D3/D4/D5/D6/C6/C7
 全部用可执行的方式钉住。
 
-- [ ] `services/sandbox/`：`protocol.py`（`SandboxSpec`、`SandboxBackend` 协议、控制帧编解码，
-      纯函数、可单测、不依赖 Docker）、`runner.py`（读 payload、设 rlimit、起脚本、收输出、
-      发控制帧）、`Dockerfile`（最小镜像：python/bash/node + runner；镜像里**没有** studio
-      服务代码）。
-- [ ] `services/dispatcher/`：HTTP/gRPC 小服务；`DockerBackend`（socket 只在 dispatcher
-      容器里）；创建容器时固定 `--network none --read-only --user 1000 --cap-drop ALL
-      --security-opt no-new-privileges --pids-limit --memory --cpus`；`logs` 有界读取；`rm`。
-- [ ] `deploy/docker-compose.lab.yml`：加 `studio-dispatcher`（挂 socket）与 `studio` 的
+- [x] `services/sandbox/`：`protocol.py`（`SandboxSpec`、控制帧编解码，纯函数）、`runner.py`
+      （读 payload、设 rlimit、起脚本、收输出、发控制帧）、`Dockerfile`（最小镜像：
+      python/bash/node + runner；镜像里**没有** studio 服务代码）。
+- [x] `services/dispatcher/`：标准库 HTTP 服务；`DockerBackend`（socket 只在 dispatcher
+      容器里）；固定模板 create：`network_disabled=True`、`read_only=True`、`user=1000:1000`、
+      `cap_drop=["ALL"]`、`no-new-privileges`、`pids_limit=256`、`mem_limit=512m`、
+      `nano_cpus=1e9`；`put_archive` 送 payload；`logs` 有界；`remove(force=True)`。
+- [x] `services/studio/dispatcher_runtime.py`：studio 侧用标准库 `asyncio.open_connection`
+      调 dispatcher（studio 镜像仍只装 grpcio + protobuf，不引 HTTP 客户端）。
+- [x] `deploy/docker-compose.lab.yml`：加 `studio-dispatcher`（挂 socket）与 `studio` 的
       `STUDIO_ISOLATED_DISPATCHER_ADDR`；`studio` 仍**不挂** socket。
-- [ ] `tests/test_sandbox_runner.py`：控制帧、切行、截断、exit code、OOM 标记、被信号杀时的收尾。
-- [ ] `tests/test_dispatcher.py`：假 backend 下的幂等创建、启动超时、日志缺失、清理。
+- [x] `tests/test_sandbox_protocol.py`（8 条）：payload 往返、控制帧往返、缺 END / 摘要不符、
+      切行续接、未知帧忽略。
+- [x] `tests/test_sandbox_runner.py`：语言映射、env 白名单、未知语言；真跑脚本的两条在
+      POSIX 上跑（Windows 沙箱起不了子进程，skip）。
+- [x] `tests/test_dispatcher.py`（8 条）：健康、转发、镜像/参数校验、错误映射、饱和 503、404、关闭。
+- [x] `tests/test_dispatcher_runtime.py`（4 条）：结果映射、HTTP 错误、不可达、坏地址。
+- [x] `tests/test_docker_backend.py`（5 条）：固定模板/加固参数、控制帧解析、OOM、结果丢失、未知镜像。
 - [ ] `tests/test_studio_isolated_e2e.py`（`@pytest.mark.docker`）：真 Docker，断言
-      容器 `NetworkMode=none`、`ReadonlyRootfs=true`、非 root、无 env、无 SA token（Docker 无此概念，
-      用「无挂载、无 env」代替）、脚本读不到宿主文件。
-- [ ] 文档：`skill-service.md` §2.4 从「骨架」改为「Docker 后端已落地」；补一节「沙箱控制帧」。
+      容器 `NetworkMode=none`、`ReadonlyRootfs=true`、非 root、无 env、无挂载、
+      脚本读不到宿主文件。**待有 Docker 的环境**——本机沙箱起不了子进程。
+- [x] 文档：`skill-service.md` §2.4 从「骨架」改为「Docker 后端已落地」；补执行链路与控制帧。
 
 **验收**：lab 里一条 isolated 技能真的在独立容器里跑完；`docker inspect` 能证明加固项；
 studio 容器内 `docker` 命令不存在、socket 不存在。

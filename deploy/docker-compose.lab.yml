@@ -1,4 +1,4 @@
-# 完整的一体化实验栈：web_agent + studio（skill-service §7、§11、§13）。
+# 完整的一体化实验栈：web_agent + studio + dispatcher（skill-service §7、§11、§13）。
 #
 # 与同目录的 `docker-compose.yml`（只有 studio）不同，这里把**两个服务**都拉起来，
 # 并且**真的把 studio 的出网掐掉**——这是 §7「禁出网」那条要求在 Docker 上唯一
@@ -25,7 +25,10 @@
 # # 配置
 # cp .env.example .env && $EDITOR .env
 #
-# # 起
+# # 先构建一次性沙箱镜像（dispatcher 按目录名引用它）
+# docker build -f services/sandbox/Dockerfile -t webagent/studio-sandbox:1.0.0 .
+#
+# # 起（studio + dispatcher + web_agent）
 # docker compose -f deploy/docker-compose.lab.yml up -d --build
 # ```
 #
@@ -72,15 +75,17 @@ services:
       STUDIO_ISOLATED_MAX_CONCURRENCY: "2"
       STUDIO_ISOLATED_MAX_QUEUE: "4"
       # 沙箱调度器的地址；空 = 本实例没有 isolated 运行时。Phase 1 起
-      # `studio-dispatcher` 会作为独立容器提供它（见 docs/superpowers/plans）。
-      STUDIO_ISOLATED_DISPATCHER_ADDR: ""
+      # `studio-dispatcher` 会作为独立容器提供它。
+      STUDIO_ISOLATED_DISPATCHER_ADDR: "studio-dispatcher:9100"
       # 镜像目录：`目录名=image@sha256:...`。调用方只能按目录名请求。
-      STUDIO_ISOLATED_IMAGES: ""
+      STUDIO_ISOLATED_IMAGES: "default=webagent/studio-sandbox:1.0.0"
       STUDIO_ISOLATED_STARTUP_BUDGET_MS: "15000"
       STUDIO_PROFILE: "fast"
       STUDIO_VERSION: "2.0.0"
       TMPDIR: "/tmp"
     # 只挂在内部网络里——**没有出网路径**（§7 / §11.1）。
+    depends_on:
+      - studio-dispatcher
     networks:
       - lab_internal
     ports:
@@ -98,6 +103,52 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    mem_limit: 256m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 一次性沙箱的调度器（skill-service §2.4）。
+  #
+  # **它持有 Docker socket，但从不执行 content**——真正跑脚本的是一次性沙箱容器
+  # （services/sandbox/Dockerfile）。studio 容器里没有 socket、没有 kubeconfig。
+  #
+  # 以 root 跑是为了挂 /var/run/docker.sock；生产建议换成 docker-socket-proxy
+  # 并把 API 收敛成 create/start/logs/remove（见 services/dispatcher/Dockerfile）。
+  studio-dispatcher:
+    build:
+      context: ..
+      dockerfile: services/dispatcher/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: webagent/studio-dispatcher:1.0.0
+    container_name: studio-dispatcher
+    restart: unless-stopped
+    environment:
+      DISPATCHER_HOST: "0.0.0.0"
+      DISPATCHER_PORT: "9100"
+      DISPATCHER_MAX_INFLIGHT: "2"
+      DISPATCHER_MAX_TIMEOUT_MS: "60000"
+      # 镜像目录：调用方只能按目录名请求。ref 里最好钉 digest。
+      # **要与 studio 的 STUDIO_ISOLATED_IMAGES 保持一致**：前者是 Health 上报，
+      # 后者是实际执行用的 ref。
+      DISPATCHER_IMAGES: "default=webagent/studio-sandbox:1.0.0"
+      # payload 目录：必须对 Docker daemon 可见（下面从宿主机同路径挂进来）。
+      DISPATCHER_PAYLOAD_DIR: "/var/lib/studio-payloads"
+    networks:
+      - lab_internal
+    volumes:
+      # 只挂进 dispatcher，**不挂进 studio**。
+      - /var/run/docker.sock:/var/run/docker.sock
+      # payload 目录：dispatcher 写、沙箱只读挂载。必须和宿主机同路径，
+      # 否则 Docker daemon 解析容器 bind mount 时找不到文件。
+      - /var/lib/studio-payloads:/var/lib/studio-payloads
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
     mem_limit: 256m
     cpus: 1.0
     logging:

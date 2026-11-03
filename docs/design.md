@@ -3419,8 +3419,9 @@ A 记录）并指定 `round_robin`。**Service 侧也必须是 headless 的**—
 | 启动期检查与注册联动 | `app/main.py`（lifespan）、`app/core/tools.py::set_optional_tools_enabled` |
 | 敏感词兜底 | `app/core/tools.py::_screen_tool_output`（MCP 与 skill_exec 共用） |
 | **服务侧参考实现** | `services/studio/`（gRPC server + 进程隔离 + 超时 + 截断 + 限流 + 去重 + 优雅停机） |
+| **isolated Docker 后端** | `services/sandbox/`（runner + 控制帧 + 镜像）、`services/dispatcher/`（只调度的控制面）、`services/studio/dispatcher_runtime.py`（studio 侧 HTTP 客户端） |
 | 探针 / 启动巡检 | `services/studio/healthcheck.py`、`services/studio/reaper.py` |
-| 部署产物 | `services/studio/Dockerfile`、`deploy/k8s/`、`deploy/docker-compose.yml` |
+| 部署产物 | `services/studio/Dockerfile`、`services/sandbox/Dockerfile`、`services/dispatcher/Dockerfile`、`deploy/k8s/`、`deploy/docker-compose.yml` |
 
 **为什么本仓库同时交付服务侧**：§22.13 的验收项「脚本在 studio 容器里跑、web_agent
 进程内没有起任何子进程」必须有一个**真的** studio 才能验证。只做调用侧 + mock，

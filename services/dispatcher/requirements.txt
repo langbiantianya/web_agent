@@ -1,0 +1,2 @@
+# dispatcher 的依赖。它**不是**沙箱镜像——可以装 Docker SDK。
+docker>=7.1
