@@ -41,6 +41,8 @@ Phase 0 + 1 就能让 isolated 在现有 `docker-compose.lab.yml` 里真的跑�
 
 ## 1. 现在一条 isolated 请求实际怎么走
 
+> 这一节记录的是 **Phase 0 之前**的现状，用来解释缺口；Phase 0/1 之后的落地情况见 §7。
+
 ### 1.1 调用链
 
 ```text
@@ -307,7 +309,7 @@ metadata:
 | 后端 | 送达方式 | 上限 |
 | --- | --- | --- |
 | K8s | 每次执行一个 Secret（`sbx-<hash>`），只读挂到 `/run/sandbox/payload.json`；Job 用 ownerReference 持有它 | Secret 1 MB；payload 总量必须 < 900 KB（content 200K + stdin 256K + argv 256K 仍有余量） |
-| Docker | dispatcher 在 tmpfs 写 `/run/payloads/<id>/payload.json`，`-v …:/run/sandbox:ro` | 同上 |
+| Docker | dispatcher 在 `DISPATCHER_PAYLOAD_DIR` 写 `<id>/payload.json`，再以只读 bind mount 挂到 `/run/sandbox` | 同上 |
 
 沙箱内的 runner 只读这一个文件；它**不读环境变量**（除 `PATH` / `HOME` / `LANG` / `TZ`
 这几个白名单），也不接受任何网络输入。
@@ -586,7 +588,8 @@ graph TB
 - [x] `services/dispatcher/`：标准库 HTTP 服务；`DockerBackend`（socket 只在 dispatcher
       容器里）；固定模板 create：`network_disabled=True`、`read_only=True`、`user=1000:1000`、
       `cap_drop=["ALL"]`、`no-new-privileges`、`pids_limit=256`、`mem_limit=512m`、
-      `nano_cpus=1e9`；`put_archive` 送 payload；`logs` 有界；`remove(force=True)`。
+      `nano_cpus=1e9`；payload 走只读 bind mount（`DISPATCHER_PAYLOAD_DIR`）；`logs` 有界；
+      `remove(force=True)`。
 - [x] `services/studio/dispatcher_runtime.py`：studio 侧用标准库 `asyncio.open_connection`
       调 dispatcher（studio 镜像仍只装 grpcio + protobuf，不引 HTTP 客户端）。
 - [x] `deploy/docker-compose.lab.yml`：加 `studio-dispatcher`（挂 socket）与 `studio` 的

@@ -3349,12 +3349,20 @@ Traceback (most recent call last):
 
 ```mermaid
 graph LR
-    subgraph deploy["同一编排平台（同一台机器的两个容器也算）"]
+    subgraph deploy["同一编排平台（同一台机器的多个容器也算）"]
         WA["web_agent 容器<br/>FastAPI + LangGraph<br/>持有 SECRET_KEY / DB 口令"]
-        ST["studio 容器<br/>无凭据 / 只读根 fs<br/>无出网 / 限 CPU 内存时长"]
+        ST["studio 容器<br/>无凭据 / 只读根 fs<br/>无出网 / 不挂 Docker socket"]
+        DP["studio-dispatcher<br/>只调度 / 不执行 content<br/>持 Docker socket"]
+        SB["一次性沙箱容器<br/>零凭据 / 无网络 / 只读 rootfs"]
     end
     WA -->|"gRPC · settings.studio_exec_addr"| ST
+    ST -->|"内部 HTTP · /v1/exec"| DP
+    DP -->|"create / start / logs / remove"| SB
 ```
+
+`isolated` 档的信任边界是**两段**的：studio 不持容器运行时凭据（它跑 fast 档和
+模型指定的代码），dispatcher 持凭据但**从不执行 `content`**——它只按固定模板
+create / start / logs / remove。沙箱本身零凭据、禁出网、只读 rootfs、非 root。
 
 studio 容器应满足：
 
@@ -3614,11 +3622,13 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
     准入靠 admin 权限 + 审计留痕，而不是靠过滤器。
 19. **技能上传的请求体上限与管理员门禁共用同一把密钥**。放宽只对带对 `X-Admin-Key` 的请求
     生效（§22.11），所以密钥一旦泄露，放宽后的上限也一起泄露了——两者是同一条信任边界。
-20. **`isolated` 隔离档只有骨架**。档位路由、`isolated` 档自己的并发池与等待队列、
-    运行时缺失时的明确报错都落地了（skill-service §2.4、§8.4）；**没做的是容器
-    执行器本身**——起容器要挂 Docker socket，与 §7 的「无宿主挂载」直接冲突。
-    需要强隔离的技能现在只能继续留在 `fast` 档（同一容器内先后两次执行之间
-    理论上存在残留：临时目录、环境变量、打开的文件），或者等运行时部署。
+20. **`isolated` 隔离档的 Docker 后端已落地，K8s 后端还没有**。档位路由、独立并发池、
+    请求/回显、`Health` 按档位报能力、启动审计都在（skill-service §2.4、§8.4）；
+    Phase 1 另加了 `services/sandbox/`（runner + 控制帧 + 镜像）与
+    `services/dispatcher/`（只调度的控制面，Docker socket 只在这里）。schema 是
+    「studio 不挂 socket，dispatcher 按固定模板起一次性容器」。**真 Docker e2e 尚未跑**
+    （开发机沙箱起不了子进程），所以「容器里真的无网络/只读 rootfs」还只是代码与单测
+    层面的保证；K8s Job 后端在 Phase 2。
 21. **K8s 清单没有在真实集群上验证过**。`deploy/k8s/` 里的清单是照着文档逐条写的。
     **镜像与容器配置已经在真 Docker 上逐条实测过**（§22.14），但 NetworkPolicy 是否
     真的拦住出向、headless + `round_robin` 是否真把流量摊到多个 Pod 上，这两条**仍然
@@ -3627,7 +3637,7 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
     `deploy/k8s/README.md` 里列了部署前要先跑的三条自检命令。
 22. **studio 服务侧是参考实现，不是生产就绪的服务**。`services/studio/` 做完了契约、进程隔离、
     超时、截断、限流、去重、优雅停机这些**功能**，指标导出与结构化日志也已补上
-    （§12.1、§12.2），但仍没有多档隔离（`isolated` 档未实现）。
+    （§12.1、§12.2）；isolated 的 Docker 执行体在 Phase 1 补上，K8s 执行体还没有。
     它的定位是「把调用侧与服务侧的边界钉清楚，并让验收能真的跑起来」，不是直接上生产。
 23. **真实模型那一环已在真部署上实测**（§22.14）。用的是 MiniMax 的 **M Plan /
     Coding Plan 专用 key**——它与按量付费接口**不通用**（按量付费那把 key 在国内站与
@@ -3852,9 +3862,11 @@ studio 报的是 `COMPLETED` + `exit_code=-9`，模型拿到一句没头没尾�
 - **studio 自己成为最大占用者时的 OOM**：实测里被杀的永远是吃内存的脚本，studio 活着。
   但如果 studio 自己的常驻内存反而比脚本大（泄漏之类），内核可能挑中它——那就会变成
   「连不上 studio」。这条没测，也不该靠 `oom_score_adj` 兜（它只加在脚本进程上）。
-- **`isolated` 档骨架没在真容器里验过**：档位路由、独立队列、运行时缺失时的
-  `FAILED_PRECONDITION` 都有本地测试钉着（`tests/test_studio_isolated.py`），但
-  **真容器里的那一次没跑成**——测的时候远端机器不可达。这条要补。
+- **`isolated` Docker 后端没在真 Docker 里验过**：Phase 0 的档位/能力协商与 Phase 1 的
+  `services/sandbox/` + `services/dispatcher/` 都有本地测试钉着（协议、dispatcher HTTP、
+  Docker 固定模板、控制帧解析），但**真容器里的那一次还没跑**——开发机沙箱起不了子进程。
+  `tests/test_sandbox_docker_e2e.py` 已写好，在有 Docker 的机器上跑一次即可补上；
+  K8s 后端在 Phase 2。
 
 ---
 

@@ -102,7 +102,7 @@ Phase 0 补了请求档位、响应回显、`Health` 按档位报能力、启动
 studio.Exec(profile=isolated)
   └─ DispatcherRuntime  ── POST /v1/exec ──▶  dispatcher
                                                ├─ 按固定模板 create 一次性容器
-                                               ├─ put_archive(payload)
+                                               ├─ 只读 bind mount(payload)
                                                ├─ start / wait / logs
                                                └─ remove
                                                    └─ services/sandbox/runner
@@ -417,8 +417,10 @@ code 分支，**不匹配整句人话**。
 
 ## 7. 沙箱加固
 
-容器层面的加固，**在编排平台的容器配置里做，不是在代码里做**。代码能做的（进程组、ulimit、
-临时目录）只是补充。
+容器层面的加固**不在 studio 里做**：Docker 后端由 dispatcher 的固定模板设置
+（`services/dispatcher/docker_backend.py` 的 `containers.create(...)`），K8s 后端
+（Phase 2）对应的是编排平台清单；沙箱镜像本身只负责「非 root + 不装多余的东西」
+（`services/sandbox/Dockerfile`）。runner 里的进程组 / ulimit / 临时目录是第二道。
 
 | 项 | 要求 | 为什么 |
 | --- | --- | --- |
@@ -476,8 +478,10 @@ gRPC 的取消会传播到服务端的 handler，studio 应当：
 不能和 `fast` 档抢同一个并发池——否则几个慢脚本能把快脚本全堵死。
 
 **已实现**：两个档位各有自己的并发池与等待队列（`STUDIO_ISOLATED_MAX_CONCURRENCY` /
-`STUDIO_ISOLATED_MAX_QUEUE`）。这条是**可执行验证**的——测试里用一个假的容器执行器
-占住 `isolated` 档的并发位，`fast` 档的执行照常立刻返回（§19 的测试条目）。
+`STUDIO_ISOLATED_MAX_QUEUE`）。这条是**可执行验证**的：`tests/test_studio_isolated.py`
+用假 runtime 占住 `isolated` 档的并发位，`fast` 档照常立刻返回（§19 的测试条目）。
+Phase 1 之后，dispatcher 的 `DISPATCHER_MAX_INFLIGHT` 是第二层并发上限——studio 的
+池按实例算，dispatcher 的池按它自己算，两层都要撑住。
 
 ---
 
@@ -743,6 +747,27 @@ cgroup 的 `oom_kill` 计数 +1。
 
 第 1 步必须**先于**第 3 步，否则新的请求会一直进来，drain 永远结束不了。
 
+### 13.6 isolated 的部署形态（Phase 1 Docker）
+
+`isolated` 是**三个长期组件 + 一个一次性容器**：
+
+| 组件 | 凭什么 | 注意 |
+| --- | --- | --- |
+| `studio` | 无凭据 | 不挂 Docker socket；`STUDIO_ISOLATED_DISPATCHER_ADDR` 指向 dispatcher |
+| `studio-dispatcher` | 只持 Docker socket | 只调度、不执行 `content`；`DISPATCHER_IMAGES` 与 studio 的 `STUDIO_ISOLATED_IMAGES` 必须一致 |
+| 一次性沙箱 | 零凭据 | `network_disabled` / `read_only` / `1000:1000` / caps 全 drop / pids/mem/cpu 限额 |
+
+payload 走**只读 bind mount**：dispatcher 写一个对 Docker daemon 可见的目录
+（`DISPATCHER_PAYLOAD_DIR`），再挂到沙箱的 `/run/sandbox`。不用 `put_archive` 是因为
+沙箱 rootfs 是只读的，Docker 会拒绝写容器文件系统。
+
+studio 启动时会探一次 dispatcher 的 `/health`：探不到就把 isolated 标成不可用
+（`Health.profiles[isolated].ready=false`），**不会**悄悄退回 fast。dispatcher 在运行期
+挂掉时，isolated 请求返回 `status=failed` + `error_code=sandbox_unavailable`。
+
+K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota）在 Phase 2；
+`deploy/k8s/` 目前仍是 fast 档的清单。
+
 ---
 
 ## 14. 版本与兼容
@@ -818,10 +843,14 @@ cgroup 的 `oom_kill` 计数 +1。
 | 层级 | 测什么 | 怎么测 |
 | --- | --- | --- |
 | 单元 | 进程组、超时、输出截断、env 白名单、argv 直传、`killpg` 顺序 | 单进程 fake 脚本（`python -c` / `sh -c`） |
+| 协议 | payload 往返、控制帧编解码、切行、摘要校验 | `tests/test_sandbox_protocol.py` |
+| dispatcher | 镜像/参数校验、饱和 503、错误映射、健康 | `tests/test_dispatcher.py`、`test_dispatcher_runtime.py` |
+| Docker 后端 | 固定模板/加固参数、OOM、结果丢失、未知镜像 | `tests/test_docker_backend.py`（假 Docker 客户端） |
 | 契约 | proto 与生成代码一致；两边文档里的片段与 proto 文件一致 | CI 里跑一个比较脚本 |
 | 集成 | 真起容器、真脚本、真实 gRPC | docker-compose / kind 起一个 studio |
+| 真 Docker | 无网络、只读 rootfs、非 root、读不到宿主凭据 | `tests/test_sandbox_docker_e2e.py`（没有 Docker 时 skip） |
 | 跨语言 | python / bash / node 各跑通一遍 | 三个各一个最小脚本 |
-| 故障注入 | studio 被 kill / 超时 / OOM / 队列满 | 集成测试里人为构造 |
+| 故障注入 | studio 被 kill / 超时 / OOM / 队列满 / dispatcher 挂 | 集成测试里人为构造 |
 | 端到端 | 从 web_agent 发起 `skill_exec` 到模型收到结果 | 起真实 uvicorn + 真实 studio（主设计 §22.13 的验收项） |
 
 **故障注入是这里最容易被跳过、也最值钱的一层。**「studio 挂掉」是生产环境一定会遇到的
@@ -850,8 +879,8 @@ cgroup 的 `oom_kill` 计数 +1。
 ## 18. 已知限制
 
 1. **`fast` 档不是强隔离**。同一容器内先后两次执行之间理论上存在残留（临时目录、环境
-   变量、打开的文件）。需要强隔离的走 `isolated` 档，而它当前**只有骨架**——接口与
-   独立队列都在，**容器运行时没实现**（§2.4）。
+   变量、打开的文件）。需要强隔离的走 `isolated` 档；Docker 后端已在 Phase 1 落地
+   （§2.4、§13.6），但**真 Docker e2e 尚未跑**，K8s 后端在 Phase 2。
 2. **禁出网**。需要外网的脚本做不了——这是有意的（§11.1），但会让一部分技能写不出来。
 3. **无凭据**。需要 API key / 数据库口令的脚本做不了。这类需求应该走 MCP 工具。
 4. **输入只支持文本**。二进制输入、二进制输出都不支持（§9.1、§9.3）。
@@ -875,7 +904,8 @@ cgroup 的 `oom_kill` 计数 +1。
 
 ## 19. 实施清单
 
-> 勾选状态对应 **Phase 3** 的落地情况。每一项后面标了它落在哪、或者钉它的测试。
+> 勾选状态对应 **Phase 3**，以及 isolated 的 **Phase 0/1** 落地情况。每一项后面标了
+> 它落在哪、或者钉它的测试。
 
 - [x] `proto/webagent/studio/v1/studio.proto` 落库，生成 Python 桩代码；
       → `proto/webagent/studio/v1/studio.proto`、`webagent/studio/v1/`
