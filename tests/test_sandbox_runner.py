@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from io import BytesIO
 
 import pytest
 
@@ -36,6 +37,47 @@ def test_unknown_language_fails_without_spawning():
     )
     assert result["status"] == "failed"
     assert result["error_code"] == "unknown_language"
+    assert result["exit_code"] == -1
+
+
+def test_parse_oom_kill_count_from_cgroup_v2():
+    """cgroup v2 的 ``oom_kill`` 计数能被解析。"""
+    text = "low 0\nhigh 0\nmax 0\noom 1\noom_kill 3\n"
+    assert runner._parse_oom_kill_count(text) == 3
+
+
+def test_oom_signal_with_cgroup_evidence_is_limited(monkeypatch):
+    """脚本被 OOM killer 选中时，不能只报模糊的 SIGKILL。"""
+
+    class _KilledProcess:
+        """已以 SIGKILL 退出的假进程。"""
+
+        def __init__(self, *_args, **_kwargs):
+            """构造可直接被读取的管道。"""
+            self.returncode = -9
+            self.stdin = BytesIO()
+            self.stdout = BytesIO()
+            self.stderr = BytesIO()
+
+        def poll(self):
+            """立即报告已被信号杀掉。"""
+            return -9
+
+    counts = iter((7, 8))
+    monkeypatch.setattr(runner.subprocess, "Popen", _KilledProcess)
+    monkeypatch.setattr(runner, "_oom_kill_count", lambda: next(counts))
+    result = runner.run_script(
+        {
+            "language": "python",
+            "content": "x = b'x' * 1024\n",
+            "argv": [],
+            "stdin": "",
+            "timeout_ms": 5000,
+            "limits": {"stdout_bytes": 1024, "stderr_bytes": 1024},
+        }
+    )
+    assert result["status"] == "limited"
+    assert result["error_code"] == "sandbox_oom"
     assert result["exit_code"] == -1
 
 

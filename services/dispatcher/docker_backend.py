@@ -281,6 +281,8 @@ class DockerBackend:
                     if status == "timeout"
                     else "沙箱输出超过上限"
                     if status == "limited" and error_code == "output_limit"
+                    else "沙箱内存超出限额（OOMKilled）"
+                    if status == "limited" and error_code == "sandbox_oom"
                     else "沙箱被信号杀掉"
                     if status == "limited" and error_code == "sandbox_signal"
                     else ""

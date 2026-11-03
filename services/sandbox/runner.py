@@ -39,6 +39,13 @@ _READ_SIZE = 8192
 # 结束进程组时给多久优雅退出。
 _KILL_GRACE_SEC = 2.0
 
+# cgroup v2 / v1 的 OOM 计数文件。脚本进程被内核 OOM killer 选中时，runner
+# 本身通常还活着，因此容器级 ``State.OOMKilled`` 可能仍是 false；必须看 cgroup。
+_OOM_EVENT_PATHS = (
+    Path("/sys/fs/cgroup/memory.events"),
+    Path("/sys/fs/cgroup/memory/memory.oom_control"),
+)
+
 
 def _interpreter(language: str) -> list[str]:
     """按语言给解释器命令前缀。
@@ -59,6 +66,41 @@ def _interpreter(language: str) -> list[str]:
     if language == "node":
         return ["node"]
     raise ValueError(f"不支持的运行时：{language}")
+
+
+def _parse_oom_kill_count(text: str) -> int | None:
+    """从 cgroup v1/v2 文本里解析累计 OOM kill 次数。
+
+    Args:
+        text: ``memory.events`` 或 ``memory.oom_control`` 的内容。
+
+    Returns:
+        ``oom_kill`` 计数；文件里没有该字段时返回 ``None``。
+    """
+    for line in text.splitlines():
+        key, _, value = line.partition(" ")
+        if key == "oom_kill":
+            try:
+                return int(value.strip())
+            except ValueError:
+                return None
+    return None
+
+
+def _oom_kill_count() -> int | None:
+    """读取当前容器的累计 OOM kill 次数。
+
+    Returns:
+        cgroup 暴露的计数；不在受支持的 cgroup 环境中返回 ``None``。
+    """
+    for path in _OOM_EVENT_PATHS:
+        try:
+            count = _parse_oom_kill_count(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if count is not None:
+            return count
+    return None
 
 
 def _env(tmp: str) -> dict[str, str]:
@@ -225,6 +267,7 @@ def run_script(payload: dict) -> dict:
 
     started = time.monotonic()
     tmp = tempfile.mkdtemp(prefix="sandbox-")
+    oom_kills_before = _oom_kill_count()
     try:
         try:
             suffix = _LANGUAGE_SUFFIX[language]
@@ -302,6 +345,19 @@ def run_script(payload: dict) -> dict:
             err_reader.join(timeout=2)
 
         exit_code = proc.returncode if proc.returncode is not None else -1
+        # runner 的子脚本和 runner 在同一个 sandbox cgroup 里。脚本被 OOM
+        # killer 杀掉时，容器不会整体退出，所以只有 cgroup 计数能可靠区分
+        # OOM 与脚本自己/其他主体发送的 SIGKILL。
+        sigkill = getattr(signal, "SIGKILL", 9)
+        if status == "completed" and exit_code in (-sigkill, 137):
+            oom_kills_after = _oom_kill_count()
+            if (
+                oom_kills_before is not None
+                and oom_kills_after is not None
+                and oom_kills_after > oom_kills_before
+            ):
+                status = "limited"
+                error_code = "sandbox_oom"
         if status != "completed":
             exit_code = -1
         return {
