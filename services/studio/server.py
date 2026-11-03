@@ -29,6 +29,7 @@ import grpc
 from webagent.studio.v1 import studio_pb2, studio_pb2_grpc
 
 from services.studio.config import StudioConfig
+from services.studio.exec_log import emit_exec_log
 from services.studio.executor import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
@@ -38,6 +39,7 @@ from services.studio.executor import (
     ExecOutcome,
     ScriptRunner,
 )
+from services.studio.metrics import StudioMetrics, build_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,11 @@ _STATUS_TO_PROTO = {
 }
 
 _SUPPORTED_LANGUAGES = ("python", "bash", "node")
+
+# 请求非法 / 运行时不支持——``studio_exec_failed_total`` 的 reason 取值
+# （skill-service §12.1）。执行器那边的三个在 :mod:`services.studio.executor`。
+FAILURE_INVALID_REQUEST = "invalid_request"
+FAILURE_UNKNOWN_LANGUAGE = "unknown_language"
 
 
 class QueueFullError(Exception):
@@ -75,6 +82,8 @@ class StudioService(studio_pb2_grpc.StudioServicer):
         # request_id → (落库时刻, 响应)（§5.2 的去重窗口）。
         self._dedup: dict[str, tuple[float, studio_pb2.ExecResponse]] = {}
         self._ready = True
+        # 指标（§12.1）。**不记脚本输出内容**，只记字节数与摘要（§12.2）。
+        self.metrics: StudioMetrics = build_metrics()
 
     # ------------------------------------------------------------- 生命周期
 
@@ -109,9 +118,11 @@ class StudioService(studio_pb2_grpc.StudioServicer):
 
         problem = self._validate(request)
         if problem is not None:
+            self.metrics.failed_total.inc(reason=FAILURE_INVALID_REQUEST)
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, problem)
 
         if request.language not in _SUPPORTED_LANGUAGES:
+            self.metrics.failed_total.inc(reason=FAILURE_UNKNOWN_LANGUAGE)
             await context.abort(
                 grpc.StatusCode.FAILED_PRECONDITION,
                 f"本实例不支持 {request.language} 运行时"
@@ -123,6 +134,7 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             logger.info("命中去重窗口，直接返回上次的结果：%s", request.request_id)
             return cached
 
+        queue_started = time.monotonic()
         try:
             await self._acquire_slot()
         except QueueFullError:
@@ -130,7 +142,11 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                 grpc.StatusCode.RESOURCE_EXHAUSTED,
                 f"等待队列已满（{self.config.max_queue}），请退避重试",
             )
+        # 排队时长：从「发出」算到「拿到并发位」（§8.1）。
+        self.metrics.queue_wait.observe(time.monotonic() - queue_started)
+        self.metrics.exec_active.inc()
 
+        started = time.monotonic()
         try:
             remaining_ms = int(max(0.0, deadline - time.monotonic()) * 1000)
             if remaining_ms <= 0:
@@ -158,7 +174,9 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             raise
         finally:
             self._semaphore.release()
+            self.metrics.exec_active.dec()
 
+        self._record_metrics(request, outcome, time.monotonic() - started)
         response = self._to_response(outcome)
         self._store_dedup(request.request_id, response)
         logger.info(
@@ -196,6 +214,48 @@ class StudioService(studio_pb2_grpc.StudioServicer):
         )
 
     # ------------------------------------------------------------- 内部
+
+    def _record_metrics(
+        self, request, outcome: ExecOutcome, elapsed: float
+    ) -> None:
+        """记这次执行的指标，并写一条结构化汇总日志（§12.1、§12.2）。
+
+        日志里**只有字节数与摘要，没有输出内容**——脚本输出可能含敏感数据
+        （主设计 §22.10 第 2 条）。
+
+        Args:
+            request: ``ExecRequest``。
+            outcome: 执行结果。
+            elapsed: 服务级端到端耗时（秒，含排队）。
+        """
+        language = request.language
+        self.metrics.exec_total.inc(
+            status=outcome.status,
+            language=language,
+            profile=self.config.profile,
+        )
+        self.metrics.exec_duration.observe(elapsed, language=language)
+        if outcome.status == STATUS_TIMEOUT:
+            self.metrics.timeout_total.inc(language=language)
+        if outcome.truncated:
+            self.metrics.output_truncated_total.inc(language=language)
+        if outcome.failure_reason:
+            self.metrics.failed_total.inc(reason=outcome.failure_reason)
+        emit_exec_log(
+            request_id=request.request_id,
+            run_id=request.run_id,
+            node_id=request.node_id,
+            skill=request.skill,
+            script=request.script,
+            language=language,
+            status=outcome.status,
+            exit_code=outcome.exit_code,
+            duration_ms=outcome.duration_ms,
+            stdout_bytes=outcome.stdout_bytes,
+            stderr_bytes=outcome.stderr_bytes,
+            truncated=outcome.truncated,
+            stdout_digest=outcome.stdout_digest,
+        )
 
     def _validate(self, request) -> str | None:
         """校验请求参数。

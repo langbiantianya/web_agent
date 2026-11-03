@@ -59,6 +59,8 @@ services:
       STUDIO_MAX_STDOUT_BYTES: "1048576"
       STUDIO_MAX_STDERR_BYTES: "262144"
       STUDIO_DRAIN_TIMEOUT_SEC: "30"
+      # 指标端点（skill-service §12.1）：/metrics 走 Prometheus 文本格式。
+      STUDIO_METRICS_PORT: "9090"
       # 脚本进程的 oom_score_adj（skill-service §13.2）：容器内存被打爆时，
       # 被 OOM killer 挑中的是**脚本**而不是 studio 自己。
       STUDIO_OOM_SCORE_ADJ: "1000"
@@ -71,6 +73,8 @@ services:
     ports:
       # 只绑回环：外网要连 studio 的话从 web_agent 走，不直接暴露。
       - "127.0.0.1:9000:9000"
+      # 指标端点（skill-service §12.1）：抓取用，同样只绑回环。
+      - "127.0.0.1:9090:9090"
     # 脚本的工作目录。tmpfs 占的是容器内存，所以单独限额。
     tmpfs:
       - /tmp:size=64m

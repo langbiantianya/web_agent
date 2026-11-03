@@ -72,6 +72,13 @@ _INTERPRETERS: dict[str, tuple[str, str]] = {
     "node": ("node", "main.js"),
 }
 
+# 启动失败的原因分类（skill-service §12.1 的 ``reason`` 取值）。
+# 服务端的两个取值（``invalid_request`` / ``unknown_language``）在
+# :mod:`services.studio.server` 里——那里才是判它们的地方。
+FAILURE_RUNTIME_MISSING = "runtime_missing"
+FAILURE_SPAWN_FAILED = "spawn_failed"
+FAILURE_UNKNOWN_LANGUAGE = "unknown_language"
+
 # 环境变量白名单（§6.3）。**其余一律不传**——studio 容器里本来也没有凭据，
 # 但调用方在请求里带的东西也不能直接进环境。
 _ENV_ALLOWLIST = ("PATH", "LANG", "TZ")
@@ -97,7 +104,23 @@ class OutputOverflow(Exception):
 
 @dataclass(frozen=True, slots=True)
 class ExecOutcome:
-    """一次执行的结果。"""
+    """一次执行的结果。
+
+    Attributes:
+        status: 终态（``completed`` / ``failed`` / ``timeout`` / ``limited`` /
+            ``cancelled``）。
+        exit_code: 脚本的退出码；非 ``completed`` 状态按契约是 ``-1``。
+        stdout: 脚本的标准输出（**不写进日志**，只记字节数与摘要）。
+        stderr: 脚本的标准错误（同上）。
+        truncated: 输出是否被截断。
+        duration_ms: 耗时（毫秒）。
+        error: 服务级错误说明（不是脚本的 stderr）。
+        stdout_digest: stdout 的 sha256 摘要（十六进制，不带算法前缀）。
+        stdout_bytes: stdout 的**字节数**——日志只记它，不记内容（§12.2）。
+        stderr_bytes: stderr 的**字节数**。
+        failure_reason: 启动失败的原因分类（``runtime_missing`` /
+            ``spawn_failed`` / ``unknown_language``）；没失败是空串。
+    """
 
     status: str
     exit_code: int
@@ -107,6 +130,9 @@ class ExecOutcome:
     duration_ms: int
     error: str
     stdout_digest: str
+    stdout_bytes: int = 0
+    stderr_bytes: int = 0
+    failure_reason: str = ""
 
 
 def _build_env(cwd: str) -> dict[str, str]:
@@ -241,6 +267,7 @@ class ScriptRunner:
                 duration_ms=0,
                 error=f"不支持的运行时：{language}",
                 stdout_digest="",
+                failure_reason=FAILURE_UNKNOWN_LANGUAGE,
             )
         interpreter, filename = _INTERPRETERS[language]
         timeout_ms = int(
@@ -279,6 +306,7 @@ class ScriptRunner:
                 duration_ms=int((time.monotonic() - started) * 1000),
                 error=f"运行时 {language} 不可用：{exc}",
                 stdout_digest="",
+                failure_reason=FAILURE_RUNTIME_MISSING,
             )
         except Exception as exc:  # noqa: BLE001 - 外部边界
             logger.exception("执行脚本失败")
@@ -291,6 +319,7 @@ class ScriptRunner:
                 duration_ms=int((time.monotonic() - started) * 1000),
                 error=f"{type(exc).__name__}: {exc}",
                 stdout_digest="",
+                failure_reason=FAILURE_SPAWN_FAILED,
             )
         finally:
             # 清理**必须对所有终态都做**（§4）——漏一次就漏一个孤儿进程。
@@ -446,6 +475,8 @@ class ScriptRunner:
             duration_ms=int((time.monotonic() - started) * 1000),
             error=error,
             stdout_digest=hashlib.sha256(stdout_bytes).hexdigest(),
+            stdout_bytes=len(stdout_bytes),
+            stderr_bytes=len(stderr_bytes),
         )
 
     @staticmethod

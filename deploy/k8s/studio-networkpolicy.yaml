@@ -40,5 +40,20 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
+    # 指标端口（skill-service §12.1）：Prometheus 抓 `/metrics` 要能进来。
+    # **不放行这条，指标端点就抓不到**——端点在容器里跑着，但网络策略把
+    # 抓取器挡在外面。
+    # 下面的命名空间/标签是**占位值**，按你的监控栈改（比如 Prometheus 跑在
+    # `monitoring` 命名空间、或者用 node-exporter 那套 service account）。
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+          podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
   # 出向：一律拒绝（空列表 = 什么都不允许）。
   egress: []

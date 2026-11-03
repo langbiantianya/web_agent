@@ -32,3 +32,9 @@ spec:
     - name: grpc
       port: 9000
       targetPort: grpc
+    # 指标端口（skill-service §12.1）。headless 没有 VIP，Prometheus 用
+    # pod 自己的地址抓就行——加这个端口是为了让 `studio:9090` 能解析到所有
+    # 后端 Pod，轮询式抓取才成立。
+    - name: metrics
+      port: 9090
+      targetPort: metrics

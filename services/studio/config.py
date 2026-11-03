@@ -86,6 +86,7 @@ class StudioConfig:
         max_stdin_chars: stdin 长度上限（§9.1）。
         dedup_window_sec: ``request_id`` 去重窗口（§5.2）。
         drain_timeout_sec: 优雅停机时等在跑的执行结束的秒数（§13.5）。
+        metrics_port: 指标端点的端口（§12.1）；``0`` 表示不启用。
         oom_score_adj: 脚本进程的 ``oom_score_adj``（§13.2）。越大越容易被
             OOM killer 挑中——设了它，容器内存被打爆时被杀的是**脚本**而不是
             studio 自己。没权限设（没有 ``CAP_SYS_RESOURCE``）也不致命。
@@ -107,6 +108,7 @@ class StudioConfig:
     max_stdin_chars: int = 256 * 1024
     dedup_window_sec: float = 60.0
     drain_timeout_sec: float = 30.0
+    metrics_port: int = 9090
     oom_score_adj: int = 1000
     profile: str = "fast"
     version: str = "1.0.0"
@@ -133,6 +135,7 @@ class StudioConfig:
             max_stdin_chars=_env_int("STUDIO_MAX_STDIN_CHARS", 256 * 1024),
             dedup_window_sec=_env_float("STUDIO_DEDUP_WINDOW_SEC", 60.0),
             drain_timeout_sec=_env_float("STUDIO_DRAIN_TIMEOUT_SEC", 30.0),
+            metrics_port=_env_int("STUDIO_METRICS_PORT", 9090),
             oom_score_adj=_env_int("STUDIO_OOM_SCORE_ADJ", 1000),
             profile=os.environ.get("STUDIO_PROFILE", "fast").strip() or "fast",
             version=os.environ.get("STUDIO_VERSION", "1.0.0").strip() or "1.0.0",

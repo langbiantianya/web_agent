@@ -57,6 +57,11 @@ spec:
           ports:
             - name: grpc
               containerPort: 9000
+            # 指标端点（skill-service §12.1）：Prometheus 抓这个端口。
+            # **它也在 NetworkPolicy 的管辖下**——不放行就抓不到，见
+            # studio-networkpolicy.yaml 里那条 ingress 规则。
+            - name: metrics
+              containerPort: 9090
           # **零凭据**：这里只有 studio 自己的运行参数，没有任何 API key、
           # 数据库口令、token。§7 的重点就在这一行——studio 容器里只要有
           # 一个能用的凭据，一次提示词注入就够把它偷出去。
@@ -77,6 +82,9 @@ spec:
               value: "262144"
             - name: STUDIO_DRAIN_TIMEOUT_SEC
               value: "30"
+            # 指标端点的端口（skill-service §12.1）；设成 "0" 就不启用。
+            - name: STUDIO_METRICS_PORT
+              value: "9090"
             # 脚本进程的 oom_score_adj（skill-service §13.2）：调到 1000，
             # 容器内存被打爆时被 OOM killer 挑中的是**脚本**而不是 studio 自己。
             - name: STUDIO_OOM_SCORE_ADJ

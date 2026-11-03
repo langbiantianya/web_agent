@@ -104,6 +104,7 @@ async def serve(
 
     from webagent.studio.v1 import studio_pb2_grpc
 
+    from services.studio.metrics import serve_metrics
     from services.studio.reaper import sweep_stale_processes
 
     cfg = config or StudioConfig.from_env()
@@ -113,9 +114,12 @@ async def serve(
     )
 
     # 启动巡检：清掉上次硬杀留下的孤儿进程与工作目录（§6.5）。
-    sweep_stale_processes()
+    killed_orphans, _removed_dirs = sweep_stale_processes()
 
     svc = service if service is not None else StudioService(cfg)
+    if killed_orphans:
+        # 巡检发现的残留进程数（§12.1 的 studio_orphan_process_total）。
+        svc.metrics.orphan_process_total.inc(killed_orphans)
     server = grpc.aio.server()
     studio_pb2_grpc.add_StudioServicer_to_server(svc, server)
     address = f"{cfg.host}:{cfg.port}"
@@ -129,6 +133,13 @@ async def serve(
         cfg.max_concurrency,
         cfg.profile,
     )
+
+    # 指标端点（§12.1）。端口 0 表示不启用。
+    metrics_server = None
+    if cfg.metrics_port:
+        metrics_server = await serve_metrics(
+            svc.metrics.registry, cfg.host, cfg.metrics_port
+        )
 
     stopping = stop_event if stop_event is not None else asyncio.Event()
     if stop_event is None:
@@ -149,6 +160,9 @@ async def serve(
         # 取消前者会让后面的 ``server.stop()`` 直接抛 CancelledError——停机
         # 路径整个断掉，容器被 SIGKILL 腰斩，在跑的执行全丢。
         await server.stop(grace=cfg.drain_timeout_sec)
+        if metrics_server is not None:
+            metrics_server.close()
+            await metrics_server.wait_closed()
         waiter.cancel()
         if not termination.done():
             await asyncio.wait({termination}, timeout=5)
