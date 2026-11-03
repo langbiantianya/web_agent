@@ -3570,13 +3570,21 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
 20. **`isolated` 隔离档未实现**。当前只有 `fast` 档：同一容器内先后两次执行之间理论上存在残留
     （临时目录、环境变量、打开的文件）。需要强隔离的走 `isolated` 档，它当前**未实现**
     （skill-service §8.4、§18 第 1 条）。
-21. **K8s 清单没有在真实集群上验证过**。`deploy/k8s/` 里的清单是照着文档逐条写的，但开发它的
-    机器上没有 Docker 也没有集群——镜像构建、探针在镜像里跑通、NetworkPolicy 是否真的拦住
-    出向、headless + `round_robin` 是否真把流量摊到多个 Pod 上，这四条**都未实测**。
+21. **K8s 清单没有在真实集群上验证过**。`deploy/k8s/` 里的清单是照着文档逐条写的。
+    **镜像与容器配置已经在真 Docker 上逐条实测过**（§22.14），但 NetworkPolicy 是否
+    真的拦住出向、headless + `round_robin` 是否真把流量摊到多个 Pod 上，这两条**仍然
+    未实测**——它们依赖集群的 CNI 与 DNS 行为，Docker 上只能用 `internal: true` 的网络
+    等效实现，不等于 K8s 的 NetworkPolicy 生效。
     `deploy/k8s/README.md` 里列了部署前要先跑的三条自检命令。
 22. **studio 服务侧是参考实现，不是生产就绪的服务**。`services/studio/` 做完了契约、进程隔离、
     超时、截断、限流、去重、优雅停机这些**功能**，但没有指标导出、没有结构化日志、没有多档隔离。
     它的定位是「把调用侧与服务侧的边界钉清楚，并让验收能真的跑起来」，不是直接上生产。
+23. **真实模型那一环尚未在真部署上实测**。容器化部署、脚本执行链路、隔离与加固都在真 Docker
+    上验过了（§22.14），但「模型真的收到脚本输出并转述」这一环还差一把能用的模型 key：
+    MiniMax 的 **M Plan / Coding Plan 额度走的是专用 key**，官方明确写「与按量计费接口不通用」，
+    拿按量付费的 key 去调只会得到 `402 insufficient_balance`。
+    这一环的**链路**已被 `tests/test_studio_e2e.py` 用「真 studio + 真 uvicorn + 假 LLM」覆盖，
+    缺的是「真 LLM」这一层。
 
 ### 22.13 实施要点与验收标准
 
@@ -3657,6 +3665,58 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
 - [x] 全量回归不破：现有 166 个测试（§17.9）全绿（Phase 1 落地后为 **358 passed / 19 skipped**）。
       → Phase 3 落地时全量 **546 passed / 22 skipped**（Phase 2 终态是 428 / 19，新增 118 个
       studio 相关用例；22 个跳过里 3 个是本机没有 bash 与没有 `/proc` 导致的）。
+
+---
+
+### 22.14 真实环境实测记录（2026-11-03）
+
+> 这一节记的是**在真 Docker 上跑出来的**结果，不是设计意图。
+> 机器：Alpine 3.24 / Docker 29.9.2 / Compose v5.6.1 / 4 vCPU / 1884 MB；
+> 数据库用宿主机的 MySQL 8 系与 Redis；编排用 `deploy/docker-compose.lab.yml`。
+
+#### 22.14.1 实测到了什么
+
+| 项 | 结果 |
+| --- | --- |
+| 迁移链**从零**跑通 | `alembic upgrade head` 在真 MySQL 上从空库建出全部 14 张表，`alembic_version` 落到 head |
+| `skill_exec` 真链路 | 真 DB 读脚本 → 真 gRPC → 真 studio 容器 → stdout 回灌，web_agent 进程内**没起任何子进程** |
+| 三道校验在 web_agent 侧 | 白名单 / 脚本路径格式 / argv 形态共 20 条用例全过；**校验不过的请求根本没发出去 studio** |
+| 容器加固 | 只读 rootfs、非 root、drop capabilities、no-new-privileges、禁出网、零凭据、环境变量白名单——**11 项全过** |
+| 禁出网的落地方式 | studio 只挂 `internal: true` 的网络（无默认网关）：容器内解析外网域名失败，但能连到 `web-agent:8000` |
+| 进程组隔离 | 脚本起子进程后超时 → **整个进程组被杀**（子进程状态变 `Z`） |
+| 队列闸门 | 并发上限 2 + 队列 4，发 12 个请求 → 接受 6 个、拒 6 个（`RESOURCE_EXHAUSTED`） |
+| studio 宕机 | `docker stop studio` → web_agent 侧拿到「连不上 studio（studio:9000）」，**不抛异常打断 run** |
+| gRPC 成功 ≠ 脚本成功 | 脚本 `exit 1` → `COMPLETED` + `exit_code=1`，stdout/stderr 都保留 |
+
+#### 22.14.2 实测挖出来的六个 bug
+
+这六个**全都是本地测试全绿、真部署才炸**的——这也是为什么 §22.13 的验收要能在
+真环境里跑。
+
+| # | 现象 | 根因 | 修法 |
+| --- | --- | --- | --- |
+| 1 | studio 容器起不来：`ModuleNotFoundError: No module named 'google'` | 生成的桩 `from google.protobuf import descriptor`，但 studio 镜像只装了 `grpcio`——protobuf 是**运行期依赖**，不能靠 `grpcio-tools` 传递带进来 | `services/studio/requirements.txt` 显式加 `protobuf`；加 `tests/test_studio_deps.py` 用 `importlib.metadata` 静态查（`google`→`protobuf` 靠猜是猜不出来的） |
+| 2 | 只读 rootfs 下 `run.py` 崩在写 `.env` | `ensure_env_file()` 无条件 `write_text` | 捕获 `OSError` 并提示「容器化部署请用环境变量注入配置」 |
+| 3 | MySQL 建表失败：`1101, "BLOB, TEXT, GEOMETRY or JSON column 'prompt' can't have a default value"` | 迁移给 TEXT 列带了字面量 `server_default`——MySQL 不允许，SQLite 与 PostgreSQL 都接受 | 去掉该列的 `server_default`，改用 ORM 侧的 Python `default`；加 AST 静态守卫 |
+| 4 | MySQL 改列失败：`1067, "Invalid default value for 'requested_at'"` | SQLAlchemy 渲染 `CREATE TABLE` 时会把 `sa.func.now()` 包成 `(now())`，渲染 `ALTER TABLE ... CHANGE` 时却原样输出 `now()`——**MySQL 的表达式默认值必须带括号** | 迁移里改用 `sa.text("(now())")`；加一条**离线渲染 MySQL DDL** 的守卫测试（`alembic upgrade head --sql`，不需要数据库） |
+| 5 | 脚本间歇性以 `exit_code=-6` 收场，stdout/stderr 全空 | **在跑 gRPC 的进程里 fork**：gRPC 的 `pthread_atfork` 处理器在「fork 时别的线程正在 gRPC 里」时放弃清理，子进程带着坏掉的 epoll 状态去 exec，exec 之前被 glog 的断言 `abort()` 掉 | `GRPC_ENABLE_FORK_SUPPORT=0`，且必须在 `import grpc` **之前**设（`services/studio/__init__.py`）；加 `tests/test_studio_runtime_guards.py` |
+| 6 | 容器里攒僵尸进程 | 脚本被超时杀掉后，它起的子进程被重新挂到 PID 1（studio）底下；python 不是 init、不回收孤儿，被杀死的孙进程变成僵尸（`/proc/<pid>` 还在、状态 `Z`），PID 表被慢慢占满 | 镜像里用 `tini` 当 PID 1（`ENTRYPOINT ["/usr/bin/tini", "--"]`） |
+
+第 3、4 两条还暴露了一个**方法论**上的问题：**SQLite 上的迁移测试抓不到服务端会拒绝的
+DDL**。现在的守卫是两条——一条 AST 静态扫（禁止 TEXT/JSON/BLOB 列带 `server_default`），
+一条**离线渲染 MySQL DDL 再检查**（`alembic upgrade head --sql`，连数据库都不需要，
+却能看见发给 MySQL 的每一句 SQL）。
+
+#### 22.14.3 还没验到的
+
+- **真实模型那一环**：「模型真的收到脚本输出并转述」还没在真部署上跑通——用的那把
+  MiniMax key 是开放平台**按量付费**的，账户余额为 0（`402 insufficient_balance`）；
+  M Plan / Coding Plan 的额度走的是**另一把专用 key**（官方明确写「与按量计费接口
+  不通用」）。链路的其余部分（真 studio + 真 uvicorn + 假 LLM）已由
+  `tests/test_studio_e2e.py` 覆盖。
+- **K8s 侧**：NetworkPolicy 是否真拦出向、headless + `round_robin` 是否真摊流量、
+  `terminationGracePeriodSeconds` 与 drain 超时的配合——都依赖集群行为，Docker 上
+  无法等效验证（§22.12 第 21 条）。
 
 ---
 

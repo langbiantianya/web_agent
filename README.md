@@ -270,12 +270,41 @@ STUDIO_EXEC_REQUIRED=true
 
 ### 部署
 
-见 [`deploy/k8s/README.md`](deploy/k8s/README.md)。两条容易踩的：
+见 [`deploy/k8s/README.md`](deploy/k8s/README.md)。三条容易踩的：
 
 1. **Service 必须是 headless 的**，客户端也要用 `round_robin`（默认就是）——普通
    ClusterIP Service + gRPC 长连接 = 永远只有一个 Pod 在干活，而且看不出任何异常。
 2. **零凭据**：studio 容器里不注入任何 env、不挂任何 secret。它执行的是模型指定的
    代码，容器里只要有一个能用的 key，一次提示词注入就够了。
+3. **studio 容器里不要在 gRPC 之上 fork**：studio 要 fork 子进程跑脚本，所以
+   `GRPC_ENABLE_FORK_SUPPORT=0` 是在**代码里**设的（`services/studio/__init__.py`，
+   必须在 `import grpc` 之前）。不关的话，脚本会间歇性以 `exit_code=-6`（SIGABRT）
+   收场、stdout/stderr 全空——**本地测试抓不到**，只有真容器里才复现。
+   镜像里也用 `tini` 当 PID 1，否则脚本被杀后它起的子进程会变成僵尸堆积。
+
+### 一体化实验栈（真部署）
+
+[`deploy/docker-compose.lab.yml`](deploy/docker-compose.lab.yml) 把 **web_agent + studio
+两个服务**拉起来，并且**真的把 studio 的出网掐掉**（studio 只挂 `internal: true` 的
+网络，没有默认网关）：
+
+```bash
+cp .env.example .env && $EDITOR .env
+docker compose -f deploy/docker-compose.lab.yml up -d --build
+```
+
+web_agent 的镜像在仓库根的 [`Dockerfile`](Dockerfile)（`python:3.11.9-slim`，
+非 root、凭据只走 env_file 不进镜像层）。国内构建建议带上镜像源：
+
+```bash
+docker compose -f deploy/docker-compose.lab.yml build \
+  --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+  --build-arg APT_MIRROR=mirrors.aliyun.com
+```
+
+这套栈已在真 Docker 上实测过（迁移链从零跑通、脚本真在 studio 容器里执行、
+容器加固 11 项全过、队列满与宕机故障注入）——实测记录见
+[`deploy/k8s/README.md`](deploy/k8s/README.md) 与设计文档 §22.14。
 
 ---
 
@@ -879,8 +908,10 @@ services/studio/           # studio 服务侧**参考实现**（V4 Phase 3）：
 │   └── Dockerfile          #   镜像：python / bash / node 三运行时，零凭据，非 root
 proto/webagent/studio/v1/  # studio 的 gRPC 契约（**仓库里只有这一份**）
 webagent/studio/v1/        # 由上面的 proto 生成的桩代码（不手改）
+Dockerfile                 # web_agent 主服务的镜像（非 root，凭据不进镜像层）
 deploy/k8s/                # studio 的 Deployment + headless Service + NetworkPolicy
 deploy/docker-compose.yml  # 本地起一个 studio
+deploy/docker-compose.lab.yml  # 一体化实验栈：web_agent + studio（studio 禁出网）
 web/index.html           # 功能验证台（单文件，无依赖）
 web/admin.html           # 后台管理（单文件，无依赖，访问 /admin）
 scripts/seed.py          # 演示数据

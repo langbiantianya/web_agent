@@ -734,15 +734,28 @@ K8s Deployment（无状态）：
 - [x] 容器加固：只读 rootfs、非 root、drop capabilities、no-new-privileges、seccomp、
       `pidsLimit`、零凭据、禁出网；
       → `deploy/k8s/studio-deployment.yaml`、`deploy/k8s/studio-networkpolicy.yaml`。
-      **未在真实集群上验证**（见 `deploy/k8s/README.md`）。
+      **已在真 Docker 上实测**（只读 rootfs、非 root、capabilities 全 0、
+      `NoNewPrivs=1`、禁出网、零凭据、环境变量白名单——11 项全过，见
+      `deploy/k8s/README.md`）；**仍未在真实 K8s 集群上验证** NetworkPolicy 那一条。
 - [x] 启动巡检：杀残留进程；
       → `services/studio/reaper.py`（按 cwd 在临时目录里判定，不按进程名匹配；没有 `/proc`
       的平台上不做任何事）
+- [x] **容器 PID 1 是 init 进程**（回收被重新挂上来的孤儿，避免僵尸堆积）；
+      → `services/studio/Dockerfile` 的 `ENTRYPOINT ["/usr/bin/tini", "--"]`。
+      实测发现：脚本被超时杀掉后，它自己起的子进程会被重新挂到 PID 1 底下，
+      python 不是 init、不回收孤儿，被杀死的孙进程会变成僵尸（`/proc/<pid>` 还在、
+      状态 `Z`），PID 表被慢慢占满。→ `tests/test_studio_runtime_guards.py`
 - [x] 优雅停机：先摘 readiness，再 drain；
       → `services/studio/__init__.py::serve`。
       **踩过的坑**：取消 grpc 的 `wait_for_termination()` 那个 task 会让后面的
       `server.stop()` 直接抛 CancelledError——停机路径整个断掉。已修，见
       `tests/test_studio_service.py::test_graceful_shutdown_drops_readiness_before_draining`。
+- [x] **不在 gRPC 进程里 fork**（gRPC 的 atfork 处理器会让子进程在 exec 前就 abort）；
+      → `services/studio/__init__.py` 顶层设 `GRPC_ENABLE_FORK_SUPPORT=0`，
+      必须在 `import grpc` **之前**（gRPC 的 C 核心只在首次初始化时读这个变量）。
+      实测现象：脚本间歇性以 `exit_code=-6`（SIGABRT）收场、stdout/stderr 全空，
+      而且**本地测不出来**（要「fork 时别的线程正在 gRPC 里」才触发）。
+      → `tests/test_studio_runtime_guards.py`
 - [ ] 指标与结构化日志（含 `stdout_digest`，**不含**输出内容）；
       → **未做**：studio 侧现在只有普通日志，没有 Prometheus 指标端点，也没有结构化
       输出格式。`stdout_digest` 已经在契约里（`ExecResponse.stdout_digest`），但没有
@@ -751,7 +764,13 @@ K8s Deployment（无状态）：
       → `services/studio/server.py::Health`；探针命令行工具 `services/studio/healthcheck.py`
       （用 exec 探针而不是 K8s 的 `grpc:` 探针——后者发的是标准健康检查协议，跟契约对不上）
 - [x] 镜像：python / bash / node 三运行时，版本固定；
-      → `services/studio/Dockerfile`。**未实测构建**（本机没有 Docker）。
+      → `services/studio/Dockerfile`。**已在真 Docker 上构建并跑通**（369 MB）；
+      多阶段构建、node 二进制拷贝、apt 装 bash/tini 都验过了。
+      另外补了一条静态守卫：镜像只装 `services/studio/requirements.txt` 里的包，
+      而生成的桩 `from google.protobuf import descriptor`——**protobuf 是运行期依赖**，
+      只装 `grpcio` 会在容器里直接 `ModuleNotFoundError: No module named 'google'`
+      （本地开发机被 `grpcio-tools` 顺带装上了，所以本地全绿）。
+      → `tests/test_studio_deps.py`
 - [x] 部署：Deployment（replicas ≥ 2）+ **headless Service** + 探针；
       → `deploy/k8s/`。客户端侧的 `round_robin` 策略见 `app/core/studio.py::channel_target`
       与 `STUDIO_EXEC_LB_POLICY`——**Service 与客户端两边配对才有意义**，单改一边等于没改。
@@ -763,8 +782,14 @@ K8s Deployment（无状态）：
       → studio 被 kill、超时、输出超限（OOM 的近亲）、队列满：
       `tests/test_studio_e2e.py`。**OOM 本身没测**——容器级 OOM killer 的行为要在真实
       容器里才测得到（§13.2 的 137 退出码判定也还没实现）。
+      **真容器里补测过**：队列满（并发 2 + 队列 4，发 12 个 → 接受 6 拒 6）、
+      studio 被 `docker stop`（web_agent 侧拿到「连不上 studio」且不打断 run）、
+      进程组隔离（超时后整个进程组被杀）。
 - [x] 端到端：web_agent → studio → 模型收到结果（主设计 §22.13 的验收项）。
-      → `tests/test_studio_e2e.py`（真 studio + 真 uvicorn + 假 LLM）
+      → `tests/test_studio_e2e.py`（真 studio + 真 uvicorn + 假 LLM）。
+      **真部署上的链路也验过**（真 DB → 真 gRPC → 真 studio 容器 → stdout 回灌），
+      但「模型真的收到脚本输出并转述」这一环**还没用真 LLM 跑通**——
+      MiniMax 的 M Plan 额度走的是专用 key，与按量计费接口不通用（主设计 §22.14）。
 
 ---
 

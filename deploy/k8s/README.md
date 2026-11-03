@@ -12,22 +12,57 @@
 
 ---
 
-## 本环境无法验证的部分
+## 真实环境实测记录（Docker）
 
-**这份清单没有在真实 K8s 集群上跑过。** 开发这个特性的机器上没有 Docker，
-也没有集群，所以以下几条只做了「对照文档逐条写」，没有实测：
+> 记录日期：2026-11-03。机器：Alpine 3.24 / Docker 29.9.2 / 4 vCPU / 1884 MB。
+> 编排：**Docker Compose**（`deploy/docker-compose.lab.yml`），不是 K8s。
 
-- 镜像能不能构建成功（多阶段构建、node 二进制拷贝、apt 包名）；
-- 探针命令在镜像里能不能跑通（`python -m services.studio.healthcheck`）；
-- `readOnlyRootFilesystem: true` 下 `/tmp` 的 tmpfs 挂载是否够用；
-- NetworkPolicy 是否真的拦住了出向（取决于集群的 CNI）；
-- headless + `round_robin` 是否真的把流量摊到了多个 Pod 上。
+这份清单**没有在真实 K8s 集群上跑过**（开发环境没有集群）。但镜像本身与容器配置
+已经在**真 Docker** 上逐条验过了，下面是实测到的与实测没到的。
 
-**已验证的部分**：清单里的每个字段都能对上文档里的对应条目；镜像里的启动命令
-`python -m services.studio` 与本地跑通的方式一致；探针脚本 `healthcheck.py` 的
-逻辑在本地对着真 studio 验过（连得上、`ready=true` 时退出 0）。
+### 已实测（真 Docker）
 
-部署前请在目标集群里先跑一遍下面这三条：
+| 项 | 怎么验的 | 结果 |
+| --- | --- | --- |
+| 镜像能构建 | `docker compose build studio`（多阶段、node 二进制拷贝、apt 装 bash/tini） | ✅ 369 MB |
+| 探针在镜像里能跑 | `docker run --rm webagent/studio:1.0.0 python -m services.studio.healthcheck` | ✅ 连得上、`ready=true` 时退出 0 |
+| `readOnlyRootFilesystem: true` 下 `/tmp` 够用 | compose 里 `read_only: true` + `tmpfs: /tmp:size=64m`，脚本照常写临时文件 | ✅ |
+| **禁出网** | studio 只挂 `internal: true` 的网络（无默认网关） | ✅ 容器内解析外网域名直接失败（`Temporary failure in name resolution`），但能连到 `web-agent:8000` |
+| **零凭据** | 遍历容器环境变量与文件 | ✅ 只有 `STUDIO_*` 运行参数；脚本看到的环境变量只有 `PATH/LANG/TZ/HOME/PYTHON*` 六项 |
+| 非 root | `docker exec studio id` | ✅ `uid=1000(studio)` |
+| drop capabilities | `/proc/self/status` | ✅ `CapEff/CapPrm/CapBnd` 全为 0 |
+| `no-new-privileges` | `/proc/self/status` | ✅ `NoNewPrivs: 1` |
+| 进程组隔离 | 脚本起子进程后超时 | ✅ 进程组被杀（子进程状态变 `Z`） |
+| 队列闸门 | 并发 2 + 队列 4，发 12 个请求 | ✅ 接受 6 个、拒 6 个（`RESOURCE_EXHAUSTED`：等待队列已满（4）） |
+| studio 宕机 | `docker stop studio` | ✅ web_agent 侧拿到「连不上 studio（studio:9000）」，**不抛异常打断 run** |
+| gRPC 契约 | 直接打 `Exec`/`Health` | ✅ `exit 1` 是 `COMPLETED` + `exit_code=1`（gRPC 成功 ≠ 脚本成功）；超时是 `TIMEOUT` |
+
+### 实测挖出来的两个 bug（已修）
+
+这两个都是「本地测试全绿、真容器才炸」的，写在这里是因为它们**只在真部署里**才会
+被触发：
+
+1. **在跑 gRPC 的进程里 fork 会崩**（`services/studio/__init__.py`）。
+   studio 要 fork 子进程跑脚本，而 gRPC 的 C 核心为支持多进程注册了
+   `pthread_atfork` 处理器；「fork 时别的线程正在 gRPC 里」时它会放弃清理，
+   子进程带着坏掉的 epoll 状态去 exec，exec 之前就被 glog 的断言 `abort()` 掉——
+   脚本根本没跑起来，调用方收到 `exit_code=-6`（SIGABRT）、stdout/stderr 全空。
+   修法：`GRPC_ENABLE_FORK_SUPPORT=0`，且必须在 `import grpc` **之前**设好。
+   → `tests/test_studio_runtime_guards.py`
+2. **容器里没有 init 进程会攒僵尸**。脚本被超时杀掉时，它自己起的子进程会被重新
+   挂到 PID 1（也就是 studio）底下；python 不是 init、不回收孤儿，被杀死的孙进程
+   变成僵尸（`/proc/<pid>` 还在、状态 `Z`），PID 表被慢慢占满。
+   修法：镜像里用 `tini` 当 PID 1（`ENTRYPOINT ["/usr/bin/tini", "--"]`）。
+
+### 仍未实测（只差 K8s 本身）
+
+- NetworkPolicy 是否真的拦住出向——取决于集群的 CNI，Docker 上是用
+  `internal: true` 的网络等效实现的，**不等于** K8s 的 NetworkPolicy 生效；
+- headless + `round_robin` 是否真把流量摊到多个 Pod 上；
+- `terminationGracePeriodSeconds` 与 drain 超时的配合；
+- 镜像推到 registry 后的拉取与 digest 钉版。
+
+### 部署前请在目标集群里先跑一遍下面这三条
 
 ```bash
 # 1) 镜像构建
@@ -40,6 +75,10 @@ docker run --rm webagent/studio:1.0.0 \
 # 3) NetworkPolicy 真的生效（进了 studio Pod 再往外连）
 kubectl exec -it deploy/studio -- curl -m 3 https://example.com
 ```
+
+> 第 1 条建议加上 `--build-arg APT_MIRROR=mirrors.aliyun.com`
+> `--build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/`——
+> 官方源从国内拉经常中途断流（apt 能卡十几分钟）。
 
 ---
 
@@ -91,3 +130,12 @@ STUDIO_EXEC_LB_POLICY=round_robin   # 默认值，显式写出来是为了让人
    `grpc.health.v1.Health/Check`，跟契约里的 `Health` 对不上。
 6. **镜像应该钉到 digest。** 清单里现在只钉了 tag；tag 被重新推送就等于换了
    镜像（skill-service §15 的供应链风险）。
+7. **PID 1 必须是 init 进程。** 镜像里已经用 `tini` 当 PID 1（`ENTRYPOINT
+   ["/usr/bin/tini", "--"]`）。没有它的话，脚本被超时杀掉后它起的子进程会变成
+   **僵尸**留在容器里（python 不是 init、不回收孤儿），PID 表被慢慢占满。
+8. **studio 进程里不要在 gRPC 之上 fork。** studio 要 fork 子进程跑脚本，所以
+   `GRPC_ENABLE_FORK_SUPPORT=0` 是在**代码里**设的（`services/studio/__init__.py`，
+   必须在 `import grpc` 之前）。这一条不需要在清单里配——它是代码行为。
+   真容器上实测过：不关的话，脚本会以 `exit_code=-6`（SIGABRT）收场，
+   stdout/stderr 全空，而且**间歇性**发生（取决于 fork 那一刻有没有别的线程
+   在 gRPC 里），本地测试抓不到。

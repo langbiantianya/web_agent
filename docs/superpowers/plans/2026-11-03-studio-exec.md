@@ -160,10 +160,56 @@
 - docstring 覆盖率 100%（`scripts/check_docstrings.py`，扫描范围含 `services/`）。
 - 契约一致性：`scripts/check_proto_contract.py` 退出码 0。
 
+---
+
+## 补充：真实 Docker 环境实测（2026-11-03）
+
+> 在一台真机器（Alpine 3.24 / Docker 29.9.2 / 4 vCPU / 1884 MB）上把整套东西跑起来，
+> 用宿主机的 MySQL 与 Redis，编排用 `deploy/docker-compose.lab.yml`。
+> 这一节记的是**实测**，不是设计意图。
+
+### 实测到了什么
+
+| 项 | 结果 |
+| --- | --- |
+| 迁移链从零跑通 | 真 MySQL 上 `alembic upgrade head` 建出全部 14 张表 |
+| `skill_exec` 真链路 | 真 DB → 真 gRPC → 真 studio 容器 → stdout 回灌；web_agent 进程内没起任何子进程 |
+| web_agent 侧三道校验 | 20 条用例全过；校验不过的请求**根本没发出去 studio** |
+| 容器加固 | 11 项全过（只读 rootfs / 非 root / caps 全 0 / NoNewPrivs / 禁出网 / 零凭据 / env 白名单 …） |
+| 进程组隔离 | 超时后整个进程组被杀，子进程不再残留 |
+| 队列闸门 | 并发 2 + 队列 4，发 12 个 → 接受 6、拒 6（`RESOURCE_EXHAUSTED`） |
+| studio 宕机 | `docker stop` → web_agent 侧「连不上 studio」，**不抛异常打断 run** |
+
+### 实测挖出来的六个 bug（全部已修 + 加了回归守卫）
+
+| # | 现象 | 根因 | 守卫 |
+| --- | --- | --- | --- |
+| 1 | studio 容器 `ModuleNotFoundError: No module named 'google'` | 生成桩 import `google.protobuf`，但镜像只装了 `grpcio` | `tests/test_studio_deps.py` |
+| 2 | 只读 rootfs 下 `run.py` 崩在写 `.env` | `ensure_env_file()` 无条件写盘 | 捕获 `OSError` |
+| 3 | MySQL `1101: BLOB/TEXT/JSON column 'prompt' can't have a default value` | 迁移给 TEXT 列带了字面量 `server_default` | `tests/test_migrations.py::test_no_text_or_json_column_has_server_default` |
+| 4 | MySQL `1067: Invalid default value for 'requested_at'` | SQLAlchemy 渲染 `ALTER` 时把 `sa.func.now()` 输出成 `now()`，MySQL 要求表达式默认值带括号 | `tests/test_migrations.py::test_mysql_ddl_keeps_function_defaults_parenthesized` |
+| 5 | 脚本间歇性 `exit_code=-6`（SIGABRT）、stdout/stderr 全空 | **在 gRPC 进程里 fork**：gRPC 的 atfork 处理器在「别的线程正在 gRPC 里」时放弃清理，子进程带坏 epoll 状态去 exec，exec 前被断言 abort | `tests/test_studio_runtime_guards.py` |
+| 6 | 容器里攒僵尸 | 脚本被杀后它起的子进程被重新挂到 PID 1 底下，python 不回收孤儿 | `tests/test_studio_runtime_guards.py`（镜像用 tini 当 PID 1） |
+
+第 3、4 条暴露了一个方法论问题：**SQLite 上的迁移测试抓不到服务端会拒绝的 DDL**。
+现在的守卫是「AST 静态扫」+「**离线渲染 MySQL DDL** 再检查」两条——后者用
+`alembic upgrade head --sql`，连数据库都不需要，却能看见发给 MySQL 的每一句 SQL。
+
+### 还没验到的
+
+- **真模型那一环**：「模型真的收到脚本输出并转述」还没跑通——MiniMax 的 M Plan /
+  Coding Plan 额度走的是**专用 key**，与按量计费接口不通用；手上这把是按量付费的
+  开放平台 key，账户余额为 0（`402 insufficient_balance`）。链路的其余部分已验。
+- **K8s 侧**：NetworkPolicy、headless + `round_robin` 摊流量、drain 与
+  `terminationGracePeriodSeconds` 的配合——依赖集群行为，Docker 上无法等效验证。
+
+---
+
 ## 遗留与已知限制
 
-1. **K8s 清单未在真实集群验证**（见上）。
+1. **K8s 清单未在真实集群验证**（Docker 侧已实测，见上）。
 2. **studio 服务侧是参考实现**：没有指标导出、没有结构化日志、没有多档隔离。
 3. **`isolated` 隔离档未实现**：当前只有 `fast` 档，同一容器内先后两次执行之间理论上存在残留。
 4. **容器级 OOM 未测**：OOM killer 的 137 退出码判定（skill-service §13.2）还没实现。
 5. **本机没有 bash**：studio 的 bash 运行时在测试里被跳过（生产镜像里是齐的）。
+6. **真模型端到端未跑通**：缺一把 M Plan / Coding Plan 的专用 key（见上）。
