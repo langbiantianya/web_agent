@@ -83,11 +83,10 @@ def repo_doc_segments() -> list[str]:
         含中文的段落列表。
     """
     segs: list[str] = []
-    for rel in ("README.md", "docs/design.md", "docs/performance.md"):
-        p = ROOT / rel
-        if not p.exists():
+    for path in sorted(ROOT.rglob("*.md")):
+        if ".venv" in path.parts or "superpowers" in path.parts:
             continue
-        for para in re.split(r"\n\s*\n", p.read_text(encoding="utf-8")):
+        for para in re.split(r"\n\s*\n", path.read_text(encoding="utf-8")):
             para = para.strip()
             if len(para) >= 30 and re.search(r"[一-鿿]", para):
                 segs.append(para)

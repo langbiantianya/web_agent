@@ -2,7 +2,7 @@
 
 > 本文是 web-agent 的**实测报告与容量推算**。
 > 数据来自 `scripts/bench.py` 的真实压测，推算的每一条前提都写明了。
-> 设计取舍见 [design.md](design.md)。
+> 设计取舍见 [主设计文档](../app/DESIGN.md)。
 
 ## 0. 先约定单位
 

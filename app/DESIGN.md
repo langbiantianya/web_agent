@@ -2,6 +2,8 @@
 
 > 版本：V4.0　|　状态：V3.4 已实现；V4（MCP 工具 §21 / Skill 指令包 §22）设计完成，实现待排期　|　技术基础：Python 3.11+ / FastAPI / SQLAlchemy 2.0 async / MySQL 8 / PostgreSQL 13+
 
+> 本文归属 `app/` 模块，记录主服务的总体架构、通信协议、编排引擎与演进设计。
+
 ---
 
 ## 目录
@@ -870,7 +872,7 @@ web_agent/
 │                                  # 0004 run_step attempts / 0005 skill 三张表（V4，§22.5）
 │                                  # 0006 agent.skills 列（V4，§22.5）
 │                                  # 0007 mcp_server / mcp_tool 两张表（V4，§21.6）
-├── docs/design.md
+├── app/DESIGN.md
 ├── scripts/
 │   ├── seed.py                    # 演示数据
 │   └── check_docstrings.py        # docstring 覆盖率检查
@@ -895,7 +897,7 @@ web_agent/
   （**设计已完成**，见 §21）；Skill 指令包——可复用的领域知识，**内容与资源全部存数据库**
   （与「配置即数据」一致，`SKILL.md` 降为导出格式）、正文进提示词、资源按需读，
   脚本经 gRPC 交给**独立的 studio 容器**执行、不在本进程起子进程（**设计已完成**，见 §22，
-  服务侧见 [`docs/skill-service.md`](skill-service.md)）；
+  服务侧见 [`services/studio/DESIGN.md`](../services/studio/DESIGN.md)）；
   可观测性（OpenTelemetry 链路追踪、token 成本统计）
 
   V4 分三个 Phase 落地，各自可交付：
@@ -1747,7 +1749,7 @@ schema。服务端从注册表（`app/core/tools.py`）里取 schema 展开给�
 
 ## 18. 性能与容量
 
-完整的实测报告与推算见 **[`docs/performance.md`](performance.md)**，压测脚本是
+完整的实测报告与推算见 **[`scripts/PERFORMANCE.md`](../scripts/PERFORMANCE.md)**，压测脚本是
 `scripts/bench.py`。这里只放结论与设计含义。
 
 ### 18.1 实测出来的成本模型
@@ -1795,7 +1797,7 @@ schema。服务端从注册表（`app/core/tools.py`）里取 schema 展开给�
 
 压测客户端、假模型、服务端**同机抢 4 核**：实测的服务端 CPU 占用是**下界**，
 延迟数据被大幅放大（瓶颈在假模型，不在服务端）。MySQL 路径**未实测**（本机没有
-凭据）。完整的偏差清单见 `docs/performance.md` §8。
+凭据）。完整的偏差清单见 `scripts/PERFORMANCE.md` §8。
 
 ---
 
@@ -3130,7 +3132,7 @@ studio 容器（§22.8），web_agent 自己**从不**执行它。
 
 > 本节是**调用侧**视角。studio 服务自身的内部架构、进程隔离、沙箱加固、资源治理、运行时
 > 矩阵、部署扩缩、威胁模型与测试策略，见独立文档
-> **[`docs/skill-service.md`](skill-service.md)**。
+> **[`services/studio/DESIGN.md`](../services/studio/DESIGN.md)**。
 
 #### 22.8.1 为什么不在 web_agent 进程里跑脚本
 
@@ -3220,7 +3222,7 @@ message ExecResponse {
   string stdout_digest = 8;    // stdout 的 sha256，用于审计与去重
   ExecProfile profile = 9;     // **实际**使用的档位，必须回显
   int64 startup_ms = 10;       // 沙箱启动耗时（fast 为 0）
-  string error_code = 11;      // 稳定枚举字符串；见 docs/skill-service.md §5.1
+  string error_code = 11;      // 稳定枚举字符串；见 services/studio/DESIGN.md §5.1
 }
 
 message HealthRequest {}
@@ -3259,7 +3261,7 @@ message LanguageInfo {
 }
 ```
 
-> **服务侧展开见 [`docs/skill-service.md`](skill-service.md)**：容器的内部架构、执行生命周期、
+> **服务侧展开见 [`services/studio/DESIGN.md`](../services/studio/DESIGN.md)**：容器的内部架构、执行生命周期、
 > 进程隔离、沙箱加固、资源治理、运行时矩阵、部署扩缩、威胁模型、测试策略。
 > 两份文档贴的 proto 片段**必须逐字一致**——proto 文件在仓库里只有一份
 > （`proto/webagent/studio/v1/studio.proto`），CI 会校验一致性。
@@ -3419,7 +3421,7 @@ A 记录）并指定 `round_robin`。**Service 侧也必须是 headless 的**—
 | --- | --- |
 | 契约（唯一来源） | `proto/webagent/studio/v1/studio.proto` |
 | 生成的桩代码 | `webagent/studio/v1/`（包名就是 proto 的 `package`，生成代码一行都不用改） |
-| 契约一致性检查 | `scripts/check_proto_contract.py`（proto 文件 vs 本节 vs `docs/skill-service.md` §5） |
+| 契约一致性检查 | `scripts/check_proto_contract.py`（proto 文件 vs 本节 vs `services/studio/DESIGN.md` §5） |
 | gRPC 客户端 | `app/core/studio.py`（`StudioClient` / `init_studio` / 错误码翻译） |
 | 每次调用的执行上下文 | `app/core/studio_context.py`（`request_id` 靠 run + 节点 + tool_call_id 算） |
 | `skill_exec` 工具 | `app/core/skill_exec.py`（校验 + 规整）、`app/core/tools.py`（handler + 注册开关） |
@@ -3718,7 +3720,7 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
 - [x] **技能没绑到 Agent 上**：白名单校验先于存在性检查，拒绝且不泄露「它在不在」；
       请求同样没发出去。
       → `tests/test_studio_e2e.py::test_skill_not_bound_to_agent_is_refused`
-- [x] **契约在仓库里只有一份**：proto 文件 + 本文档 §22.8.3 + `docs/skill-service.md` §5 三处
+- [x] **契约在仓库里只有一份**：proto 文件 + 本文档 §22.8.3 + `services/studio/DESIGN.md` §5 三处
       逐字一致，CI 脚本比对不一致时打印 diff 并非 0 退出。
       → `scripts/check_proto_contract.py`、`tests/test_proto_contract.py`
 - [x] **优雅停机先摘 readiness 再 drain**（§13.5）：停机时在跑的执行能跑完，不是被腰斩。

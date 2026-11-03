@@ -22,8 +22,8 @@ PROTO_FILE = ROOT / "proto" / "webagent" / "studio" / "v1" / "studio.proto"
 BLOCK = re.compile(r"```proto\n(.*?)```", re.DOTALL)
 
 DOCS = [
-    ("docs/design.md", "主设计文档 §22.8.3"),
-    ("docs/skill-service.md", "Skill 服务文档 §5"),
+    ("app/DESIGN.md", "主设计文档 §22.8.3"),
+    ("services/studio/DESIGN.md", "Skill 服务文档 §5"),
 ]
 
 
@@ -48,8 +48,8 @@ def test_doc_proto_block_matches_file(rel: str, label: str):
 
 def test_both_docs_agree_with_each_other():
     """两份文档之间也一致（少一处修改时这里能更早发现）。"""
-    a = _extract(ROOT / "docs" / "design.md")
-    b = _extract(ROOT / "docs" / "skill-service.md")
+    a = _extract(ROOT / "app" / "DESIGN.md")
+    b = _extract(ROOT / "services" / "studio" / "DESIGN.md")
     assert a is not None and b is not None
     assert a == b
 
@@ -80,7 +80,7 @@ def test_check_script_detects_divergence(tmp_path, monkeypatch):
 
     # 拿一份改歪的文档副本喂给它
     doc = tmp_path / "design.md"
-    original = (ROOT / "docs" / "design.md").read_text(encoding="utf-8")
+    original = (ROOT / "app" / "DESIGN.md").read_text(encoding="utf-8")
     doc.write_text(original.replace("string skill = 1;", "string skill = 999;"), encoding="utf-8")
 
     block = module.extract_block(doc)

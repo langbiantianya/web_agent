@@ -96,6 +96,7 @@ def _preexec(timeout_ms: int):  # noqa: ANN201 - 返回闭包或 None
         return None
 
     def _apply() -> None:
+        """在 fork 后的沙箱脚本进程中收紧文件、进程和 CPU 资源上限。"""
         import resource
 
         cpu = max(1, int(timeout_ms / 1000) + 1)

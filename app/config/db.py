@@ -130,7 +130,7 @@ def _configure_sqlite(dbapi_connection, connection_record) -> None:
 
     ## 已知上限：SQLite 的并发天花板
 
-    实测（本机 4 核，见 ``docs/performance.md``）：并发 **32** 个请求同时建 run
+    实测（本机 4 核，见 ``scripts/PERFORMANCE.md``）：并发 **32** 个请求同时建 run
     没问题；**64** 个开始出现 ``database is locked``。
 
     还有一个更隐蔽的坑：WAL 模式下，一个「先读后写」的事务（deferred BEGIN）

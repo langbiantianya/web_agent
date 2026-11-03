@@ -1,0 +1,163 @@
+# web_agent 主服务
+
+`app/` 是面向用户和运维的主服务模块，负责配置管理、会话、Workflow 编排、Agent 调用、事件持久化和 SSE 订阅。Agent 与 Workflow 都以数据形式保存在数据库中，修改配置不需要重新发布服务。
+
+## 架构总览
+
+```mermaid
+flowchart TB
+    Client["浏览器 / API 客户端<br/>REST + EventSource（last_seq 续传）"]
+
+    subgraph Access["接入层"]
+        API["FastAPI REST API<br/>Agent · Workflow · Conversation · Run · Skill · MCP"]
+        AUTH["SSE Ticket<br/>短期鉴权"]
+    end
+
+    subgraph Runtime["web_agent 运行时（可水平扩展）"]
+        ORCH["Orchestrator<br/>run 生命周期 · 调度 · 重试 · 审批恢复"]
+        GRAPH["LangGraph StateGraph<br/>DAG · 条件边 · interrupt"]
+        RUNNER["AgentRunner<br/>模型流式调用 + 工具调用闭环"]
+        TOOLS["工具分发<br/>内置工具 · Skill · MCP"]
+        SKILL["Skill Runtime<br/>提示词注入 · 资源读取"]
+        MCP["MCP Client Manager<br/>stdio · Streamable HTTP"]
+        HUB["RunHub<br/>seq 分配 · 广播 · 取消"]
+        EW["EventWriter<br/>批量写入事件"]
+        SSE["SSE Writer<br/>订阅 + 回放合并去重"]
+        CKPT["Checkpointer<br/>审批暂停点"]
+    end
+
+    subgraph Persistence["状态与持久化"]
+        DB[("业务数据库<br/>MySQL / PostgreSQL / SQLite<br/>Agent · Workflow · Skill · MCP · Run · Event")]
+        REDIS[("Redis（可选）<br/>Pub/Sub · Stream · Lease")]
+        CP[("Checkpoint<br/>SQLite / Redis")]
+    end
+
+    LLM["LLM 服务<br/>OpenAI 兼容接口"]
+    MCP_SERVER["外部 MCP Server"]
+
+    subgraph ScriptExec["脚本执行边界"]
+        STUDIO["studio<br/>gRPC · 无凭据 · 禁出网"]
+        DISPATCH["studio-dispatcher<br/>只调度，不执行脚本正文"]
+        SANDBOX["一次性 sandbox 容器<br/>isolated 档"]
+    end
+
+    Client -->|"REST"| API
+    Client -->|"SSE"| AUTH
+    AUTH --> SSE
+    API -->|"创建 run / 后台执行"| ORCH
+
+    ORCH --> GRAPH
+    GRAPH --> RUNNER
+    RUNNER -->|"流式请求"| LLM
+    RUNNER --> TOOLS
+    TOOLS --> SKILL
+    TOOLS --> MCP
+    MCP -->|"tools/call"| MCP_SERVER
+    TOOLS -->|"skill_exec · gRPC"| STUDIO
+    STUDIO -->|"内部 HTTP"| DISPATCH
+    DISPATCH -->|"创建一次性容器"| SANDBOX
+
+    ORCH --> HUB
+    GRAPH --> HUB
+    RUNNER --> HUB
+    HUB --> EW
+    HUB --> SSE
+    HUB <-->|"广播 / 控制信号"| REDIS
+    SSE -->|"断线回放"| REDIS
+    SSE -->|"事件兜底回放"| DB
+    EW --> DB
+
+    ORCH --> CKPT
+    CKPT --> CP
+    API --> DB
+    ORCH --> DB
+    SKILL --> DB
+    MCP --> DB
+```
+
+业务数据默认落在数据库中；开启 Redis 后，多实例之间通过 Pub/Sub 分发实时事件、用 Stream 回放事件，并以租约协调 run 归属。模型生成的技能脚本只进入独立的 studio 执行边界，`web_agent` 主进程不直接执行脚本。
+
+## 快速开始
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+python run.py
+```
+
+`run.py` 会切换到项目根目录，依次检查依赖、执行数据库迁移、灌入演示数据并启动 uvicorn。常用参数：
+
+```bash
+python run.py --no-seed
+python run.py --no-reload
+python run.py --port 9000
+python run.py --open
+```
+
+手工启动的等价步骤：
+
+```bash
+alembic upgrade head
+python -m scripts.seed
+uvicorn app.main:app --reload
+```
+
+服务启动后可以访问：
+
+- 功能验证台：<http://127.0.0.1:8000/>
+- 后台管理：<http://127.0.0.1:8000/admin>
+- OpenAPI：<http://127.0.0.1:8000/docs>
+- 健康检查：<http://127.0.0.1:8000/api/health>
+
+## 数据库与密钥
+
+生产环境至少需要设置 `SECRET_KEY`，它用于加密 Agent 的 API Key 和签发 SSE ticket：
+
+```bash
+python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"
+```
+
+支持三种数据库：
+
+```dotenv
+# MySQL
+DATABASE_URL=mysql+asyncmy://user:pass@127.0.0.1:3306/agentdb?charset=utf8mb4
+
+# PostgreSQL
+DATABASE_URL=postgresql+psycopg://user:pass@127.0.0.1:5432/agentdb
+
+# 本地开发
+DATABASE_URL=sqlite+aiosqlite:///./web_agent.db
+```
+
+所有模型统一走 OpenAI 兼容接口，通过 `MINIMAX_BASE_URL`、`MINIMAX_MODEL`、`MINIMAX_API_KEY` 配置。变量名保留了 MiniMax 的历史命名，但端点可以指向 OpenAI、DeepSeek、Qwen 或本地 vLLM。
+
+## 模块地图
+
+| 目录 | 职责 |
+| --- | --- |
+| `api/` | FastAPI 路由、SSE ticket 校验和依赖注入 |
+| `core/` | LangGraph 编排、AgentRunner、工具分发、事件流、Redis 协作和 Skill Runtime |
+| `config/` | 环境变量、数据库连接与引擎参数 |
+| `models/` | SQLAlchemy 持久化模型 |
+| `repo/` | 数据访问层 |
+| `schemas/` | Pydantic 请求与响应模型 |
+| `main.py` | FastAPI 工厂、生命周期、静态页面和统一异常处理 |
+
+## 运行链路
+
+1. `POST /api/conversations/{id}/messages` 创建 run 并立即返回 `runId`。
+2. 生成任务在后台 `asyncio.Task` 中执行，不依赖原 HTTP 请求是否仍然连接。
+3. `Orchestrator` 通过 LangGraph 执行 DAG 中的节点，`AgentRunner` 负责模型流式调用和工具闭环。
+4. `RunHub` 为事件分配单调递增的 `seq`，`EventWriter` 批量落库。
+5. 客户端通过短期 ticket 订阅 SSE；`SSEWriter` 合并实时事件和持久化回放，处理断线续传。
+6. 开启 Redis 后，任意实例都能接收任意 run 的实时事件；租约和取消频道负责多实例协调。
+
+## 相关文档
+
+- [HTTP API 与会话协议](api/README.md)
+- [编排、事件与工具运行时](core/README.md)
+- [完整主设计文档](DESIGN.md)
+- [项目级文档目录](../README.md)

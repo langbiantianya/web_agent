@@ -42,7 +42,7 @@
 
 - [x] 契约**从两份文档逐字抽出**：`service Studio { Exec, Health }`、`ExecStatus` 6 个枚举、`ExecRequest` 10 字段、`ExecResponse` 8 字段、`HealthResponse` 5 字段。
 - [x] **生成桩放仓库根的 `webagent/`**（不是 `app/`）：包名就是 proto 里的 `package webagent.studio.v1;`，`protoc` 生成的 `from webagent.studio.v1 import studio_pb2` 直接可解析，**一行生成代码都不用改**；studio 容器不装 web_agent 的代码，只拷这个目录即可。
-- [x] `scripts/gen_proto.py` 幂等重新生成；`scripts/check_proto_contract.py` 比对「proto 文件 vs `docs/design.md` §22.8.3 vs `docs/skill-service.md` §5」三处**逐字一致**，不一致时打印 diff 并非 0 退出。
+- [x] `scripts/gen_proto.py` 幂等重新生成；`scripts/check_proto_contract.py` 比对「proto 文件 vs `app/DESIGN.md` §22.8.3 vs `services/studio/DESIGN.md` §5」三处**逐字一致**，不一致时打印 diff 并非 0 退出。
 
 ### Task 2: gRPC 客户端与执行上下文
 
@@ -143,8 +143,8 @@
 ### Task 9: 文档回写
 
 **Files:**
-- Modify: `docs/design.md`（§22.8.8 / §22.8.9 / §22.12 / §22.13）
-- Modify: `docs/skill-service.md`（§19）
+- Modify: `app/DESIGN.md`（§22.8.8 / §22.8.9 / §22.12 / §22.13）
+- Modify: `services/studio/DESIGN.md`（§19）
 - Modify: `README.md`（路线图 / 项目结构 / 新增「脚本执行：studio」一节）
 - Create: 本文件
 

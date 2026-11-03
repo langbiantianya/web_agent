@@ -1,6 +1,8 @@
 # Skill 服务（studio）设计文档
 
-> 版本：V4.0　|　状态：设计中　|　配套：[主设计文档 §22.8](design.md#228-脚本执行grpc-调用-studio-容器)
+> 版本：V4.0　|　状态：设计中　|　配套：[主设计文档 §22.8](../../app/DESIGN.md#228-脚本执行grpc-调用-studio-容器)
+
+> 本文归属 `services/studio/` 模块，记录技能脚本执行服务的内部架构、安全边界与部署要求。
 
 ---
 
@@ -30,7 +32,7 @@
 
 ## 1. 这份文档写什么
 
-主设计文档 [§22.8](design.md#228-脚本执行grpc-调用-studio-容器) 写的是**调用侧视角**：
+主设计文档 [§22.8](../../app/DESIGN.md#228-脚本执行grpc-调用-studio-容器) 写的是**调用侧视角**：
 web_agent 怎么调、契约长什么样、为什么不在本进程起子进程。那是**接口**。
 
 这份文档写的是**服务侧**：这个容器里面长什么样、一次执行的生命周期怎么走、隔离怎么落、
@@ -293,7 +295,7 @@ message ExecResponse {
   string stdout_digest = 8;    // stdout 的 sha256，用于审计与去重
   ExecProfile profile = 9;     // **实际**使用的档位，必须回显
   int64 startup_ms = 10;       // 沙箱启动耗时（fast 为 0）
-  string error_code = 11;      // 稳定枚举字符串；见 docs/skill-service.md §5.1
+  string error_code = 11;      // 稳定枚举字符串；见 services/studio/DESIGN.md §5.1
 }
 
 message HealthRequest {}
@@ -793,7 +795,7 @@ K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota�
 忘了另一边，症状是运行时才炸（字段错位、枚举值不认识）。对策只有一条：
 
 > **proto 文件在仓库里只有一份**，两边都从它生成代码；CI 里跑一个检查，比较
-> `docs/skill-service.md` 与 `docs/design.md` 里贴出的 proto 片段与文件内容一致。
+> `services/studio/DESIGN.md` 与 `app/DESIGN.md` 里贴出的 proto 片段与文件内容一致。
 
 ### 14.3 `isolated` 档是破坏性变更
 

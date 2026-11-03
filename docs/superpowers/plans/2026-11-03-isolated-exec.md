@@ -1,7 +1,7 @@
 # isolated 隔离档：完整工作流设计与优化方案
 
 > 状态：方案待评审（本文只做设计与拆解，没有改代码）｜日期：2026-11-03
-> 配套：[`docs/skill-service.md`](../../skill-service.md) §2.4 / §8.4 / §14.3 / §18、[`docs/design.md`](../../design.md) §22.8
+> 配套：[`services/studio/DESIGN.md`](../../../services/studio/DESIGN.md) §2.4 / §8.4 / §14.3 / §18、[`app/DESIGN.md`](../../../app/DESIGN.md) §22.8
 
 ## 0. 一页纸结论
 
@@ -531,7 +531,7 @@ graph TB
   必须靠决策 7 的版本下限 + 能力位；
 - 枚举只追加；字段号不复用；
 - `HealthResponse.profile` 保留（报实例默认档），新代码读 `profiles`；
-- 三处逐字同步：`proto/` 文件、`docs/design.md` §22.8.3、`docs/skill-service.md` §5，
+- 三处逐字同步：`proto/` 文件、`app/DESIGN.md` §22.8.3、`services/studio/DESIGN.md` §5，
   `scripts/check_proto_contract.py` 会拦；
 - 生成物 `webagent/studio/v1/` 用 `scripts/gen_proto.py` 重新生成，不手改。
 
@@ -604,7 +604,7 @@ graph TB
 - [ ] `tests/test_studio_isolated_e2e.py`（`@pytest.mark.docker`）：真 Docker，断言
       容器 `NetworkMode=none`、`ReadonlyRootfs=true`、非 root、无 env、无挂载、
       脚本读不到宿主文件。**待有 Docker 的环境**——本机沙箱起不了子进程。
-- [x] 文档：`skill-service.md` §2.4 从「骨架」改为「Docker 后端已落地」；补执行链路与控制帧。
+- [x] 文档：`services/studio/DESIGN.md` §2.4 从「骨架」改为「Docker 后端已落地」；补执行链路与控制帧。
 
 **验收**：lab 里一条 isolated 技能真的在独立容器里跑完；`docker inspect` 能证明加固项；
 studio 容器内 `docker` 命令不存在、socket 不存在。
@@ -633,8 +633,8 @@ dispatcher 的 RBAC 用 `kubectl auth can-i --list` 证明没有 secrets/exec �
       **只解析不执行**的检查可以在导入期做（在沙箱里做更稳妥，二者选一）。
 - [ ] 管理接口 `GET /api/skills/runtime-check`：列出每个技能的档位、镜像、当前可用性。
 - [ ] trace 传播（W3C `traceparent` 进 payload，runner 日志带上）。
-- [ ] 文档：`design.md` §22.8.4 的工具描述补「强隔离脚本可能耗时数秒」，避免模型拿它跑
-      毫秒级计算；`skill-service.md` §10 补镜像目录与依赖规范。
+- [ ] 文档：`app/DESIGN.md` §22.8.4 的工具描述补「强隔离脚本可能耗时数秒」，避免模型拿它跑
+      毫秒级计算；`services/studio/DESIGN.md` §10 补镜像目录与依赖规范。
 
 ### Phase 4：加固与优化（可选）
 
@@ -730,15 +730,15 @@ dispatcher 的 RBAC 用 `kubectl auth can-i --list` 证明没有 secrets/exec �
 
 | 文档 | 需要的改动 | 阶段 |
 | --- | --- | --- |
-| `docs/skill-service.md` §2.4 | 从「骨架」改为「Phase 1 Docker 后端 / Phase 2 K8s 后端」；补 dispatcher 与控制帧 | 1/2 |
-| `docs/skill-service.md` §5 | proto 片段同步（逐字） | 0 |
-| `docs/skill-service.md` §8.4 | 补「三层背压」：studio 池 / dispatcher inflight / 命名空间配额 | 2 |
-| `docs/skill-service.md` §12 | 补沙箱指标与日志字段 | 1 |
-| `docs/skill-service.md` §13/§15 | 补 dispatcher 部署、RBAC、沙箱命名空间、信任边界 | 2 |
-| `docs/skill-service.md` §18/§19 | 删掉「isolated 未实现」；把验收项换成第 8 节 | 2 |
-| `docs/design.md` §22.8.3 | proto 片段同步（逐字） | 0 |
-| `docs/design.md` §22.8.4 | 工具描述补「强隔离脚本可能耗时数秒」 | 3 |
-| `docs/design.md` §22.8.8 | 新增 `studio_exec_min_version` 等配置 | 0 |
+| `services/studio/DESIGN.md` §2.4 | 从「骨架」改为「Phase 1 Docker 后端 / Phase 2 K8s 后端」；补 dispatcher 与控制帧 | 1/2 |
+| `services/studio/DESIGN.md` §5 | proto 片段同步（逐字） | 0 |
+| `services/studio/DESIGN.md` §8.4 | 补「三层背压」：studio 池 / dispatcher inflight / 命名空间配额 | 2 |
+| `services/studio/DESIGN.md` §12 | 补沙箱指标与日志字段 | 1 |
+| `services/studio/DESIGN.md` §13/§15 | 补 dispatcher 部署、RBAC、沙箱命名空间、信任边界 | 2 |
+| `services/studio/DESIGN.md` §18/§19 | 删掉「isolated 未实现」；把验收项换成第 8 节 | 2 |
+| `app/DESIGN.md` §22.8.3 | proto 片段同步（逐字） | 0 |
+| `app/DESIGN.md` §22.8.4 | 工具描述补「强隔离脚本可能耗时数秒」 | 3 |
+| `app/DESIGN.md` §22.8.8 | 新增 `studio_exec_min_version` 等配置 | 0 |
 
 ---
 

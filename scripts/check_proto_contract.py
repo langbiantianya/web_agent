@@ -28,8 +28,8 @@ PROTO_FILE = ROOT / "proto" / "webagent" / "studio" / "v1" / "studio.proto"
 
 # 两份文档：文件路径 + 该文档里 proto 片段所在的围栏。
 DOCS = [
-    ("docs/design.md", "主设计文档 §22.8.3"),
-    ("docs/skill-service.md", "Skill 服务文档 §5"),
+    ("app/DESIGN.md", "主设计文档 §22.8.3"),
+    ("services/studio/DESIGN.md", "Skill 服务文档 §5"),
 ]
 
 BLOCK = re.compile(r"```proto\n(.*?)```", re.DOTALL)
@@ -109,8 +109,8 @@ def main() -> int:
         print(
             f"\n契约三处不一致（{failures} 处）。改契约要同时改：\n"
             "  1. proto/webagent/studio/v1/studio.proto\n"
-            "  2. docs/design.md 的 §22.8.3 proto 片段\n"
-            "  3. docs/skill-service.md 的 §5 proto 片段\n"
+            "  2. app/DESIGN.md 的 §22.8.3 proto 片段\n"
+            "  3. services/studio/DESIGN.md 的 §5 proto 片段\n"
             "改完再跑 python scripts/gen_proto.py 重新生成桩代码。",
             file=sys.stderr,
         )

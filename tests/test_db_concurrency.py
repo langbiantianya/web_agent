@@ -1,6 +1,6 @@
 """并发下的数据库行为（V3.2 压测带出来的两个真问题）。
 
-压测（见 ``docs/performance.md``）在 128 并发时撞出 ``database is locked``，
+压测（见 ``scripts/PERFORMANCE.md``）在 128 并发时撞出 ``database is locked``，
 顺带暴露了两件事：
 
 1. **SQLite 的并发天花板**：WAL + busy_timeout 能把上限从「一卡就死」提到
