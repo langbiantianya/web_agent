@@ -3696,11 +3696,12 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
 | 队列闸门 | 并发上限 2 + 队列 4，发 12 个请求 → 接受 6 个、拒 6 个（`RESOURCE_EXHAUSTED`） |
 | studio 宕机 | `docker stop studio` → web_agent 侧拿到「连不上 studio（studio:9000）」，**不抛异常打断 run** |
 | gRPC 成功 ≠ 脚本成功 | 脚本 `exit 1` → `COMPLETED` + `exit_code=1`，stdout/stderr 都保留 |
+| 容器级 OOM | 256 MB 限额的容器里跑一个申请 1 GB 的脚本 → 内核 OOM killer **杀脚本、studio 存活** → `LIMITED` + `exit_code=-1` + 「内存超出容器限额」的说明；cgroup 的 `oom_kill` 计数 +1 |
 
-#### 22.14.2 真实模型端到端（四个场景）
+#### 22.14.2 真实模型端到端（五个场景）
 
 用的是 MiniMax **M Plan / Coding Plan 专用 key**，端点 `https://api.minimax.cn/v1`，
-模型 `MiniMax-M3.1-Flash`。四个场景全部符合预期：
+模型 `MiniMax-M3.1-Flash`。五个场景全部符合预期：
 
 | 场景 | 模型的第一次工具调用 | 工具结果 | run |
 | --- | --- | --- | --- |
@@ -3708,6 +3709,7 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
 | **timeout** | 同上，`scripts/slow.py` | `ok=false`，`status: timeout`、`exit_code: -1`、`已杀掉进程组` | ✅ **没失败** |
 | **busy** | 同上（studio 被占满） | `ok=false`，`studio 忙不过来（studio:9000）：等待队列已满（4）` | ✅ **没失败** |
 | **down** | 同上（studio 被停掉） | `ok=false`，`连不上 studio（studio:9000）：… Connection refused` | ✅ **没失败** |
+| **oom** | 同上，`scripts/hungry.py`（申请 1 GB） | `ok=false`，`status: limited`、`exit_code: -1`、`脚本被 OOM killer 杀掉（退出码 -9（信号 9））：内存超出容器限额` | ✅ **没失败** |
 
 happy 场景的**最终回答**里，模型把工具返回的内容**逐字转述**了：
 
@@ -3724,6 +3726,22 @@ whoami=studio
 ```
 
 这就是 §22.13 那条验收项「退出码与 stdout 原样回灌给模型」在真部署上的证据。
+
+**oom 场景**（本轮新增）里，模型把工具返回的 `LIMITED` 原样转述，还自己读懂了原因：
+
+```text
+脚本执行失败了，工具返回的内容原样如下：
+
+错误：status: limited
+exit_code: -1
+error: 脚本被 OOM killer 杀掉（退出码 -9（信号 9））：内存超出容器限额。请减少内存占用、分批处理，或改成流式处理。
+--- stdout ---
+
+--- stderr ---
+```
+
+关键点：**工具失败没有变成 run 失败**（§17.5）——模型看到「脚本被 OOM 杀了」之后，
+还能给出「可以再跑一次并尝试降低内存占用」这样的下一步建议。
 
 #### 22.14.3 实测挖出来的七个 bug
 
@@ -3750,12 +3768,45 @@ DDL**。现在的守卫是两条——一条 AST 静态扫（禁止 TEXT/JSON/BL
 凡是「模型自己决定填什么参数」的地方，假 LLM 都得**按真模型的盲区**来设计用例，
 否则测的是自己的假设，不是产品的行为。
 
-#### 22.14.4 还没验到的
+#### 22.14.4 补上的：容器级 OOM（skill-service §13.2）
+
+上一轮清单里挂着「§13.2 的 137 退出码判定也还没实现」——**契约里写着的语义，代码里
+根本没有那条路径**。这不是「还没测」，是**功能没做**：脚本被 OOM killer 杀掉时，
+studio 报的是 `COMPLETED` + `exit_code=-9`，模型拿到一句没头没尾的退出码，
+完全看不出「这个脚本是被资源限制干掉的」。
+
+本轮补上（`services/studio/oom.py` + `services/studio/executor.py`）：
+
+| 做什么 | 为什么 |
+| --- | --- |
+| 退出码是 `-9` 或 `137` → `LIMITED` + `exit_code=-1` + 说明文字 | 两种形状都要认：POSIX 的 `subprocess` 记 `-N`，容器与 shell 记 `128+N` |
+| cgroup v2 的 `oom_kill` 计数作**佐证** | 退出码只说「被 SIGKILL 了」，说不了「为什么」；计数涨了才敢说「确实超了内存」 |
+| 脚本子进程的 `oom_score_adj` 调到 1000 | 内核的 OOM killer 按内存占用挑进程——吃内存的脚本本来就是首选，但「碰巧」不等于「必然」 |
+
+**实测（真容器，256 MB 限额）**：脚本申请 1 GB → 内核 OOM killer 杀脚本 → 返回
+`LIMITED` + `exit_code=-1` + 「脚本被 OOM killer 杀掉（退出码 -9（信号 9））：内存超出
+容器限额」；**studio 容器活着**（`ready=true`），cgroup 的 `oom_kill` 计数 +1。
+真模型端到端也过了（§22.14.2 的 oom 场景）。
+
+**顺带挖出一个「文档没写、实测才知道」的坑**：`prctl(PR_SET_OOM_SCORE_ADJ, 1000)`
+在容器里**返回 0 却什么都不做**——带不带 `argtypes`、uid 1000 还是 uid 0，都一样
+（原因未查清）。**写 `/proc/self/oom_score_adj` 才有效**，uid 1000 就能写，fork 出来的
+子进程里写也生效。所以实现走 `/proc` 路径，并且**回读验证**（不信任何人的返回值，
+包括 `prctl` 的）。另外实测：内核只允许把值往「更易被杀」的方向调，往下调要
+`CAP_SYS_RESOURCE`——正好是我们要的语义。
+
+这条方法论跟前面七个 bug 是同一个：**没实测过的实现，谁也不知道它是不是真的在干活**。
+本轮还发现，即使**什么都不做**，内核也会按内存占用挑进程，脚本照样被杀、studio 照样
+存活——所以 `oom_score_adj` 是把「碰巧」变成「必然」，不是唯一的防线。
+
+#### 22.14.5 还没验到的
 
 - **K8s 侧**：NetworkPolicy 是否真拦出向、headless + `round_robin` 是否真摊流量、
   `terminationGracePeriodSeconds` 与 drain 超时的配合——都依赖集群行为，Docker 上
   无法等效验证（§22.12 第 21 条）。
-- **容器级 OOM**：OOM killer 的行为与 137 退出码判定（skill-service §13.2）还没测。
+- **studio 自己成为最大占用者时的 OOM**：实测里被杀的永远是吃内存的脚本，studio 活着。
+  但如果 studio 自己的常驻内存反而比脚本大（泄漏之类），内核可能挑中它——那就会变成
+  「连不上 studio」。这条没测，也不该靠 `oom_score_adj` 兜（它只加在脚本进程上）。
 
 ---
 

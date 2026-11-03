@@ -36,6 +36,7 @@
 | 队列闸门 | 并发 2 + 队列 4，发 12 个请求 | ✅ 接受 6 个、拒 6 个（`RESOURCE_EXHAUSTED`：等待队列已满（4）） |
 | studio 宕机 | `docker stop studio` | ✅ web_agent 侧拿到「连不上 studio（studio:9000）」，**不抛异常打断 run** |
 | gRPC 契约 | 直接打 `Exec`/`Health` | ✅ `exit 1` 是 `COMPLETED` + `exit_code=1`（gRPC 成功 ≠ 脚本成功）；超时是 `TIMEOUT` |
+| 容器级 OOM | 256 MB 限额 + 脚本申请 1 GB | ✅ 内核 OOM killer **杀脚本、studio 存活** → `LIMITED` + `exit_code=-1` + 「内存超出容器限额」；cgroup 的 `oom_kill` 计数 +1 |
 
 ### 实测挖出来的两个 bug（已修）
 
@@ -61,6 +62,22 @@
 - headless + `round_robin` 是否真把流量摊到多个 Pod 上；
 - `terminationGracePeriodSeconds` 与 drain 超时的配合；
 - 镜像推到 registry 后的拉取与 digest 钉版。
+
+### 容器级 OOM：三个实测出来的结论
+
+1. **判定靠退出码**：脚本被 SIGKILL 杀掉时，退出码是 `-9`（POSIX 的 `subprocess` 记法）
+   或 `137`（`128+9`，容器与 shell 的记法）。两种都要认，都归 `LIMITED`
+   （skill-service §13.2）。
+2. **「为什么被杀」靠 cgroup 佐证**：`/sys/fs/cgroup/memory.events` 里的 `oom_kill`
+   计数在执行期间涨了，才说明确实是 OOM killer 干的。K8s 里同样读得到（cgroup v2）。
+3. **`oom_score_adj` 要走 `/proc` 路径**：`prctl(PR_SET_OOM_SCORE_ADJ, 1000)` 在容器里
+   **返回 0 却什么都不做**（实测，带不带 `argtypes`、root 还是非 root 都一样）；
+   **写 `/proc/self/oom_score_adj` 才有效**。所以 `STUDIO_OOM_SCORE_ADJ` 这个配置项
+   实现的是「写 proc 文件」，并且**回读验证**——不信 `prctl` 的返回值。
+
+   实测内核只允许把值往「更易被杀」的方向调（往下调要 `CAP_SYS_RESOURCE`），
+   而 K8s 的 `securityContext` 恰好把 `CAP_SYS_RESOURCE` 掉了——但这条不冲突：
+   我们要的正是「更易被杀」。
 
 ### 部署前请在目标集群里先跑一遍下面这三条
 
@@ -139,3 +156,10 @@ STUDIO_EXEC_LB_POLICY=round_robin   # 默认值，显式写出来是为了让人
    真容器上实测过：不关的话，脚本会以 `exit_code=-6`（SIGABRT）收场，
    stdout/stderr 全空，而且**间歇性**发生（取决于 fork 那一刻有没有别的线程
    在 gRPC 里），本地测试抓不到。
+9. **OOM 判定要认两种退出码。** 被 OOM killer 杀掉的脚本，退出码是 `-9`（POSIX 的
+   `subprocess` 记法）或 `137`（`128+9`，容器与 shell 的记法）——只认一个就会漏判。
+   另外「被 SIGKILL 了」不等于「超内存了」：cgroup v2 的
+   `/sys/fs/cgroup/memory.events` 里的 `oom_kill` 计数才是佐证。
+10. **别用 `prctl` 设 `oom_score_adj`。** 实测它返回 0 却什么都不做；写
+    `/proc/self/oom_score_adj` 才有效。所以 `STUDIO_OOM_SCORE_ADJ` 的实现是写 proc
+    文件 + 回读验证（skill-service §13.2）。

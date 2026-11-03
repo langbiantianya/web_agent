@@ -307,7 +307,8 @@ docker compose -f deploy/docker-compose.lab.yml build \
 ```
 
 这套栈已在真 Docker 上实测过（迁移链从零跑通、脚本真在 studio 容器里执行、
-容器加固 11 项全过、队列满与宕机故障注入）——实测记录见
+容器加固 11 项全过、队列满与宕机故障注入、**容器级 OOM 被正确判成 `LIMITED` 且
+studio 存活**）——实测记录见
 [`deploy/k8s/README.md`](deploy/k8s/README.md) 与设计文档 §22.14。
 
 ---

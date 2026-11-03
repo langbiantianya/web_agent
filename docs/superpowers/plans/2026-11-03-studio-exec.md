@@ -149,7 +149,8 @@
 - Create: 本文件
 
 - [x] 验收项逐条勾选，并标出钉它的测试。
-- [x] 实施清单逐条勾选，**未做的照实标未做**（指标与结构化日志、`isolated` 档、容器级 OOM）。
+- [x] 实施清单逐条勾选，**未做的照实标未做**（指标与结构化日志、`isolated` 档；
+      容器级 OOM 已在本轮补上并实测）。
 - [x] 新增的配置项写进两份文档。
 
 ---
@@ -210,15 +211,17 @@
 | timeout | `ok=false`、`status: timeout`、`exit_code: -1`、`已杀掉进程组` | ✅ 没失败 |
 | busy | `ok=false`、`studio 忙不过来（studio:9000）：等待队列已满（4）` | ✅ 没失败 |
 | down | `ok=false`、`连不上 studio（studio:9000）：… Connection refused` | ✅ 没失败 |
+| oom | `ok=false`、`status: limited`、`exit_code: -1`、`脚本被 OOM killer 杀掉…：内存超出容器限额` | ✅ 没失败 |
 
 happy 场景里模型把工具返回的退出码与 stdout **逐字转述**了——这就是 §22.13 那条
-验收项在真部署上的证据。
+验收项在真部署上的证据。oom 场景（后补）里，模型把 `LIMITED` 原样转述并读懂了原因。
 
 ### 还没验到的
 
 - **K8s 侧**：NetworkPolicy、headless + `round_robin` 摊流量、drain 与
   `terminationGracePeriodSeconds` 的配合——依赖集群行为，Docker 上无法等效验证。
-- **容器级 OOM**：OOM killer 的行为与 137 退出码判定还没测。
+- **studio 自己成为最大占用者时的 OOM**：实测里被杀的永远是吃内存的脚本、studio 活着；
+  反过来的情况没测（也不该靠 `oom_score_adj` 兜——它只加在脚本进程上）。
 
 ---
 
@@ -227,7 +230,10 @@ happy 场景里模型把工具返回的退出码与 stdout **逐字转述**了�
 1. **K8s 清单未在真实集群验证**（Docker 侧已实测，见上）。
 2. **studio 服务侧是参考实现**：没有指标导出、没有结构化日志、没有多档隔离。
 3. **`isolated` 隔离档未实现**：当前只有 `fast` 档，同一容器内先后两次执行之间理论上存在残留。
-4. **容器级 OOM 未测**：OOM killer 的 137 退出码判定（skill-service §13.2）还没实现。
+4. **容器级 OOM 已补**：§13.2 的判定已实现并在真容器里验过（256 MB 限额 + 申请 1 GB
+   → `LIMITED` + `exit_code=-1` + 「内存超出容器限额」，studio 存活，cgroup 的
+   `oom_kill` 计数 +1）。剩下的尾巴是「studio 自己成为最大占用者」那一种情形。
 5. **本机没有 bash**：studio 的 bash 运行时在测试里被跳过（生产镜像里是齐的）。
-6. **容器级 OOM 未测**：OOM killer 的 137 退出码判定（skill-service §13.2）还没实现。
+6. **`oom_score_adj` 只能写 `/proc`**：`prctl` 那条路在容器里返回 0 却不生效——
+   实现走 proc 路径并回读验证（skill-service §13.2）。
 7. **K8s 侧未实测**：NetworkPolicy、headless 摊流量、drain 与 grace period 的配合。

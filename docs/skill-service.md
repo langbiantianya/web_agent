@@ -562,7 +562,39 @@ K8s Deployment（无状态）：
 ### 13.2 内存与 `LIMITED`
 
 容器的 memory limit 被突破时，进程会被 OOM killer 干掉。studio 要能识别这一点：子进程被
-`SIGKILL` 且退出码是 137（128+9）时，判为 `LIMITED` 而不是「脚本自己 kill 了自己」。
+`SIGKILL` 时，判为 `LIMITED` 而不是「脚本自己 kill 了自己」。
+
+**退出码有两种形状，都要认**（`services/studio/oom.py`）：
+
+| 形状 | 出处 |
+| --- | --- |
+| `-9` | POSIX 上 Python 的 `subprocess`：被信号 N 杀死时 `returncode` 是 `-N` |
+| `137` | `128 + 信号号`：容器运行时与 shell 的惯例（脚本里再套一层 shell 时常见） |
+
+判定的落地（`services/studio/executor.py`）：进程自行退出、但退出码是上面两种之一时，
+状态是 `LIMITED`、`exit_code` 按契约是 `-1`、原因写进 `error`。**超时是我们自己杀的
+进程**（`TIMEOUT`）、**输出超限**（`LIMITED`，但说的是「输出超限」）——两者都不走这条路。
+
+**「为什么被杀」靠 cgroup 佐证**：退出码只能说明「被 SIGKILL 了」，说明不了「为什么」。
+cgroup v2 的 `/sys/fs/cgroup/memory.events` 里有 `oom_kill` 计数——**执行期间它涨了**，
+就说明确实是 OOM killer 干的，说明文字里才敢写「内存超出容器限额」；读不到（没有
+cgroup v2、权限不够）时照样按退出码判定，只是话术留余地（「多半是内存超出容器限额，
+也可能是脚本自己 kill 了自己」）。
+
+**别让 studio 自己成为受害者**：内核的 OOM killer 按内存占用挑进程——吃内存的脚本本来
+就是首选，但「碰巧」不等于「必然」。所以脚本子进程的 `oom_score_adj` 被调到 1000
+（`STUDIO_OOM_SCORE_ADJ`，最大 = 优先被挑中）。这一手实测下来有坑：
+
+- `prctl(PR_SET_OOM_SCORE_ADJ, 1000)` 在容器里**返回 0 却什么都不做**（带不带
+  `argtypes`、uid 1000 还是 uid 0，都一样。原因未查清）——**不能信它的返回值**；
+- **写 `/proc/self/oom_score_adj` 才有效**，uid 1000 就能写，fork 出来的子进程里写
+  也生效。所以实现走 `/proc` 路径，并且**回读验证**；
+- 内核只允许把值往「更易被杀」的方向调（往下调要 `CAP_SYS_RESOURCE`）——正好是我们
+  要的语义。
+
+**实测（真容器）**：256 MB 限额下跑一个申请 1 GB 的脚本 → 内核 OOM killer 杀掉脚本、
+studio 存活 → 返回 `LIMITED` + `exit_code=-1` + 「内存超出容器限额」的说明，
+cgroup 的 `oom_kill` 计数 +1。
 
 ### 13.3 探针
 
@@ -780,11 +812,15 @@ K8s Deployment（无状态）：
       → `scripts/check_proto_contract.py`、`tests/test_proto_contract.py`
 - [x] 故障注入测试：studio 被 kill / 超时 / OOM / 队列满；
       → studio 被 kill、超时、输出超限（OOM 的近亲）、队列满：
-      `tests/test_studio_e2e.py`。**OOM 本身没测**——容器级 OOM killer 的行为要在真实
-      容器里才测得到（§13.2 的 137 退出码判定也还没实现）。
+      `tests/test_studio_e2e.py`。
       **真容器里补测过**：队列满（并发 2 + 队列 4，发 12 个 → 接受 6 拒 6）、
       studio 被 `docker stop`（web_agent 侧拿到「连不上 studio」且不打断 run）、
       进程组隔离（超时后整个进程组被杀）。
+      → **容器级 OOM 也测了**（§13.2 的判定本轮才实现）：256 MB 限额的容器里跑一个
+      申请 1 GB 的脚本 → 内核 OOM killer 杀脚本、**studio 存活** → 返回 `LIMITED`
+      + `exit_code=-1` + 「内存超出容器限额」的说明，cgroup 的 `oom_kill` 计数 +1。
+      → 判定与佐证逻辑的单测：`tests/test_studio_oom.py`；
+      调用方侧把 `LIMITED` 说成人话：`tests/test_skill_exec.py`。
 - [x] 端到端：web_agent → studio → 模型收到结果（主设计 §22.13 的验收项）。
       → `tests/test_studio_e2e.py`（真 studio + 真 uvicorn + 假 LLM）。
       → **真部署上也跑通了**（真 Docker + 真 MySQL + 真 MiniMax M3.1 Flash）：四个场景
@@ -792,6 +828,8 @@ K8s Deployment（无状态）：
       退出码与 stdout **逐字转述**了（主设计 §22.14.2）。
       → 期间逼出**第 7 个 bug**：工具 schema 没告诉模型技能 code，真模型只能猜。
       修法见主设计 §22.8.4。
+      → 本轮又加了**第五个场景：OOM**——模型拿到的是 `status: limited` +
+      「内存超出容器限额」的说明，并把它原样转述给用户，run 本身没失败。
 
 ---
 
