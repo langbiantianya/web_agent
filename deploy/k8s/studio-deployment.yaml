@@ -85,6 +85,16 @@ spec:
             # 指标端点的端口（skill-service §12.1）；设成 "0" 就不启用。
             - name: STUDIO_METRICS_PORT
               value: "9090"
+            # isolated 档（skill-service §2.4、§8.4）：这些技能码走 isolated 档
+            # （每次执行起一次性容器），并有**自己的**并发池与等待队列。
+            # **参考实现没有部署容器运行时**——填了技能码，它们会拿到明确的
+            # FAILED_PRECONDITION，而不是悄悄退回 fast 档。默认留空 = 全部走 fast。
+            - name: STUDIO_ISOLATED_SKILL_CODES
+              value: ""
+            - name: STUDIO_ISOLATED_MAX_CONCURRENCY
+              value: "2"
+            - name: STUDIO_ISOLATED_MAX_QUEUE
+              value: "4"
             # 脚本进程的 oom_score_adj（skill-service §13.2）：调到 1000，
             # 容器内存被打爆时被 OOM killer 挑中的是**脚本**而不是 studio 自己。
             - name: STUDIO_OOM_SCORE_ADJ

@@ -49,6 +49,26 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_list(name: str) -> tuple[str, ...]:
+    """读一个逗号分隔的环境变量，当成一组字符串。
+
+    Args:
+        name: 变量名。
+
+    Returns:
+        去空、去重后的元组。
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return ()
+    seen: list[str] = []
+    for item in raw.split(","):
+        cleaned = item.strip()
+        if cleaned and cleaned not in seen:
+            seen.append(cleaned)
+    return tuple(seen)
+
+
 def detect_languages() -> tuple[str, ...]:
     """探测本实例**真的**能跑哪些运行时（skill-service §10.1、§10.2）。
 
@@ -90,7 +110,11 @@ class StudioConfig:
         oom_score_adj: 脚本进程的 ``oom_score_adj``（§13.2）。越大越容易被
             OOM killer 挑中——设了它，容器内存被打爆时被杀的是**脚本**而不是
             studio 自己。没权限设（没有 ``CAP_SYS_RESOURCE``）也不致命。
-        profile: 隔离档（§2.4）。当前只实现 ``fast``。
+        profile: 本实例的**默认**隔离档（§2.4）。当前只完整实现了 ``fast``。
+        isolated_skill_codes: 走 ``isolated`` 档的技能 code（§2.4「按 skill
+            code 列表」）。这些技能有**自己的**并发池与等待队列（§8.4）。
+        isolated_max_concurrency: ``isolated`` 档自己的并发上限（§8.4）。
+        isolated_max_queue: ``isolated`` 档自己的等待队列深度（§8.4）。
         version: 服务版本，报在 ``HealthResponse`` 里。
         languages: 本实例支持的运行时。
     """
@@ -111,6 +135,9 @@ class StudioConfig:
     metrics_port: int = 9090
     oom_score_adj: int = 1000
     profile: str = "fast"
+    isolated_skill_codes: tuple[str, ...] = ()
+    isolated_max_concurrency: int = 2
+    isolated_max_queue: int = 4
     version: str = "1.0.0"
     languages: tuple[str, ...] = field(default_factory=detect_languages)
 
@@ -138,5 +165,8 @@ class StudioConfig:
             metrics_port=_env_int("STUDIO_METRICS_PORT", 9090),
             oom_score_adj=_env_int("STUDIO_OOM_SCORE_ADJ", 1000),
             profile=os.environ.get("STUDIO_PROFILE", "fast").strip() or "fast",
+            isolated_skill_codes=_env_list("STUDIO_ISOLATED_SKILL_CODES"),
+            isolated_max_concurrency=_env_int("STUDIO_ISOLATED_MAX_CONCURRENCY", 2),
+            isolated_max_queue=_env_int("STUDIO_ISOLATED_MAX_QUEUE", 4),
             version=os.environ.get("STUDIO_VERSION", "1.0.0").strip() or "1.0.0",
         )

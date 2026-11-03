@@ -425,7 +425,8 @@ async def _wait_slot_busy(studio: _StudioHandle, timeout: float = 10.0) -> None:
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if studio.service._semaphore.locked():  # noqa: SLF001 - 测试要看真信号量
+        # fast 档的并发池（§8.4：isolated 档有自己的一池）。
+        if studio.service._fast_pool._semaphore.locked():  # noqa: SLF001 - 测试要看真信号量
             return
         await asyncio.sleep(0.02)
     raise AssertionError("studio 的并发位一直没被占住")

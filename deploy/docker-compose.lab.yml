@@ -64,6 +64,13 @@ services:
       # 脚本进程的 oom_score_adj（skill-service §13.2）：容器内存被打爆时，
       # 被 OOM killer 挑中的是**脚本**而不是 studio 自己。
       STUDIO_OOM_SCORE_ADJ: "1000"
+      # isolated 档（skill-service §2.4、§8.4）：这些技能码走 isolated 档
+      # （每次执行起一次性容器），并有**自己的**并发池与等待队列。
+      # **参考实现没有部署容器运行时**——填了技能码，它们会拿到明确的
+      # FAILED_PRECONDITION，而不是悄悄退回 fast 档。默认留空 = 全部走 fast。
+      STUDIO_ISOLATED_SKILL_CODES: ""
+      STUDIO_ISOLATED_MAX_CONCURRENCY: "2"
+      STUDIO_ISOLATED_MAX_QUEUE: "4"
       STUDIO_PROFILE: "fast"
       STUDIO_VERSION: "1.0.0"
       TMPDIR: "/tmp"

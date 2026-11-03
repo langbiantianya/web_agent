@@ -39,6 +39,13 @@ from services.studio.executor import (
     ExecOutcome,
     ScriptRunner,
 )
+from services.studio.launcher import (
+    ExecSpec,
+    InProcessLauncher,
+    IsolatedLauncher,
+    IsolatedRuntime,
+    LauncherUnavailableError,
+)
 from services.studio.metrics import StudioMetrics, build_metrics
 
 logger = logging.getLogger(__name__)
@@ -54,31 +61,93 @@ _STATUS_TO_PROTO = {
 
 _SUPPORTED_LANGUAGES = ("python", "bash", "node")
 
+# 档位名（§2.4）。
+PROFILE_FAST = "fast"
+PROFILE_ISOLATED = "isolated"
+
 # 请求非法 / 运行时不支持——``studio_exec_failed_total`` 的 reason 取值
 # （skill-service §12.1）。执行器那边的三个在 :mod:`services.studio.executor`。
 FAILURE_INVALID_REQUEST = "invalid_request"
 FAILURE_UNKNOWN_LANGUAGE = "unknown_language"
+FAILURE_ISOLATED_UNAVAILABLE = "isolated_unavailable"
 
 
 class QueueFullError(Exception):
     """等待队列满了（§8.1）。"""
 
 
+class _ExecutionPool:
+    """一个执行池：并发闸门 + 等待队列（§8.1）。
+
+    ``fast`` 与 ``isolated`` **各有一个**——§8.4：「isolated 档必须单独排队，
+    不能和 fast 档抢同一个并发池，否则几个慢脚本能把快脚本全堵死」。
+    """
+
+    def __init__(self, max_concurrency: int, max_queue: int) -> None:
+        """按限额建池。
+
+        Args:
+            max_concurrency: 同时在跑的脚本数上限。
+            max_queue: 等待队列深度；满了就拒绝。
+        """
+        self.max_queue = max_queue
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._queue_lock = asyncio.Lock()
+        self._waiting = 0
+
+    async def acquire(self) -> None:
+        """拿并发位；队列满了就拒绝。
+
+        Raises:
+            QueueFullError: 等待队列已满。
+        """
+        counted = False
+        if self._semaphore.locked():
+            async with self._queue_lock:
+                if self._waiting >= self.max_queue:
+                    raise QueueFullError()
+                self._waiting += 1
+                counted = True
+        try:
+            await self._semaphore.acquire()
+        finally:
+            if counted:
+                async with self._queue_lock:
+                    self._waiting -= 1
+
+    def release(self) -> None:
+        """把并发位还回去。"""
+        self._semaphore.release()
+
+
 class StudioService(studio_pb2_grpc.StudioServicer):
     """studio 的 gRPC servicer。"""
 
-    def __init__(self, config: StudioConfig) -> None:
+    def __init__(
+        self,
+        config: StudioConfig,
+        isolated_runtime: IsolatedRuntime | None = None,
+    ) -> None:
         """按配置建好闸门与执行器。
 
         Args:
             config: 服务配置。
+            isolated_runtime: ``isolated`` 档的一次性容器执行器；没部署时给
+                ``None``——那时走 isolated 档的技能会拿到明确的
+                ``FAILED_PRECONDITION``，不会悄悄退回 ``fast`` 档。
         """
         self.config = config
-        self.runner = ScriptRunner(config)
-        # 并发闸门（§8.1）：同时在跑的脚本数上限。
-        self._semaphore = asyncio.Semaphore(config.max_concurrency)
-        self._queue_lock = asyncio.Lock()
-        self._waiting = 0
+        # 两个档位（§2.4）。isolated 档的容器运行时**默认没有部署**——它是一份
+        # 骨架：接口、独立队列都在，缺运行时时明确报错，不悄悄退回 fast。
+        self._fast_launcher = InProcessLauncher(ScriptRunner(config))
+        self._isolated_launcher = IsolatedLauncher(isolated_runtime)
+        # 两个池各管各的（§8.4：isolated 必须单独排队）。
+        self._fast_pool = _ExecutionPool(
+            config.max_concurrency, config.max_queue
+        )
+        self._isolated_pool = _ExecutionPool(
+            config.isolated_max_concurrency, config.isolated_max_queue
+        )
         # request_id → (落库时刻, 响应)（§5.2 的去重窗口）。
         self._dedup: dict[str, tuple[float, studio_pb2.ExecResponse]] = {}
         self._ready = True
@@ -134,13 +203,35 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             logger.info("命中去重窗口，直接返回上次的结果：%s", request.request_id)
             return cached
 
+        profile = self._profile_for(request.skill)
+        launcher = (
+            self._isolated_launcher
+            if profile == PROFILE_ISOLATED
+            else self._fast_launcher
+        )
+        pool = (
+            self._isolated_pool
+            if profile == PROFILE_ISOLATED
+            else self._fast_pool
+        )
+
+        # 档位的运行时没部署 → 明确拒绝（**不悄悄退回 fast 档**）。
+        if not launcher.available:
+            self.metrics.failed_total.inc(reason=FAILURE_ISOLATED_UNAVAILABLE)
+            await context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"技能「{request.skill}」走 {PROFILE_ISOLATED} 档"
+                "（每次执行起一次性容器），但本实例没有部署容器运行时，"
+                "无法执行。",
+            )
+
         queue_started = time.monotonic()
         try:
-            await self._acquire_slot()
+            await pool.acquire()
         except QueueFullError:
             await context.abort(
                 grpc.StatusCode.RESOURCE_EXHAUSTED,
-                f"等待队列已满（{self.config.max_queue}），请退避重试",
+                f"等待队列已满（{pool.max_queue}），请退避重试",
             )
         # 排队时长：从「发出」算到「拿到并发位」（§8.1）。
         self.metrics.queue_wait.observe(time.monotonic() - queue_started)
@@ -161,22 +252,30 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                     stdout_digest="",
                 )
             else:
-                outcome = await self.runner.run(
-                    language=request.language,
-                    content=request.content,
-                    argv=list(request.argv),
-                    stdin=request.stdin,
-                    timeout_ms=remaining_ms,
+                outcome = await launcher.run(
+                    ExecSpec(
+                        skill=request.skill,
+                        script=request.script,
+                        language=request.language,
+                        content=request.content,
+                        argv=tuple(request.argv),
+                        stdin=request.stdin,
+                        timeout_ms=remaining_ms,
+                    )
                 )
+        except LauncherUnavailableError as exc:
+            # 档位不可用：转成 FAILED_PRECONDITION（§10.2 同一类问题）。
+            self.metrics.failed_total.inc(reason=FAILURE_ISOLATED_UNAVAILABLE)
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
         except asyncio.CancelledError:
             # 调用方取消（§8.3）。gRPC 的取消不传播到对端的进程组，所以 studio
             # 侧的自设时限是**兜底**，不是可选项。
             raise
         finally:
-            self._semaphore.release()
+            pool.release()
             self.metrics.exec_active.dec()
 
-        self._record_metrics(request, outcome, time.monotonic() - started)
+        self._record_metrics(request, outcome, time.monotonic() - started, profile)
         response = self._to_response(outcome)
         self._store_dedup(request.request_id, response)
         logger.info(
@@ -215,8 +314,29 @@ class StudioService(studio_pb2_grpc.StudioServicer):
 
     # ------------------------------------------------------------- 内部
 
+    def _profile_for(self, skill: str) -> str:
+        """这个技能走哪个档位（§2.4）。
+
+        档位由**服务侧配置**决定，不放在请求里——所以 proto 不必加字段、调用方
+        也不用关心（§2.4）。规则两条：
+
+        1. 实例默认档是 ``isolated`` → 全部技能都走 isolated；
+        2. 否则，命中 ``isolated_skill_codes`` 的技能走 isolated，其余走 fast。
+
+        Args:
+            skill: 技能 code。
+
+        Returns:
+            ``fast`` 或 ``isolated``。
+        """
+        if self.config.profile == PROFILE_ISOLATED:
+            return PROFILE_ISOLATED
+        if skill in self.config.isolated_skill_codes:
+            return PROFILE_ISOLATED
+        return PROFILE_FAST
+
     def _record_metrics(
-        self, request, outcome: ExecOutcome, elapsed: float
+        self, request, outcome: ExecOutcome, elapsed: float, profile: str
     ) -> None:
         """记这次执行的指标，并写一条结构化汇总日志（§12.1、§12.2）。
 
@@ -227,12 +347,13 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             request: ``ExecRequest``。
             outcome: 执行结果。
             elapsed: 服务级端到端耗时（秒，含排队）。
+            profile: 这次执行实际走的档位。
         """
         language = request.language
         self.metrics.exec_total.inc(
             status=outcome.status,
             language=language,
-            profile=self.config.profile,
+            profile=profile,
         )
         self.metrics.exec_duration.observe(elapsed, language=language)
         if outcome.status == STATUS_TIMEOUT:
@@ -278,26 +399,6 @@ class StudioService(studio_pb2_grpc.StudioServicer):
         if len(request.stdin) > self.config.max_stdin_chars:
             return f"stdin 超过 {self.config.max_stdin_chars} 字符上限"
         return None
-
-    async def _acquire_slot(self) -> None:
-        """拿并发位；队列满了就拒绝（§8.1）。
-
-        Raises:
-            QueueFullError: 等待队列已满。
-        """
-        counted = False
-        if self._semaphore.locked():
-            async with self._queue_lock:
-                if self._waiting >= self.config.max_queue:
-                    raise QueueFullError()
-                self._waiting += 1
-                counted = True
-        try:
-            await self._semaphore.acquire()
-        finally:
-            if counted:
-                async with self._queue_lock:
-                    self._waiting -= 1
 
     def _to_response(self, outcome: ExecOutcome) -> studio_pb2.ExecResponse:
         """把执行结果转成 proto 响应。
