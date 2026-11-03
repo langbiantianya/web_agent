@@ -3289,6 +3289,11 @@ Traceback (most recent call last):
 **脚本输出不落库**：它可能含敏感数据（§22.10）。只作为 `role=tool` 的内容回灌，并截断到
 `tool_result_max_chars`。
 
+**`skill` 参数的描述要按当前上下文动态生成**：模型判断「调哪个技能」的唯一依据就是提示词
+与工具 schema，而技能正文（§22.6）注入的是**正文**——正文里不一定写着自己的 code。所以
+`skill` 参数的描述里必须列出**实际可用的技能 code**（与执行期白名单同一份），否则真模型
+只能猜。实测见 §22.14 的第 7 条。
+
 #### 22.8.5 超时、取消与僵尸进程
 
 - 超时由 `timeout_ms` 指定，**上限由 web_agent 侧强制**（`studio_exec_max_timeout_ms`，默认
@@ -3579,12 +3584,10 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
 22. **studio 服务侧是参考实现，不是生产就绪的服务**。`services/studio/` 做完了契约、进程隔离、
     超时、截断、限流、去重、优雅停机这些**功能**，但没有指标导出、没有结构化日志、没有多档隔离。
     它的定位是「把调用侧与服务侧的边界钉清楚，并让验收能真的跑起来」，不是直接上生产。
-23. **真实模型那一环尚未在真部署上实测**。容器化部署、脚本执行链路、隔离与加固都在真 Docker
-    上验过了（§22.14），但「模型真的收到脚本输出并转述」这一环还差一把能用的模型 key：
-    MiniMax 的 **M Plan / Coding Plan 额度走的是专用 key**，官方明确写「与按量计费接口不通用」，
-    拿按量付费的 key 去调只会得到 `402 insufficient_balance`。
-    这一环的**链路**已被 `tests/test_studio_e2e.py` 用「真 studio + 真 uvicorn + 假 LLM」覆盖，
-    缺的是「真 LLM」这一层。
+23. **真实模型那一环已在真部署上实测**（§22.14）。用的是 MiniMax 的 **M Plan /
+    Coding Plan 专用 key**——它与按量付费接口**不通用**（按量付费那把 key 在国内站与
+    海外站一律 `402 insufficient_balance` / `401 invalid api key`），端点与 key 一换就通了。
+    四个场景（正常 / 超时 / 忙不过来 / studio 宕机）全部符合预期。
 
 ### 22.13 实施要点与验收标准
 
@@ -3626,6 +3629,12 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
       → `tests/test_studio_e2e.py::test_skill_exec_runs_script_in_studio_and_feeds_model`
       （真 studio + 真 uvicorn + 假 LLM；脚本的 stdout 确实进了下一轮请求的
       `role=tool` 消息）
+      → **真部署上的实测**：真 Docker + 真 MySQL + 真 MiniMax，脚本在 studio 容器里
+      跑，模型把退出码与 stdout 逐字转述（§22.14.2）
+- [x] **模型知道该传哪个技能 code** → `skill` 参数的描述里列着实际可用的 code，
+      模型第一次就调对，不用猜。
+      → `tests/test_skill_exec.py::test_skill_param_lists_the_actual_bound_codes`
+      （这条是**真模型**逼出来的：原先 schema 里只有一句举例，真模型连猜十来个全被拒）
 - [x] `skill_exec` 的脚本参数含 `../../etc/passwd` 式的路径 → **在 web_agent 侧**就被拒，
       请求**根本没发出去** studio（studio 收到的一定是已校验过的脚本正文）。
       → `tests/test_studio_e2e.py::test_rejected_request_never_reaches_studio`
@@ -3688,9 +3697,37 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
 | studio 宕机 | `docker stop studio` → web_agent 侧拿到「连不上 studio（studio:9000）」，**不抛异常打断 run** |
 | gRPC 成功 ≠ 脚本成功 | 脚本 `exit 1` → `COMPLETED` + `exit_code=1`，stdout/stderr 都保留 |
 
-#### 22.14.2 实测挖出来的六个 bug
+#### 22.14.2 真实模型端到端（四个场景）
 
-这六个**全都是本地测试全绿、真部署才炸**的——这也是为什么 §22.13 的验收要能在
+用的是 MiniMax **M Plan / Coding Plan 专用 key**，端点 `https://api.minimax.cn/v1`，
+模型 `MiniMax-M3.1-Flash`。四个场景全部符合预期：
+
+| 场景 | 模型的第一次工具调用 | 工具结果 | run |
+| --- | --- | --- | --- |
+| **happy** | `skill_exec(skill=lab-happy-xxxxxx, script=scripts/hello.py)` | `ok=true`，`exit_code: 0`，stdout 含 `hello from studio container` / `cwd=/tmp/studio-xxxx` / `whoami=studio` | ✅ |
+| **timeout** | 同上，`scripts/slow.py` | `ok=false`，`status: timeout`、`exit_code: -1`、`已杀掉进程组` | ✅ **没失败** |
+| **busy** | 同上（studio 被占满） | `ok=false`，`studio 忙不过来（studio:9000）：等待队列已满（4）` | ✅ **没失败** |
+| **down** | 同上（studio 被停掉） | `ok=false`，`连不上 studio（studio:9000）：… Connection refused` | ✅ **没失败** |
+
+happy 场景的**最终回答**里，模型把工具返回的内容**逐字转述**了：
+
+```text
+脚本已执行完成，工具返回内容原样如下：
+
+exit_code: 0
+--- stdout ---
+hello from studio container
+argv1=none
+cwd=/tmp/studio-_5jpft4k
+whoami=studio
+--- stderr ---
+```
+
+这就是 §22.13 那条验收项「退出码与 stdout 原样回灌给模型」在真部署上的证据。
+
+#### 22.14.3 实测挖出来的七个 bug
+
+这七个**全都是本地测试全绿、真部署才炸**的——这也是为什么 §22.13 的验收要能在
 真环境里跑。
 
 | # | 现象 | 根因 | 修法 |
@@ -3701,22 +3738,24 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
 | 4 | MySQL 改列失败：`1067, "Invalid default value for 'requested_at'"` | SQLAlchemy 渲染 `CREATE TABLE` 时会把 `sa.func.now()` 包成 `(now())`，渲染 `ALTER TABLE ... CHANGE` 时却原样输出 `now()`——**MySQL 的表达式默认值必须带括号** | 迁移里改用 `sa.text("(now())")`；加一条**离线渲染 MySQL DDL** 的守卫测试（`alembic upgrade head --sql`，不需要数据库） |
 | 5 | 脚本间歇性以 `exit_code=-6` 收场，stdout/stderr 全空 | **在跑 gRPC 的进程里 fork**：gRPC 的 `pthread_atfork` 处理器在「fork 时别的线程正在 gRPC 里」时放弃清理，子进程带着坏掉的 epoll 状态去 exec，exec 之前被 glog 的断言 `abort()` 掉 | `GRPC_ENABLE_FORK_SUPPORT=0`，且必须在 `import grpc` **之前**设（`services/studio/__init__.py`）；加 `tests/test_studio_runtime_guards.py` |
 | 6 | 容器里攒僵尸进程 | 脚本被超时杀掉后，它起的子进程被重新挂到 PID 1（studio）底下；python 不是 init、不回收孤儿，被杀死的孙进程变成僵尸（`/proc/<pid>` 还在、状态 `Z`），PID 表被慢慢占满 | 镜像里用 `tini` 当 PID 1（`ENTRYPOINT ["/usr/bin/tini", "--"]`） |
+| 7 | **真模型不知道该传哪个技能 code**——它连着猜了 `hello`、`hello-script`、`hello-world` 等十来个，全被白名单拒掉，最后撞上「工具调用超过 5 轮」失败 | 模型判断「调哪个技能」的唯一依据是提示词与工具 schema。技能正文（§22.6）注入的是**正文**，正文里不一定写着自己的 code；工具 schema 里原先也只有一句举例（「例如 financial-report」）。**假 LLM 的测试测不到**——它早就被写死成正确的 code 了 | `skill` 参数的描述**按当前上下文动态生成**，列出实际可用的 code（与执行期白名单同一份）。`skill_exec` 与 `skill_resource` 都改；注册表**不改**（逐层浅拷贝），否则并发节点会互相串味 |
 
 第 3、4 两条还暴露了一个**方法论**上的问题：**SQLite 上的迁移测试抓不到服务端会拒绝的
 DDL**。现在的守卫是两条——一条 AST 静态扫（禁止 TEXT/JSON/BLOB 列带 `server_default`），
 一条**离线渲染 MySQL DDL 再检查**（`alembic upgrade head --sql`，连数据库都不需要，
 却能看见发给 MySQL 的每一句 SQL）。
 
-#### 22.14.3 还没验到的
+第 7 条暴露的是另一个：**假 LLM 的测试替模型做了它做不到的事**。假 LLM 被写死成
+「知道正确的技能 code」，于是这个缺口在本地永远看不见——换成真模型，第一轮就撞上了。
+凡是「模型自己决定填什么参数」的地方，假 LLM 都得**按真模型的盲区**来设计用例，
+否则测的是自己的假设，不是产品的行为。
 
-- **真实模型那一环**：「模型真的收到脚本输出并转述」还没在真部署上跑通——用的那把
-  MiniMax key 是开放平台**按量付费**的，账户余额为 0（`402 insufficient_balance`）；
-  M Plan / Coding Plan 的额度走的是**另一把专用 key**（官方明确写「与按量计费接口
-  不通用」）。链路的其余部分（真 studio + 真 uvicorn + 假 LLM）已由
-  `tests/test_studio_e2e.py` 覆盖。
+#### 22.14.4 还没验到的
+
 - **K8s 侧**：NetworkPolicy 是否真拦出向、headless + `round_robin` 是否真摊流量、
   `terminationGracePeriodSeconds` 与 drain 超时的配合——都依赖集群行为，Docker 上
   无法等效验证（§22.12 第 21 条）。
+- **容器级 OOM**：OOM killer 的行为与 137 退出码判定（skill-service §13.2）还没测。
 
 ---
 

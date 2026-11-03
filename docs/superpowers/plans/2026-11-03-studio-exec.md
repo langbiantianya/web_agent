@@ -180,7 +180,7 @@
 | 队列闸门 | 并发 2 + 队列 4，发 12 个 → 接受 6、拒 6（`RESOURCE_EXHAUSTED`） |
 | studio 宕机 | `docker stop` → web_agent 侧「连不上 studio」，**不抛异常打断 run** |
 
-### 实测挖出来的六个 bug（全部已修 + 加了回归守卫）
+### 实测挖出来的七个 bug（全部已修 + 加了回归守卫）
 
 | # | 现象 | 根因 | 守卫 |
 | --- | --- | --- | --- |
@@ -190,18 +190,35 @@
 | 4 | MySQL `1067: Invalid default value for 'requested_at'` | SQLAlchemy 渲染 `ALTER` 时把 `sa.func.now()` 输出成 `now()`，MySQL 要求表达式默认值带括号 | `tests/test_migrations.py::test_mysql_ddl_keeps_function_defaults_parenthesized` |
 | 5 | 脚本间歇性 `exit_code=-6`（SIGABRT）、stdout/stderr 全空 | **在 gRPC 进程里 fork**：gRPC 的 atfork 处理器在「别的线程正在 gRPC 里」时放弃清理，子进程带坏 epoll 状态去 exec，exec 前被断言 abort | `tests/test_studio_runtime_guards.py` |
 | 6 | 容器里攒僵尸 | 脚本被杀后它起的子进程被重新挂到 PID 1 底下，python 不回收孤儿 | `tests/test_studio_runtime_guards.py`（镜像用 tini 当 PID 1） |
+| 7 | 真模型连猜十来个技能 code，全被白名单拒掉，最后「工具调用超过 5 轮」失败 | 工具 schema 里只有一句举例（「例如 financial-report」），没告诉模型**实际**可用的 code；技能正文里也不一定写着自己的 code | `tests/test_skill_exec.py::test_skill_param_lists_the_actual_bound_codes` |
 
 第 3、4 条暴露了一个方法论问题：**SQLite 上的迁移测试抓不到服务端会拒绝的 DDL**。
 现在的守卫是「AST 静态扫」+「**离线渲染 MySQL DDL** 再检查」两条——后者用
 `alembic upgrade head --sql`，连数据库都不需要，却能看见发给 MySQL 的每一句 SQL。
 
+第 7 条暴露的是另一个：**假 LLM 的测试替模型做了它做不到的事**。假 LLM 被写死成
+「知道正确的技能 code」，于是这个缺口在本地永远看不见——换成真模型，第一轮就撞上了。
+
+### 真实模型端到端（四个场景全过）
+
+真 Docker + 真 MySQL + 真 MiniMax（`MiniMax-M3.1-Flash`，M Plan 专用 key，
+端点 `https://api.minimax.cn/v1`）：
+
+| 场景 | 工具结果 | run |
+| --- | --- | --- |
+| happy | `ok=true`、`exit_code: 0`、stdout 含 `hello from studio container` | ✅ |
+| timeout | `ok=false`、`status: timeout`、`exit_code: -1`、`已杀掉进程组` | ✅ 没失败 |
+| busy | `ok=false`、`studio 忙不过来（studio:9000）：等待队列已满（4）` | ✅ 没失败 |
+| down | `ok=false`、`连不上 studio（studio:9000）：… Connection refused` | ✅ 没失败 |
+
+happy 场景里模型把工具返回的退出码与 stdout **逐字转述**了——这就是 §22.13 那条
+验收项在真部署上的证据。
+
 ### 还没验到的
 
-- **真模型那一环**：「模型真的收到脚本输出并转述」还没跑通——MiniMax 的 M Plan /
-  Coding Plan 额度走的是**专用 key**，与按量计费接口不通用；手上这把是按量付费的
-  开放平台 key，账户余额为 0（`402 insufficient_balance`）。链路的其余部分已验。
 - **K8s 侧**：NetworkPolicy、headless + `round_robin` 摊流量、drain 与
   `terminationGracePeriodSeconds` 的配合——依赖集群行为，Docker 上无法等效验证。
+- **容器级 OOM**：OOM killer 的行为与 137 退出码判定还没测。
 
 ---
 
@@ -212,4 +229,5 @@
 3. **`isolated` 隔离档未实现**：当前只有 `fast` 档，同一容器内先后两次执行之间理论上存在残留。
 4. **容器级 OOM 未测**：OOM killer 的 137 退出码判定（skill-service §13.2）还没实现。
 5. **本机没有 bash**：studio 的 bash 运行时在测试里被跳过（生产镜像里是齐的）。
-6. **真模型端到端未跑通**：缺一把 M Plan / Coding Plan 的专用 key（见上）。
+6. **容器级 OOM 未测**：OOM killer 的 137 退出码判定（skill-service §13.2）还没实现。
+7. **K8s 侧未实测**：NetworkPolicy、headless 摊流量、drain 与 grace period 的配合。

@@ -787,9 +787,11 @@ K8s Deployment（无状态）：
       进程组隔离（超时后整个进程组被杀）。
 - [x] 端到端：web_agent → studio → 模型收到结果（主设计 §22.13 的验收项）。
       → `tests/test_studio_e2e.py`（真 studio + 真 uvicorn + 假 LLM）。
-      **真部署上的链路也验过**（真 DB → 真 gRPC → 真 studio 容器 → stdout 回灌），
-      但「模型真的收到脚本输出并转述」这一环**还没用真 LLM 跑通**——
-      MiniMax 的 M Plan 额度走的是专用 key，与按量计费接口不通用（主设计 §22.14）。
+      → **真部署上也跑通了**（真 Docker + 真 MySQL + 真 MiniMax M3.1 Flash）：四个场景
+      （正常 / 超时 / 忙不过来 / studio 宕机）全部符合预期，happy 场景里模型把脚本的
+      退出码与 stdout **逐字转述**了（主设计 §22.14.2）。
+      → 期间逼出**第 7 个 bug**：工具 schema 没告诉模型技能 code，真模型只能猜。
+      修法见主设计 §22.8.4。
 
 ---
 
