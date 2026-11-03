@@ -150,6 +150,9 @@ class DockerBackend:
             payload_dir.mkdir(parents=True, exist_ok=True)
             exec_dir = Path(tempfile.mkdtemp(prefix="sbx-", dir=payload_dir))
             (exec_dir / _PAYLOAD_NAME).write_bytes(payload)
+            # mkdtemp 默认是 0700，但沙箱以 uid 1000 运行，必须能穿过这个
+            # 目录读取 payload；目录里只有一份 0644 的输入，且以只读方式挂载。
+            os.chmod(exec_dir, 0o755)
             os.chmod(exec_dir / _PAYLOAD_NAME, 0o644)
 
             try:

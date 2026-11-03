@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
 
 from services.dispatcher.backend import SandboxError
 from services.dispatcher.config import DispatcherConfig
+from services.dispatcher import docker_backend as docker_backend_module
 from services.dispatcher.docker_backend import DockerBackend
 from services.sandbox.protocol import SandboxSpec, encode_frames
 
@@ -133,6 +136,24 @@ def test_container_template_is_fixed_and_hardened(tmp_path):
     assert mount["mode"] == "ro"
     assert container.started is True
     assert container.removed is True
+
+
+@pytest.mark.skipif(os.name != "posix", reason="验证 POSIX 文件权限")
+def test_payload_is_readable_by_sandbox_uid(tmp_path, monkeypatch):
+    """执行目录可遍历、payload 只读——沙箱以 uid 1000 运行。"""
+    exec_dir = tmp_path / "sbx-fixed"
+
+    def _mkdtemp(**_kwargs):
+        """用固定路径模拟 tempfile.mkdtemp，便于检查目录权限。"""
+        exec_dir.mkdir()
+        return str(exec_dir)
+
+    monkeypatch.setattr(docker_backend_module.tempfile, "mkdtemp", _mkdtemp)
+    monkeypatch.setattr(docker_backend_module.shutil, "rmtree", lambda *_a, **_k: None)
+    backend, _ = _backend(_FakeContainer(), tmp_path)
+    backend._run_sync(_spec())  # noqa: SLF001
+    assert stat.S_IMODE(exec_dir.stat().st_mode) == 0o755
+    assert stat.S_IMODE((exec_dir / "payload.json").stat().st_mode) == 0o644
 
 
 def test_result_is_parsed_from_frames(tmp_path):
