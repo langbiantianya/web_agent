@@ -57,6 +57,8 @@ class ExecSpec:
         argv: 参数数组。
         stdin: 标准输入。
         timeout_ms: 执行时限（毫秒）。
+        image: 镜像**目录名**（不是完整 ref）；空 = 默认镜像。只有 isolated
+            档会用它，fast 档忽略。
     """
 
     skill: str = ""
@@ -66,6 +68,7 @@ class ExecSpec:
     argv: tuple[str, ...] = field(default_factory=tuple)
     stdin: str = ""
     timeout_ms: int = 0
+    image: str = ""
 
 
 class LauncherUnavailableError(Exception):

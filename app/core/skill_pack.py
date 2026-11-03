@@ -173,17 +173,23 @@ def parse_skill_md(text: str) -> ParsedSkill:
     allowed_tools = data.get("allowed-tools") or ""
     if not isinstance(allowed_tools, str):
         raise SkillPackError("allowed-tools 必须是字符串")
-    return ParsedSkill(
-        frontmatter=SkillFrontmatter(
-            name=name,
-            description=description,
-            license=str(data.get("license") or ""),
-            compatibility=compatibility,
-            metadata={str(k): str(v) for k, v in metadata.items()},
-            allowed_tools=allowed_tools.strip(),
-        ),
-        body=body.lstrip("\n"),
+    frontmatter = SkillFrontmatter(
+        name=name,
+        description=description,
+        license=str(data.get("license") or ""),
+        compatibility=compatibility,
+        metadata={str(k): str(v) for k, v in metadata.items()},
+        allowed_tools=allowed_tools.strip(),
     )
+    # 运行档声明在这里就校验：导入是唯一一条内容不可信的入口，非法声明不该
+    # 等到模型调用时才炸。没声明 runtime-* 的技能不受影响。
+    from app.core.skill_runtime import SkillRuntimeError, parse_skill_runtime
+
+    try:
+        parse_skill_runtime(frontmatter.metadata)
+    except SkillRuntimeError as exc:
+        raise SkillPackError(str(exc)) from exc
+    return ParsedSkill(frontmatter=frontmatter, body=body.lstrip("\n"))
 
 
 def render_skill_md(fm: SkillFrontmatter, body: str) -> str:

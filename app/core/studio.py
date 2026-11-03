@@ -29,6 +29,7 @@ gRPC 层面成功只说明「studio 正常工作」，脚本成功与否由 ``st
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -43,6 +44,23 @@ logger = logging.getLogger(__name__)
 # gRPC deadline 的宽限：脚本时限到了之后，还要留一点时间让 studio 回话、
 # 让在途的响应走完网络。2 秒是经验值——太短会把「脚本刚好跑完」误判成超时。
 DEADLINE_GRACE_SEC = 2.0
+
+# 档位名（skill-service §2.4）。请求里带、响应里回显，调用方据此对账防降级。
+PROFILE_FAST = "fast"
+PROFILE_ISOLATED = "isolated"
+
+# 档位强弱：只能升、不能降。响应里的实际档位低于请求档位 = 静默降级。
+_PROFILE_RANK = {PROFILE_FAST: 1, PROFILE_ISOLATED: 2}
+
+_PROFILE_TO_PROTO = {
+    PROFILE_FAST: studio_pb2.EXEC_PROFILE_FAST,
+    PROFILE_ISOLATED: studio_pb2.EXEC_PROFILE_ISOLATED,
+}
+
+_PROTO_TO_PROFILE = {
+    studio_pb2.EXEC_PROFILE_FAST: PROFILE_FAST,
+    studio_pb2.EXEC_PROFILE_ISOLATED: PROFILE_ISOLATED,
+}
 
 # gRPC 的负载均衡策略（skill-service §13.4）。
 #
@@ -66,7 +84,22 @@ _STATUS_NAMES: dict[int, str] = {
 
 
 class StudioError(Exception):
-    """studio 调用失败——服务不可用、参数非法、队列满等。"""
+    """studio 调用失败——服务不可用、参数非法、队列满等。
+
+    ``code`` 是机器可读的失败码（``capability_missing`` / ``sandbox_capacity``
+    / ``image_unknown`` …）。gRPC 错误把它放在 details 的 ``code:`` 前缀里；
+    响应级错误直接读 ``ExecResponse.error_code``。调用方按它分支，不靠匹配人话。
+    """
+
+    def __init__(self, message: str, code: str = "") -> None:
+        """记住说明与失败码。
+
+        Args:
+            message: 给人看的说明。
+            code: 机器可读的失败码；没有就是空串。
+        """
+        super().__init__(message)
+        self.code = code
 
 
 class StudioUnavailableError(StudioError):
@@ -81,6 +114,34 @@ class StudioStartupError(StudioError):
     """studio 不可达且要求必须可用——服务应当**启动失败**（§22.8.6）。"""
 
 
+class StudioDowngradeError(StudioError):
+    """响应里的实际档位低于请求档位——**静默降级**，拒绝该结果。
+
+    这是「不悄悄退回 fast」唯一可验证的落点：不靠 studio 自觉，靠调用方拿
+    响应里的 ``profile`` 对账。
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class StudioProfile:
+    """一个档位现在能不能用（``HealthResponse.ProfileInfo``）。"""
+
+    name: str
+    ready: bool
+    max_concurrency: int = 0
+    queue_depth: int = 0
+    detail: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class StudioImage:
+    """isolated 可用的镜像目录项（``HealthResponse.ImageInfo``）。"""
+
+    name: str
+    languages: tuple[str, ...] = ()
+    digest: str = ""
+
+
 @dataclass(frozen=True, slots=True)
 class StudioHealth:
     """studio 的健康信息。"""
@@ -90,6 +151,40 @@ class StudioHealth:
     languages: tuple[str, ...]
     max_concurrency: int
     profile: str
+    profiles: tuple[StudioProfile, ...] = ()
+    images: tuple[StudioImage, ...] = ()
+    isolated_startup_budget_ms: int = 0
+
+    def profile_info(self, name: str) -> StudioProfile | None:
+        """按档位名取能力。
+
+        Args:
+            name: ``fast`` / ``isolated``。
+
+        Returns:
+            该档位的能力；没上报时返回 ``None``（老 studio）。
+        """
+        for item in self.profiles:
+            if item.name == name:
+                return item
+        return None
+
+    @property
+    def supports_isolated(self) -> bool:
+        """本实例能不能跑 isolated 档。
+
+        老 studio 没有 ``profiles`` 字段——**视为没有**，不能因为「字段缺失」
+        就当成兼容而放行。
+        """
+        info = self.profile_info(PROFILE_ISOLATED)
+        return bool(info and info.ready)
+
+    def image(self, name: str) -> StudioImage | None:
+        """按目录名取镜像信息。"""
+        for item in self.images:
+            if item.name == name:
+                return item
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +203,9 @@ class ExecResult:
     duration_ms: int
     error: str
     stdout_digest: str
+    profile: str = ""
+    startup_ms: int = 0
+    error_code: str = ""
 
     @property
     def ok(self) -> bool:
@@ -134,6 +232,40 @@ def effective_timeout_ms(requested: int | None = None) -> int:
     """
     base = settings.studio_exec_timeout_ms if requested is None else int(requested)
     return max(1, min(int(base), int(settings.studio_exec_max_timeout_ms)))
+
+
+def _version_tuple(value: str) -> tuple[int, int, int]:
+    """把 ``2.0.0`` / ``2.0`` 这类版本串解析成可比较的元组。
+
+    Args:
+        value: 版本串。
+
+    Returns:
+        ``(major, minor, patch)``；解析不了返回 ``(0, 0, 0)``。
+    """
+    cleaned = (value or "").strip().split("-", 1)[0]
+    parts: list[int] = []
+    for item in cleaned.split(".")[:3]:
+        try:
+            parts.append(int(item))
+        except ValueError:
+            return (0, 0, 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return (parts[0], parts[1], parts[2])
+
+
+def version_at_least(actual: str, minimum: str) -> bool:
+    """``actual >= minimum``。
+
+    Args:
+        actual: 实际版本。
+        minimum: 最低版本。
+
+    Returns:
+        是否满足下限。
+    """
+    return _version_tuple(actual) >= _version_tuple(minimum)
 
 
 def channel_target(addr: str) -> str:
@@ -184,6 +316,9 @@ class StudioClient:
         # （skill-service §10.2 的「写的时候严格」）。探活之前是 None——那表示
         # 还没探过，不做这道校验。
         self.health_info: StudioHealth | None = None
+        # 上次探活的时刻（``time.monotonic``）。能力缓存按 TTL 刷新——studio
+        # 滚动升级后镜像/档位可能变化，一直用启动时那份会误判。
+        self.health_fetched_at: float | None = None
 
     async def _get_stub(self) -> studio_pb2_grpc.StudioStub:
         """取（或建）桩对象。
@@ -228,9 +363,56 @@ class StudioClient:
             languages=tuple(info.name for info in response.language_info),
             max_concurrency=int(response.max_concurrency),
             profile=response.profile,
+            profiles=tuple(
+                StudioProfile(
+                    name=item.name,
+                    ready=bool(item.ready),
+                    max_concurrency=int(item.max_concurrency),
+                    queue_depth=int(item.queue_depth),
+                    detail=item.detail,
+                )
+                for item in response.profiles
+            ),
+            images=tuple(
+                StudioImage(
+                    name=item.name,
+                    languages=tuple(item.languages),
+                    digest=item.digest,
+                )
+                for item in response.images
+            ),
+            isolated_startup_budget_ms=int(response.isolated_startup_budget_ms),
         )
         self.health_info = health
+        self.health_fetched_at = time.monotonic()
         return health
+
+    async def ensure_health(self, timeout: float = 5.0) -> StudioHealth | None:
+        """按 TTL 拿一份可用的能力快照。
+
+        为什么不在每次执行前都探活：fast 档不值得多一个 RTT。调用方只在
+        「需要判断 isolated 能不能跑」时用它；TTL 内复用，过期才刷新。
+
+        Args:
+            timeout: 探活超时（秒）。
+
+        Returns:
+            能力快照；一次都没探到过时返回 ``None``。刷新失败时退回上一次的
+            快照（真正的执行失败会由 Exec 报出来）。
+        """
+        ttl = float(settings.studio_exec_health_ttl_sec or 0)
+        if (
+            self.health_info is not None
+            and self.health_fetched_at is not None
+            and ttl > 0
+            and time.monotonic() - self.health_fetched_at < ttl
+        ):
+            return self.health_info
+        try:
+            return await self.health(timeout=timeout)
+        except StudioError as exc:
+            logger.warning("刷新 studio 能力失败（%s）：%s", self.addr, exc)
+            return self.health_info
 
     async def exec_script(
         self,
@@ -242,6 +424,8 @@ class StudioClient:
         argv: list[str] | None = None,
         stdin: str = "",
         timeout_ms: int | None = None,
+        profile: str = "",
+        image: str = "",
         run_id: str = "",
         node_id: str = "",
         request_id: str = "",
@@ -256,6 +440,8 @@ class StudioClient:
             argv: 传给脚本的参数。**绝不拼成 shell 字符串**（skill-service §9.1）。
             stdin: 标准输入（文本）。
             timeout_ms: 执行时限（毫秒）；超过配置上限会被压到上限。
+            profile: 请求的档位（``fast`` / ``isolated``）；空 = 沿用服务端路由。
+            image: 镜像**目录名**（不是完整 ref）；空 = 默认镜像。
             run_id: 关联的 run id（审计）。
             node_id: 关联的节点 id（审计）。
             request_id: 追踪键。同键在 studio 的去重窗口内不重复执行。
@@ -264,6 +450,7 @@ class StudioClient:
             :class:`ExecResult`。
 
         Raises:
+            StudioDowngradeError: 响应里的实际档位低于请求档位（静默降级）。
             StudioUnavailableError: 连不上 studio。
             StudioTimeoutError: 调用超时。
             StudioError: 其它 gRPC 错误（参数非法、队列满、运行时缺失等）。
@@ -282,12 +469,27 @@ class StudioClient:
             run_id=run_id,
             node_id=node_id,
             request_id=request_id,
+            profile=_PROFILE_TO_PROTO.get(
+                profile, studio_pb2.EXEC_PROFILE_UNSPECIFIED
+            ),
+            image=image,
         )
         try:
             response = await stub.Exec(request, timeout=deadline)
         except grpc.aio.AioRpcError as exc:
             raise _map_rpc_error(exc, self.addr) from exc
-        return _to_result(response)
+        result = _to_result(response)
+        # 对账：实际档位不能低于请求档位。老 studio 不回显 → 实际档位是空串，
+        # 排在 fast 之前，同样会被拒——**不能因为字段缺失就当成兼容**。
+        if profile and _PROFILE_RANK.get(result.profile, 0) < _PROFILE_RANK.get(
+            profile, 0
+        ):
+            raise StudioDowngradeError(
+                f"studio 实际以 {result.profile or '未知'} 档执行了要求 {profile} "
+                "档的技能，已拒绝该结果",
+                code="profile_downgraded",
+            )
+        return result
 
     async def close(self) -> None:
         """关掉通道。"""
@@ -318,7 +520,25 @@ def _to_result(response: Any) -> ExecResult:
         duration_ms=int(response.duration_ms),
         error=response.error,
         stdout_digest=response.stdout_digest,
+        profile=_PROTO_TO_PROFILE.get(int(response.profile), ""),
+        startup_ms=int(response.startup_ms),
+        error_code=response.error_code,
     )
+
+
+def _split_error_code(detail: str) -> tuple[str, str]:
+    """从 gRPC details 里拆出 ``code: 人话`` 前缀。
+
+    Args:
+        detail: gRPC 的 details 文本。
+
+    Returns:
+        ``(code, message)``；没有前缀时 code 是空串、message 是原文。
+    """
+    code, sep, rest = detail.partition(":")
+    if sep and code and " " not in code and len(code) <= 48:
+        return code.strip(), rest.strip()
+    return "", detail
 
 
 def _map_rpc_error(exc: grpc.aio.AioRpcError, addr: str) -> StudioError:
@@ -332,18 +552,35 @@ def _map_rpc_error(exc: grpc.aio.AioRpcError, addr: str) -> StudioError:
         对应的 :class:`StudioError` 子类实例。
     """
     code = exc.code()
-    detail = exc.details() or ""
+    raw_detail = exc.details() or ""
+    error_code, detail = _split_error_code(raw_detail)
     if code == grpc.StatusCode.DEADLINE_EXCEEDED:
-        return StudioTimeoutError(f"调用 studio 超时（{addr}）：{detail}")
+        return StudioTimeoutError(
+            f"调用 studio 超时（{addr}）：{detail}", code=error_code or "deadline"
+        )
     if code == grpc.StatusCode.UNAVAILABLE:
-        return StudioUnavailableError(f"连不上 studio（{addr}）：{detail}")
+        return StudioUnavailableError(
+            f"连不上 studio（{addr}）：{detail}", code=error_code or "unavailable"
+        )
     if code == grpc.StatusCode.INVALID_ARGUMENT:
-        return StudioError(f"studio 拒绝了参数（{addr}）：{detail}")
+        return StudioError(
+            f"studio 拒绝了参数（{addr}）：{detail}",
+            code=error_code or "invalid_argument",
+        )
     if code == grpc.StatusCode.FAILED_PRECONDITION:
-        return StudioError(f"studio 不满足前置条件（{addr}）：{detail}")
+        return StudioError(
+            f"studio 不满足前置条件（{addr}）：{detail}",
+            code=error_code or "failed_precondition",
+        )
     if code == grpc.StatusCode.RESOURCE_EXHAUSTED:
-        return StudioError(f"studio 忙不过来（{addr}）：{detail}")
-    return StudioError(f"studio 调用失败（{addr}，{code.name}）：{detail}")
+        return StudioError(
+            f"studio 忙不过来（{addr}）：{detail}",
+            code=error_code or "resource_exhausted",
+        )
+    return StudioError(
+        f"studio 调用失败（{addr}，{code.name}）：{detail}",
+        code=error_code or "internal",
+    )
 
 
 # ------------------------------------------------------------------ 全局单例
@@ -427,19 +664,37 @@ async def init_studio(timeout: float = 5.0) -> bool:
             "studio 不可达（%s），脚本执行能力未启用：%s", client.addr, exc
         )
         return False
-    if not health.ready:
-        message = f"studio 未就绪（{client.addr}）：profile={health.profile}"
+    minimum = (settings.studio_exec_min_version or "").strip()
+    if minimum and not version_at_least(health.version, minimum):
+        message = (
+            f"studio 版本过低（{client.addr}）：{health.version} < {minimum}。"
+            "升级 studio，或把 STUDIO_EXEC_MIN_VERSION 调到实际版本。"
+        )
         if settings.studio_exec_required:
             raise StudioStartupError(message)
         logger.warning("%s，脚本执行能力未启用", message)
         return False
+    if not health.ready:
+        detail = health.profile_info(PROFILE_ISOLATED)
+        suffix = f"，isolated={detail.detail}" if detail and detail.detail else ""
+        message = (
+            f"studio 未就绪（{client.addr}）：profile={health.profile}{suffix}"
+        )
+        if settings.studio_exec_required:
+            raise StudioStartupError(message)
+        logger.warning("%s，脚本执行能力未启用", message)
+        return False
+    profile_desc = "、".join(
+        f"{item.name}={'ready' if item.ready else 'not-ready'}"
+        for item in health.profiles
+    ) or f"{health.profile}（老 studio 未分级）"
     logger.info(
-        "studio 就绪（%s）：版本 %s，运行时 %s，并发上限 %s，隔离档 %s",
+        "studio 就绪（%s）：版本 %s，运行时 %s，并发上限 %s，档位 %s",
         client.addr,
         health.version,
         "、".join(health.languages) or "（未声明）",
         health.max_concurrency,
-        health.profile,
+        profile_desc,
     )
     return True
 

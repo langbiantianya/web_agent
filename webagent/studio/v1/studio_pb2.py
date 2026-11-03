@@ -24,25 +24,31 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1fwebagent/studio/v1/studio.proto\x12\x12webagent.studio.v1\"\xb5\x01\n\x0b\x45xecRequest\x12\r\n\x05skill\x18\x01 \x01(\t\x12\x0e\n\x06script\x18\x02 \x01(\t\x12\x10\n\x08language\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\x12\x0c\n\x04\x61rgv\x18\x05 \x03(\t\x12\r\n\x05stdin\x18\x06 \x01(\t\x12\x12\n\ntimeout_ms\x18\x07 \x01(\x03\x12\x0e\n\x06run_id\x18\x08 \x01(\t\x12\x0f\n\x07node_id\x18\t \x01(\t\x12\x12\n\nrequest_id\x18\n \x01(\t\"\xbf\x01\n\x0c\x45xecResponse\x12.\n\x06status\x18\x01 \x01(\x0e\x32\x1e.webagent.studio.v1.ExecStatus\x12\x11\n\texit_code\x18\x02 \x01(\x05\x12\x0e\n\x06stdout\x18\x03 \x01(\t\x12\x0e\n\x06stderr\x18\x04 \x01(\t\x12\x11\n\ttruncated\x18\x05 \x01(\x08\x12\x13\n\x0b\x64uration_ms\x18\x06 \x01(\x03\x12\r\n\x05\x65rror\x18\x07 \x01(\t\x12\x15\n\rstdout_digest\x18\x08 \x01(\t\"\x0f\n\rHealthRequest\"\x93\x01\n\x0eHealthResponse\x12\r\n\x05ready\x18\x01 \x01(\x08\x12\x0f\n\x07version\x18\x02 \x01(\t\x12\x37\n\rlanguage_info\x18\x03 \x03(\x0b\x32 .webagent.studio.v1.LanguageInfo\x12\x17\n\x0fmax_concurrency\x18\x04 \x01(\x05\x12\x0f\n\x07profile\x18\x05 \x01(\t\"A\n\x0cLanguageInfo\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0f\n\x07version\x18\x02 \x01(\t\x12\x12\n\nextensions\x18\x03 \x03(\t*\xa9\x01\n\nExecStatus\x12\x1b\n\x17\x45XEC_STATUS_UNSPECIFIED\x10\x00\x12\x19\n\x15\x45XEC_STATUS_COMPLETED\x10\x01\x12\x16\n\x12\x45XEC_STATUS_FAILED\x10\x02\x12\x17\n\x13\x45XEC_STATUS_TIMEOUT\x10\x03\x12\x17\n\x13\x45XEC_STATUS_LIMITED\x10\x04\x12\x19\n\x15\x45XEC_STATUS_CANCELLED\x10\x05\x32\xa4\x01\n\x06Studio\x12I\n\x04\x45xec\x12\x1f.webagent.studio.v1.ExecRequest\x1a .webagent.studio.v1.ExecResponse\x12O\n\x06Health\x12!.webagent.studio.v1.HealthRequest\x1a\".webagent.studio.v1.HealthResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1fwebagent/studio/v1/studio.proto\x12\x12webagent.studio.v1\"\xf6\x01\n\x0b\x45xecRequest\x12\r\n\x05skill\x18\x01 \x01(\t\x12\x0e\n\x06script\x18\x02 \x01(\t\x12\x10\n\x08language\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\x12\x0c\n\x04\x61rgv\x18\x05 \x03(\t\x12\r\n\x05stdin\x18\x06 \x01(\t\x12\x12\n\ntimeout_ms\x18\x07 \x01(\x03\x12\x0e\n\x06run_id\x18\x08 \x01(\t\x12\x0f\n\x07node_id\x18\t \x01(\t\x12\x12\n\nrequest_id\x18\n \x01(\t\x12\x30\n\x07profile\x18\x0b \x01(\x0e\x32\x1f.webagent.studio.v1.ExecProfile\x12\r\n\x05image\x18\x0c \x01(\t\"\x99\x02\n\x0c\x45xecResponse\x12.\n\x06status\x18\x01 \x01(\x0e\x32\x1e.webagent.studio.v1.ExecStatus\x12\x11\n\texit_code\x18\x02 \x01(\x05\x12\x0e\n\x06stdout\x18\x03 \x01(\t\x12\x0e\n\x06stderr\x18\x04 \x01(\t\x12\x11\n\ttruncated\x18\x05 \x01(\x08\x12\x13\n\x0b\x64uration_ms\x18\x06 \x01(\x03\x12\r\n\x05\x65rror\x18\x07 \x01(\t\x12\x15\n\rstdout_digest\x18\x08 \x01(\t\x12\x30\n\x07profile\x18\t \x01(\x0e\x32\x1f.webagent.studio.v1.ExecProfile\x12\x12\n\nstartup_ms\x18\n \x01(\x03\x12\x12\n\nerror_code\x18\x0b \x01(\t\"\x0f\n\rHealthRequest\"\x99\x02\n\x0eHealthResponse\x12\r\n\x05ready\x18\x01 \x01(\x08\x12\x0f\n\x07version\x18\x02 \x01(\t\x12\x37\n\rlanguage_info\x18\x03 \x03(\x0b\x32 .webagent.studio.v1.LanguageInfo\x12\x17\n\x0fmax_concurrency\x18\x04 \x01(\x05\x12\x0f\n\x07profile\x18\x05 \x01(\t\x12\x31\n\x08profiles\x18\x06 \x03(\x0b\x32\x1f.webagent.studio.v1.ProfileInfo\x12-\n\x06images\x18\x07 \x03(\x0b\x32\x1d.webagent.studio.v1.ImageInfo\x12\"\n\x1aisolated_startup_budget_ms\x18\x08 \x01(\x03\"h\n\x0bProfileInfo\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05ready\x18\x02 \x01(\x08\x12\x17\n\x0fmax_concurrency\x18\x03 \x01(\x05\x12\x13\n\x0bqueue_depth\x18\x04 \x01(\x05\x12\x0e\n\x06\x64\x65tail\x18\x05 \x01(\t\"<\n\tImageInfo\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x11\n\tlanguages\x18\x02 \x03(\t\x12\x0e\n\x06\x64igest\x18\x03 \x01(\t\"A\n\x0cLanguageInfo\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0f\n\x07version\x18\x02 \x01(\t\x12\x12\n\nextensions\x18\x03 \x03(\t*]\n\x0b\x45xecProfile\x12\x1c\n\x18\x45XEC_PROFILE_UNSPECIFIED\x10\x00\x12\x15\n\x11\x45XEC_PROFILE_FAST\x10\x01\x12\x19\n\x15\x45XEC_PROFILE_ISOLATED\x10\x02*\xa9\x01\n\nExecStatus\x12\x1b\n\x17\x45XEC_STATUS_UNSPECIFIED\x10\x00\x12\x19\n\x15\x45XEC_STATUS_COMPLETED\x10\x01\x12\x16\n\x12\x45XEC_STATUS_FAILED\x10\x02\x12\x17\n\x13\x45XEC_STATUS_TIMEOUT\x10\x03\x12\x17\n\x13\x45XEC_STATUS_LIMITED\x10\x04\x12\x19\n\x15\x45XEC_STATUS_CANCELLED\x10\x05\x32\xa4\x01\n\x06Studio\x12I\n\x04\x45xec\x12\x1f.webagent.studio.v1.ExecRequest\x1a .webagent.studio.v1.ExecResponse\x12O\n\x06Health\x12!.webagent.studio.v1.HealthRequest\x1a\".webagent.studio.v1.HealthResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'webagent.studio.v1.studio_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_EXECSTATUS']._serialized_start=668
-  _globals['_EXECSTATUS']._serialized_end=837
+  _globals['_EXECPROFILE']._serialized_start=1124
+  _globals['_EXECPROFILE']._serialized_end=1217
+  _globals['_EXECSTATUS']._serialized_start=1220
+  _globals['_EXECSTATUS']._serialized_end=1389
   _globals['_EXECREQUEST']._serialized_start=56
-  _globals['_EXECREQUEST']._serialized_end=237
-  _globals['_EXECRESPONSE']._serialized_start=240
-  _globals['_EXECRESPONSE']._serialized_end=431
-  _globals['_HEALTHREQUEST']._serialized_start=433
-  _globals['_HEALTHREQUEST']._serialized_end=448
-  _globals['_HEALTHRESPONSE']._serialized_start=451
-  _globals['_HEALTHRESPONSE']._serialized_end=598
-  _globals['_LANGUAGEINFO']._serialized_start=600
-  _globals['_LANGUAGEINFO']._serialized_end=665
-  _globals['_STUDIO']._serialized_start=840
-  _globals['_STUDIO']._serialized_end=1004
+  _globals['_EXECREQUEST']._serialized_end=302
+  _globals['_EXECRESPONSE']._serialized_start=305
+  _globals['_EXECRESPONSE']._serialized_end=586
+  _globals['_HEALTHREQUEST']._serialized_start=588
+  _globals['_HEALTHREQUEST']._serialized_end=603
+  _globals['_HEALTHRESPONSE']._serialized_start=606
+  _globals['_HEALTHRESPONSE']._serialized_end=887
+  _globals['_PROFILEINFO']._serialized_start=889
+  _globals['_PROFILEINFO']._serialized_end=993
+  _globals['_IMAGEINFO']._serialized_start=995
+  _globals['_IMAGEINFO']._serialized_end=1055
+  _globals['_LANGUAGEINFO']._serialized_start=1057
+  _globals['_LANGUAGEINFO']._serialized_end=1122
+  _globals['_STUDIO']._serialized_start=1392
+  _globals['_STUDIO']._serialized_end=1556
 # @@protoc_insertion_point(module_scope)

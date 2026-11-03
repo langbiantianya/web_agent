@@ -69,6 +69,27 @@ def _env_list(name: str) -> tuple[str, ...]:
     return tuple(seen)
 
 
+def _env_pairs(name: str) -> tuple[tuple[str, str], ...]:
+    """读 ``name=ref,name=ref`` 形式的环境变量。
+
+    镜像目录用这个名字对形式：``default=registry/x@sha256:...``。名字是调用方
+    能请求的**目录名**，ref 才是真正给容器运行时看的完整地址——调用方永远
+    拿不到完整 ref，也就不能自己指定镜像。
+
+    Args:
+        name: 变量名。
+
+    Returns:
+        ``((name, ref), ...)``；格式不合法的项直接丢掉，不会把坏配置带进目录。
+    """
+    out: list[tuple[str, str]] = []
+    for item in _env_list(name):
+        key, sep, value = item.partition("=")
+        if sep and key.strip() and value.strip():
+            out.append((key.strip(), value.strip()))
+    return tuple(out)
+
+
 def detect_languages() -> tuple[str, ...]:
     """探测本实例**真的**能跑哪些运行时（skill-service §10.1、§10.2）。
 
@@ -86,6 +107,10 @@ def detect_languages() -> tuple[str, ...]:
     if shutil.which("node"):
         found.append("node")
     return tuple(sorted(found))
+
+
+class StudioConfigError(Exception):
+    """配置不自洽——启动期直接失败，不要等第一次调用才炸。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +140,14 @@ class StudioConfig:
             code 列表」）。这些技能有**自己的**并发池与等待队列（§8.4）。
         isolated_max_concurrency: ``isolated`` 档自己的并发上限（§8.4）。
         isolated_max_queue: ``isolated`` 档自己的等待队列深度（§8.4）。
-        version: 服务版本，报在 ``HealthResponse`` 里。
+        isolated_dispatcher_addr: 沙箱调度器的地址；空 = 本实例没有 isolated
+            运行时。没有它时 isolated 档必须**明确不可用**，不能悄悄退回 fast。
+        isolated_images: 镜像目录 ``((目录名, image@digest), ...)``。调用方只能
+            按目录名请求，不能自己指定完整 ref。
+        isolated_startup_budget_ms: 沙箱启动预算（毫秒）。启动慢于这个值就报
+            ``sandbox_start_timeout``，不要让它把脚本时限耗光。
+        version: 服务版本，报在 ``HealthResponse`` 里。请求带档位、响应回显档位
+            是 2.0.0 起的语义，``STUDIO_EXEC_MIN_VERSION`` 据此卡。
         languages: 本实例支持的运行时。
     """
 
@@ -138,8 +170,50 @@ class StudioConfig:
     isolated_skill_codes: tuple[str, ...] = ()
     isolated_max_concurrency: int = 2
     isolated_max_queue: int = 4
-    version: str = "1.0.0"
+    isolated_dispatcher_addr: str = ""
+    isolated_images: tuple[tuple[str, str], ...] = ()
+    isolated_startup_budget_ms: int = 15000
+    version: str = "2.0.0"
     languages: tuple[str, ...] = field(default_factory=detect_languages)
+
+    def image_ref(self, name: str) -> str | None:
+        """按目录名取完整镜像地址。
+
+        Args:
+            name: 目录名（调用方请求里带的那个）。
+
+        Returns:
+            完整 ref；目录里没有这个名字时返回 ``None``。
+        """
+        for key, ref in self.isolated_images:
+            if key == name:
+                return ref
+        return None
+
+    def validate(self) -> None:
+        """启动期校验配置，不自洽就**直接失败**。
+
+        为什么不在每次调用时报错：配置错了是部署问题，应该在启动时暴露
+        （与 §22.8.6 的口径一致）。悄悄把 isolated 请求跑成 fast 是最坏的
+        降级——调用方以为拿到了强隔离，实际没有，而且没有痕迹。
+
+        Raises:
+            StudioConfigError: 档位名不认识，或配了 isolated 却没配运行时。
+        """
+        if self.profile not in ("fast", "isolated"):
+            raise StudioConfigError(
+                f"STUDIO_PROFILE 只能是 fast 或 isolated（当前 {self.profile!r}）"
+            )
+        if (self.isolated_skill_codes or self.isolated_images) and not (
+            self.isolated_dispatcher_addr
+        ):
+            raise StudioConfigError(
+                "配了 isolated 技能/镜像，但没有配 STUDIO_ISOLATED_DISPATCHER_ADDR。"
+                "这会让 isolated 请求全部失败——要么补上调度器地址，要么清空这两个配置。"
+            )
+        for name, ref in self.isolated_images:
+            if not name or not ref:
+                raise StudioConfigError("STUDIO_ISOLATED_IMAGES 里有空的目录名或镜像地址")
 
     @classmethod
     def from_env(cls) -> "StudioConfig":
@@ -168,5 +242,12 @@ class StudioConfig:
             isolated_skill_codes=_env_list("STUDIO_ISOLATED_SKILL_CODES"),
             isolated_max_concurrency=_env_int("STUDIO_ISOLATED_MAX_CONCURRENCY", 2),
             isolated_max_queue=_env_int("STUDIO_ISOLATED_MAX_QUEUE", 4),
-            version=os.environ.get("STUDIO_VERSION", "1.0.0").strip() or "1.0.0",
+            isolated_dispatcher_addr=(
+                os.environ.get("STUDIO_ISOLATED_DISPATCHER_ADDR", "").strip()
+            ),
+            isolated_images=_env_pairs("STUDIO_ISOLATED_IMAGES"),
+            isolated_startup_budget_ms=_env_int(
+                "STUDIO_ISOLATED_STARTUP_BUDGET_MS", 15000
+            ),
+            version=os.environ.get("STUDIO_VERSION", "2.0.0").strip() or "2.0.0",
         )

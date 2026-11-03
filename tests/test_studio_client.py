@@ -23,7 +23,11 @@ from app.core import studio as studio_mod
 from app.core.studio import (
     ExecResult,
     StudioClient,
+    StudioDowngradeError,
     StudioError,
+    StudioHealth,
+    StudioImage,
+    StudioProfile,
     StudioTimeoutError,
     StudioUnavailableError,
     _lb_policy,
@@ -33,6 +37,7 @@ from app.core.studio import (
     effective_timeout_ms,
     get_studio_client,
     studio_configured,
+    version_at_least,
 )
 from webagent.studio.v1 import studio_pb2
 
@@ -63,7 +68,13 @@ class _FakeStub:
 
 def _rpc_error(code: grpc.StatusCode, details: str = "boom") -> grpc.aio.AioRpcError:
     """造一个 gRPC 异常。"""
-    return grpc.aio.AioRpcError(code, grpc.aio.Metadata(), details, None)
+    return grpc.aio.AioRpcError(
+        code,
+        grpc.aio.Metadata(),
+        grpc.aio.Metadata(),
+        details,
+        None,
+    )
 
 
 # --------------------------------------------------------------- 时限上限
@@ -313,3 +324,145 @@ async def test_channel_is_created_with_the_lb_policy(monkeypatch):
 
     assert captured["target"] == "dns:///studio:9000"
     assert ("grpc.lb_policy_name", "round_robin") in captured["options"]
+
+
+# --------------------------------------------------------------- 档位与能力
+
+
+def test_version_at_least():
+    """版本下限按元组比较，不按字符串。"""
+    assert version_at_least("2.0.0", "1.0.0")
+    assert version_at_least("2.0", "2.0.0")
+    assert version_at_least("2.0.1", "2.0.0")
+    assert not version_at_least("1.9.9", "2.0.0")
+    assert not version_at_least("", "2.0.0")
+
+
+def test_health_supports_isolated_only_when_reported_ready():
+    """老 studio 没有 profiles → 视为没有 isolated，不能当兼容放行。"""
+    health = StudioHealth(
+        ready=True,
+        version="2.0.0",
+        languages=("python",),
+        max_concurrency=4,
+        profile="fast",
+        profiles=(
+            StudioProfile(name="fast", ready=True),
+            StudioProfile(name="isolated", ready=True, max_concurrency=2),
+        ),
+        images=(StudioImage(name="ml", languages=("python",), digest="sha256:x"),),
+    )
+    assert health.supports_isolated is True
+    assert health.image("ml") is not None
+    assert health.image("ml").digest == "sha256:x"
+
+    old = StudioHealth(True, "1.0.0", ("python",), 4, "fast")
+    assert old.supports_isolated is False
+    assert old.image("ml") is None
+
+
+async def test_health_parses_profiles_images_and_budget():
+    """Health 的按档位能力要真的解析出来。"""
+    client = StudioClient("studio:9000")
+    client._stub = _FakeStub(  # noqa: SLF001
+        response=studio_pb2.HealthResponse(
+            ready=True,
+            version="2.0.0",
+            profiles=[
+                studio_pb2.ProfileInfo(
+                    name="isolated", ready=True, max_concurrency=2, queue_depth=1
+                )
+            ],
+            images=[
+                studio_pb2.ImageInfo(
+                    name="ml", languages=["python"], digest="sha256:x"
+                )
+            ],
+            isolated_startup_budget_ms=15000,
+        )
+    )
+    health = await client.health()
+    assert health.supports_isolated is True
+    assert health.images[0].digest == "sha256:x"
+    assert health.isolated_startup_budget_ms == 15000
+
+
+async def test_exec_sends_profile_and_image_and_reads_echo():
+    """请求带档位/镜像，响应回显实际档位。"""
+    client = StudioClient("studio:9000")
+    stub = _FakeStub(
+        response=studio_pb2.ExecResponse(
+            status=studio_pb2.EXEC_STATUS_COMPLETED,
+            exit_code=0,
+            profile=studio_pb2.EXEC_PROFILE_ISOLATED,
+            startup_ms=1200,
+            error_code="",
+        )
+    )
+    client._stub = stub  # noqa: SLF001
+    result = await client.exec_script(
+        skill="s",
+        script="scripts/a.py",
+        language="python",
+        content="print(1)",
+        profile="isolated",
+        image="ml",
+    )
+    request = stub.calls[0][1]
+    assert request.profile == studio_pb2.EXEC_PROFILE_ISOLATED
+    assert request.image == "ml"
+    assert result.profile == "isolated"
+    assert result.startup_ms == 1200
+
+
+async def test_exec_rejects_downgraded_profile():
+    """实际档位低于请求档位 → 拒绝结果，不把它当成功用。"""
+    client = StudioClient("studio:9000")
+    client._stub = _FakeStub(  # noqa: SLF001
+        response=studio_pb2.ExecResponse(
+            status=studio_pb2.EXEC_STATUS_COMPLETED,
+            exit_code=0,
+            profile=studio_pb2.EXEC_PROFILE_FAST,
+        )
+    )
+    with pytest.raises(StudioDowngradeError) as ei:
+        await client.exec_script(
+            skill="s",
+            script="scripts/a.py",
+            language="python",
+            content="x",
+            profile="isolated",
+        )
+    assert ei.value.code == "profile_downgraded"
+
+
+async def test_exec_rejects_old_studio_without_profile_echo():
+    """老 studio 不回显 → 实际档位未知，请求 isolated 时同样拒绝。"""
+    client = StudioClient("studio:9000")
+    client._stub = _FakeStub(  # noqa: SLF001
+        response=studio_pb2.ExecResponse(
+            status=studio_pb2.EXEC_STATUS_COMPLETED, exit_code=0
+        )
+    )
+    with pytest.raises(StudioDowngradeError):
+        await client.exec_script(
+            skill="s",
+            script="scripts/a.py",
+            language="python",
+            content="x",
+            profile="isolated",
+        )
+
+
+async def test_rpc_error_keeps_machine_readable_code():
+    """gRPC details 的 ``code:`` 前缀要变成 ``StudioError.code``。"""
+    client = StudioClient("studio:9000")
+    client._stub = _FakeStub(  # noqa: SLF001
+        error=_rpc_error(
+            grpc.StatusCode.FAILED_PRECONDITION,
+            "capability_missing: 本实例没有部署容器运行时",
+        )
+    )
+    with pytest.raises(StudioError) as ei:
+        await client.health()
+    assert ei.value.code == "capability_missing"

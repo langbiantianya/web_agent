@@ -36,13 +36,15 @@ class _FakeIsolatedRuntime:
     它**不是**容器：只是记住被调用了几次、跑了多久、并发峰值多少。
     """
 
-    def __init__(self, delay: float = 0.0) -> None:
-        """记下模拟的耗时。
+    def __init__(self, delay: float = 0.0, status: str = "completed") -> None:
+        """记下模拟的耗时与终态。
 
         Args:
             delay: 每次执行模拟的耗时（秒）。
+            status: 终态；``failed`` 用来验证失败结果不进去重缓存。
         """
         self.delay = delay
+        self.status = status
         self.calls: list[ExecSpec] = []
         self.max_active = 0
         self._active = 0
@@ -62,15 +64,17 @@ class _FakeIsolatedRuntime:
         try:
             if self.delay:
                 await asyncio.sleep(self.delay)
+            failed = self.status != "completed"
             return ExecOutcome(
-                status="completed",
-                exit_code=0,
-                stdout="isolated ok",
+                status=self.status,
+                exit_code=-1 if failed else 0,
+                stdout="" if failed else "isolated ok",
                 stderr="",
                 truncated=False,
                 duration_ms=1,
-                error="",
+                error="boom" if failed else "",
                 stdout_digest="deadbeef",
+                error_code="failed" if failed else "",
             )
         finally:
             self._active -= 1
@@ -333,5 +337,159 @@ async def test_profile_label_reflects_the_actual_profile():
             'studio_exec_total{status="completed",language="python",'
             'profile="fast"} 1' in text
         )
+    finally:
+        await server.stop(grace=1)
+
+
+# ------------------------------------------------------- 请求档位 / 回显 / 能力
+
+
+async def test_requested_isolated_is_honoured_and_echoed():
+    """请求 isolated → 真的走 isolated，并在响应里回显。"""
+    runtime = _FakeIsolatedRuntime()
+    service = StudioService(_config(), isolated_runtime=runtime)
+    stub, server = await _start(service)
+    try:
+        resp = await _exec(
+            stub,
+            skill="plain-skill",
+            profile=studio_pb2.EXEC_PROFILE_ISOLATED,
+            request_id="p1",
+        )
+        assert resp.status == studio_pb2.EXEC_STATUS_COMPLETED
+        assert resp.profile == studio_pb2.EXEC_PROFILE_ISOLATED
+        assert len(runtime.calls) == 1
+    finally:
+        await server.stop(grace=1)
+
+
+async def test_ops_list_can_upgrade_fast_to_isolated():
+    """运维列表是**升级**覆盖：请求 fast、命中列表 → 实际 isolated。"""
+    runtime = _FakeIsolatedRuntime()
+    service = StudioService(
+        _config(isolated_skill_codes=("iso-skill",)), isolated_runtime=runtime
+    )
+    stub, server = await _start(service)
+    try:
+        resp = await _exec(
+            stub,
+            skill="iso-skill",
+            profile=studio_pb2.EXEC_PROFILE_FAST,
+            request_id="p2",
+        )
+        assert resp.profile == studio_pb2.EXEC_PROFILE_ISOLATED
+        assert len(runtime.calls) == 1
+    finally:
+        await server.stop(grace=1)
+
+
+async def test_old_client_without_profile_uses_server_routing():
+    """老客户端不带 profile → 沿用旧路由（实例默认档）。"""
+    runtime = _FakeIsolatedRuntime()
+    service = StudioService(_config(profile="isolated"), isolated_runtime=runtime)
+    stub, server = await _start(service)
+    try:
+        resp = await _exec(stub, skill="any", request_id="p3")
+        assert resp.profile == studio_pb2.EXEC_PROFILE_ISOLATED
+    finally:
+        await server.stop(grace=1)
+
+
+async def test_requested_isolated_without_runtime_is_capability_missing():
+    """请求 isolated、但本实例没有运行时 → FAILED_PRECONDITION，不改走 fast。"""
+    service = StudioService(_config())
+    stub, server = await _start(service)
+    try:
+        with pytest.raises(grpc.aio.AioRpcError) as excinfo:
+            await _exec(
+                stub,
+                skill="plain-skill",
+                profile=studio_pb2.EXEC_PROFILE_ISOLATED,
+                request_id="p4",
+            )
+        assert excinfo.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+        assert "capability_missing" in excinfo.value.details()
+    finally:
+        await server.stop(grace=1)
+
+
+async def test_health_reports_profiles_and_images():
+    """Health 要按档位报能力，并列出镜像目录。"""
+    service = StudioService(
+        _config(
+            isolated_images=(("ml", "registry/x@sha256:abc"),),
+            isolated_startup_budget_ms=12345,
+        ),
+        isolated_runtime=_FakeIsolatedRuntime(),
+    )
+    stub, server = await _start(service)
+    try:
+        health = await stub.Health(studio_pb2.HealthRequest(), timeout=5)
+        profiles = {item.name: item for item in health.profiles}
+        assert profiles["fast"].ready is True
+        assert profiles["isolated"].ready is True
+        assert health.images[0].name == "ml"
+        assert health.images[0].digest == "sha256:abc"
+        assert health.isolated_startup_budget_ms == 12345
+    finally:
+        await server.stop(grace=1)
+
+
+async def test_queue_wait_respects_deadline():
+    """排队时间超过时限 → 直接 TIMEOUT，不无限等并发位。"""
+    runtime = _FakeIsolatedRuntime(delay=1.0)
+    service = StudioService(_config(), isolated_runtime=runtime)
+    stub, server = await _start(service)
+    try:
+        first = asyncio.create_task(
+            _exec(
+                stub,
+                skill="s",
+                request_id="q1",
+                timeout_ms=5000,
+                profile=studio_pb2.EXEC_PROFILE_ISOLATED,
+            )
+        )
+        await asyncio.sleep(0.1)
+        started = time.monotonic()
+        resp = await _exec(
+            stub,
+            skill="s",
+            request_id="q2",
+            timeout_ms=100,
+            profile=studio_pb2.EXEC_PROFILE_ISOLATED,
+        )
+        cost = time.monotonic() - started
+        assert resp.status == studio_pb2.EXEC_STATUS_TIMEOUT
+        assert "排队" in resp.error
+        assert cost < 0.9, f"排队没有按时限截断（{cost:.2f}s）"
+        await first
+    finally:
+        await server.stop(grace=1)
+
+
+async def test_failed_result_is_not_cached():
+    """失败结果不进去重窗口——瞬时故障重试不能被静默吞掉。"""
+    runtime = _FakeIsolatedRuntime(status="failed")
+    service = StudioService(_config(), isolated_runtime=runtime)
+    stub, server = await _start(service)
+    try:
+        first = await _exec(
+            stub,
+            skill="s",
+            request_id="same",
+            timeout_ms=5000,
+            profile=studio_pb2.EXEC_PROFILE_ISOLATED,
+        )
+        second = await _exec(
+            stub,
+            skill="s",
+            request_id="same",
+            timeout_ms=5000,
+            profile=studio_pb2.EXEC_PROFILE_ISOLATED,
+        )
+        assert first.status == studio_pb2.EXEC_STATUS_FAILED
+        assert second.status == studio_pb2.EXEC_STATUS_FAILED
+        assert len(runtime.calls) == 2
     finally:
         await server.stop(grace=1)

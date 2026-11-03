@@ -112,6 +112,22 @@ async def test_create_and_read(client):
     assert got.json()["body"] == "正文"
 
 
+async def test_create_rejects_bad_runtime_metadata(client):
+    """手工创建也要校验运行档声明，不能绕过导入那条路。"""
+    resp = await client.post(
+        "/api/skills",
+        json={
+            "code": "badrt",
+            "description": "d",
+            "body": "b",
+            "metadata": {"runtime-profile": "gpu"},
+        },
+        headers=ADMIN_HEADERS,
+    )
+    assert resp.status_code == 400, resp.text
+    assert "运行档" in resp.json()["message"]
+
+
 async def test_create_duplicate_code_conflicts(client):
     """code 唯一。"""
     payload = {"code": "dup", "description": "d", "body": "b"}

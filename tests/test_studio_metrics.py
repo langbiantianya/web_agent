@@ -232,8 +232,11 @@ async def test_exec_records_the_metrics(stub):
         'studio_exec_total{status="completed",language="python",profile="fast"} 1'
         in text
     )
-    assert 'studio_exec_duration_seconds_count{language="python"} 1' in text
-    assert 'studio_exec_queue_wait_seconds_count 1' in text
+    assert (
+        'studio_exec_duration_seconds_count{language="python",profile="fast"} 1'
+        in text
+    )
+    assert 'studio_exec_queue_wait_seconds_count{profile="fast"} 1' in text
     # 执行完了，在跑数必须回到 0。
     assert "studio_exec_active 0" in text
 

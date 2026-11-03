@@ -87,25 +87,30 @@ studio **没有技能的概念**。它收到的是「一段脚本正文 + 路径
 | `fast`（默认） | 容器内**独立进程组** + 独立临时工作目录 + 只读 rootfs | 几十~几百毫秒 | 纯计算：解析、转换、统计 |
 | `isolated` | 每次执行起一个**一次性容器** | 秒级 | 触碰第三方库、需要完整依赖树的脚本 |
 
-**`fast` 档已实现；`isolated` 档目前是「骨架」。** 骨架指的是：接口、独立队列、
-失败语义都在，**容器运行时没有部署**。
+**`fast` 档已实现；`isolated` 档目前是「骨架 + 契约」。** Phase 0 补了请求档位、
+响应回显、`Health` 按档位报能力、启动期审计；**一次性容器执行器仍未实现**。
 
-档位由**服务侧配置**决定（按 `skill` code 列表），不放在请求里——这样 proto 不必加字段，
-调用方也不用关心。将来若要按请求选档，需要给 `ExecRequest` 加 `profile` 字段，属于
-**破坏性兼容变更**（见 §14.2）。
+档位由**技能声明**（`metadata.runtime-profile`）算出来，随请求的 `profile` 带到服务端；
+服务端只能升、不能降，并在响应里回显**实际**档位。`STUDIO_ISOLATED_SKILL_CODES` 是
+运维的**升级覆盖**（只升不降），`STUDIO_PROFILE` 是实例默认档；老客户端不带 `profile`
+时沿用旧路由。版本门槛见 §14.3。
 
 **骨架的具体形态**（`services/studio/launcher.py`）：
 
 | 部件 | 状态 |
 | --- | --- |
 | `Launcher` 抽象（两个档位对外形状一致） | ✅ |
-| 路由（按 `STUDIO_ISOLATED_SKILL_CODES` 的技能码列表） | ✅ |
+| 路由（实例默认档 / 运维覆盖列表 / 请求档位，只升不降） | ✅ |
 | `isolated` 档**自己的**并发池与等待队列（§8.4） | ✅ |
-| 一次性容器执行器（`IsolatedRuntime` 接口） | ❌ **没实现** |
+| 请求档位 `ExecProfile` + 响应回显（Phase 0） | ✅ |
+| `Health` 按档位报能力（`profiles` / `images`，Phase 0） | ✅ |
+| 启动期版本下限 + 技能绑定审计（Phase 0） | ✅ |
+| 一次性容器执行器（`IsolatedRuntime` 接口） | ❌ **没实现**（Phase 1 Docker / Phase 2 K8s） |
 | 运行时缺失时的失败语义 | ✅ `FAILED_PRECONDITION` +「没有部署容器运行时」 |
 
-**为什么不实现容器执行器**：起容器要挂 Docker socket，等于把宿主 root 等价权限交给
-一个「跑模型指定的代码」的进程，与 §7 的「无宿主挂载」直接冲突。
+**为什么不让 studio 直接起容器**：起容器要挂 Docker socket 或给 K8s 凭据，而 studio
+里跑着模型指定的代码——这等于把宿主 root 等价权限交给脚本，与 §7 的「零凭据、无宿主
+挂载」直接冲突。正确的接法是加一个**只调度、不执行**的 dispatcher（Phase 1）。
 
 **绝不悄悄退回 `fast` 档**：悄悄退回是最坏的一种降级——调用方以为拿到的是强隔离，
 实际不是，而且**没有任何痕迹**。所以档位不可用时必须明确说出来（§12 的失败模式表
@@ -225,6 +230,13 @@ service Studio {
   rpc Health(HealthRequest) returns (HealthResponse);
 }
 
+// 执行档位。请求里带上它，服务端只能升、不能降；响应里回显**实际**档位。
+enum ExecProfile {
+  EXEC_PROFILE_UNSPECIFIED = 0;  // 老客户端：沿用服务端路由
+  EXEC_PROFILE_FAST = 1;         // 容器内独立进程组（默认）
+  EXEC_PROFILE_ISOLATED = 2;     // 每次执行起一次性沙箱
+}
+
 // 执行结果的状态。
 // **gRPC 层面成功 ≠ 脚本成功**：脚本自己 exit 1 是 COMPLETED + exit_code=1，
 // 业务失败要靠 status/exit_code 表达，不能用 gRPC status 报错——调用方要把
@@ -249,6 +261,8 @@ message ExecRequest {
   string run_id = 8;          // 关联一次 run（审计）
   string node_id = 9;         // 关联一个节点
   string request_id = 10;     // 追踪键；同键在去重窗口内不重复执行
+  ExecProfile profile = 11;   // 调用方请求的档位；服务端只能升、不能降
+  string image = 12;          // 镜像目录名（不是完整 ref）；空 = default
 }
 
 message ExecResponse {
@@ -260,6 +274,9 @@ message ExecResponse {
   int64 duration_ms = 6;
   string error = 7;            // 服务级错误说明（不是脚本的 stderr）
   string stdout_digest = 8;    // stdout 的 sha256，用于审计与去重
+  ExecProfile profile = 9;     // **实际**使用的档位，必须回显
+  int64 startup_ms = 10;       // 沙箱启动耗时（fast 为 0）
+  string error_code = 11;      // 稳定枚举字符串；见 docs/skill-service.md §5.1
 }
 
 message HealthRequest {}
@@ -269,7 +286,26 @@ message HealthResponse {
   string version = 2;
   repeated LanguageInfo language_info = 3;
   int32 max_concurrency = 4;
-  string profile = 5;          // 当前隔离档：fast | isolated
+  string profile = 5;          // 当前隔离档：fast | isolated（兼容字段）
+  repeated ProfileInfo profiles = 6;   // 按档位报能力
+  repeated ImageInfo images = 7;       // isolated 可用的镜像目录
+  int64 isolated_startup_budget_ms = 8;  // 沙箱启动预算（毫秒）
+}
+
+// 一个档位现在能不能用。`ready=false` 时 `detail` 说明原因。
+message ProfileInfo {
+  string name = 1;             // fast | isolated
+  bool ready = 2;
+  int32 max_concurrency = 3;
+  int32 queue_depth = 4;
+  string detail = 5;
+}
+
+// isolated 可用的镜像（目录名，不是完整 ref）。
+message ImageInfo {
+  string name = 1;             // 如 default / ml-py311
+  repeated string languages = 2;   // 该镜像能跑的运行时
+  string digest = 3;           // image@sha256:...
 }
 
 message LanguageInfo {
@@ -294,6 +330,11 @@ gRPC status 只用来表达**「studio 自己的问题」**，不用来表达脚
 **`ExecResponse.error` 与 gRPC status 的分工**：`error` 是**服务级**错误说明（服务内部出错、
 运行时缺失这类），`stderr` 是**脚本级**输出（脚本自己写的）。两者语义不同，模型看到的反应
 也不同（主设计 §22.8.3）。
+
+**`ExecResponse.error_code` 与 gRPC details 的约定**：响应级失败用 `error_code`
+（`timeout` / `limited` / `failed` / `sandbox_result_lost` …）；gRPC 级失败把 code 放在
+details 的稳定前缀里——`"<code>: <人话>"`（如 `"capability_missing: …"`）。调用方按
+code 分支，**不匹配整句人话**。
 
 ### 5.2 `request_id` 与去重
 
@@ -528,19 +569,21 @@ studio 容器里**看不到**任何业务文件：
 | 指标 | 类型 | 标签 | 说明 |
 | --- | --- | --- | --- |
 | `studio_exec_total` | counter | `status`, `language`, `profile` | 执行次数 |
-| `studio_exec_duration_seconds` | histogram | `language` | 端到端耗时 |
+| `studio_exec_duration_seconds` | histogram | `language`, `profile` | 端到端耗时 |
 | `studio_exec_active` | gauge | —— | 当前在跑的脚本数 |
-| `studio_exec_queue_wait_seconds` | histogram | —— | 排队时长 |
+| `studio_exec_queue_wait_seconds` | histogram | `profile` | 排队时长 |
 | `studio_exec_timeout_total` | counter | `language` | 超时次数 |
 | `studio_exec_output_truncated_total` | counter | `language` | 输出被截断次数 |
 | `studio_exec_failed_total` | counter | `reason` | 启动失败的原因分布 |
 | `studio_orphan_process_total` | counter | —— | 启动巡检发现的残留进程数 |
 
 `studio_exec_failed_total{reason}` 的 `reason` 取值：`runtime_missing` / `spawn_failed` /
-`invalid_request` / `unknown_language` / `isolated_unavailable`。
+`invalid_request` / `unknown_language` / `isolated_unavailable` / `capability_missing` /
+`image_unknown`。
 
-最后一个是「这个技能走 `isolated` 档，但本实例没有部署容器运行时」——它是一个**启动
-失败**，所以进这个指标；但它同时会以 `FAILED_PRECONDITION` 回给调用方（§2.4）。
+`isolated_unavailable` / `capability_missing` 是「这个技能走 `isolated` 档，但本实例
+没有部署容器运行时」——它是一个**启动失败**，所以进这个指标；同时会以
+`FAILED_PRECONDITION` 回给调用方（§2.4）。
 
 **落地**（`services/studio/metrics.py`）：`/metrics` 端点监听 `STUDIO_METRICS_PORT`
 （默认 `9090`，设成 `0` 就不启用），输出 **Prometheus 文本 exposition 格式**
@@ -562,7 +605,8 @@ counter / gauge / histogram 三种类型，自己写一百来行就够，HTTP �
  "node_id":"...","skill":"financial-report","script":"scripts/extract.py",
  "language":"python","status":"COMPLETED","exit_code":0,
  "duration_ms":143,"stdout_bytes":2048,"stderr_bytes":0,"truncated":false,
- "stdout_digest":"sha256:..."}
+ "stdout_digest":"sha256:...","profile":"fast","image":"",
+ "startup_ms":0,"error_code":""}
 ```
 
 **不要把 stdout / stderr 的内容写进日志**——脚本输出可能含敏感数据（主设计 §22.10 第 2
@@ -571,6 +615,10 @@ counter / gauge / histogram 三种类型，自己写一百来行就够，HTTP �
 **落地**（`services/studio/exec_log.py`）：logger 名 `services.studio.exec`，每次执行
 记**一行** JSON。`status` 用 proto 的枚举名（`COMPLETED` / `FAILED` / `TIMEOUT` /
 `LIMITED` / `CANCELLED`），`stdout_digest` 带 `sha256:` 前缀，其余字段与样本一一对应。
+
+`profile` 是**实际**档位，`image` 是镜像目录名（fast 为空），`startup_ms` 是沙箱启动
+耗时（fast 为 0），`error_code` 是机器可读的失败码。有它们，事后才能把一次执行与
+「哪个档、哪个镜像、启动花了多久」对上——而不是只看到 `status=FAILED`。
 
 **那一行是「纯 JSON」，不带普通日志的前缀**。这个 logger 有自己的 handler（格式
 `%(message)s`），而且 `propagate=False`——不然它会往根 logger 冒泡，被普通格式化器
@@ -713,6 +761,16 @@ cgroup 的 `oom_kill` 计数 +1。
 
 所以 `isolated` 档上线时必须**同时**要求 studio 版本 ≥ 某值，web_agent 在启动检查里卡住。
 
+**2.0.0 的落地方式**（Phase 0）：
+
+1. studio 版本升到 **2.0.0**，`Health` 按档位报能力（`profiles[].ready` / `images[]`）；
+2. web_agent 启动期检查 `STUDIO_EXEC_MIN_VERSION`；声明了 isolated 的技能另外要求
+   `>= 2.0.0` 且 `profiles[isolated].ready=true`（`app/core/skill_runtime.py` 的启动审计）；
+3. 执行期对账：`ExecResponse.profile` 必须回显**实际**档位，低于请求档位就直接拒绝结果
+   （`StudioDowngradeError`）。老 studio 不回显 → 视为未知，同样拒绝。
+
+三道闸的任何一道不通过都**不会**把 isolated 请求改走 fast；宁可这次执行失败。
+
 ---
 
 ## 15. 安全威胁模型
@@ -790,9 +848,10 @@ cgroup 的 `oom_kill` 计数 +1。
    个实例是可能的。
 10. **日志里没有脚本输出**。为了不落敏感数据，stdout/stderr 只进执行结果不进日志
     （§12.2）。事后排查只能靠 `stdout_digest`。
-11. **`isolated` 档的容器执行器未实现**（§2.4）。档位路由与独立队列已落地，运行时
-    缺失时明确报错——但强隔离本身**还没有**。需要强隔离的技能现在只能继续留在
-    `fast` 档，或者等运行时部署。
+11. **`isolated` 档的容器执行器未实现**（§2.4）。Phase 0 已补上契约与能力协商：
+    `ExecProfile`、`Health.profiles/images`、启动期版本与绑定审计、响应档位回显对账。
+    但**强隔离本身还没有**——运行时缺失时明确报错，不会悄悄退回 fast。需要强隔离的
+    技能现在只能继续留在 `fast` 档，或者等 Phase 1 的 Docker 沙箱后端。
 
 ---
 
@@ -808,14 +867,16 @@ cgroup 的 `oom_kill` 计数 +1。
 - [x] studio 服务：gRPC server + 并发闸门 + 队列 + 执行器；
       → `services/studio/server.py`、`services/studio/executor.py`
 - [ ] `isolated` 隔离档（每请求起一次性容器）；
-      → **骨架已落地**（`services/studio/launcher.py`）：`Launcher` 抽象、按技能码
-      列表的档位路由（`STUDIO_ISOLATED_SKILL_CODES`）、`isolated` 档自己的并发池与
-      等待队列（§8.4）、运行时缺失时明确的 `FAILED_PRECONDITION`（**不悄悄退回
-      fast 档**）。**没做的是容器执行器本身**——起容器要挂 Docker socket，与 §7
-      的「无宿主挂载」直接冲突；接缝留在 `IsolatedRuntime` 接口上。
-      → `tests/test_studio_isolated.py`（9 条：路由、两个池互不阻塞、失败语义、
-      profile 标签）。
-      **未在真容器里验过**——本地测试全过，真容器那一次没跑成（远端机器不可达）。
+      → **骨架 + Phase 0 契约已落地**（`services/studio/launcher.py`）：`Launcher` 抽象、
+      档位路由（实例默认 / 运维列表 / 请求档位，**只升不降**）、`isolated` 档自己的并发池与
+      等待队列（§8.4）、运行时缺失时明确的 `FAILED_PRECONDITION`（**不悄悄退回 fast 档**）。
+      Phase 0 另补：`ExecProfile` 请求/回显、`Health.profiles/images`、启动期版本与绑定审计、
+      响应档位对账。**没做的是容器执行器本身**——起容器要挂 Docker socket，与 §7 的
+      「无宿主挂载」直接冲突；接缝留在 `IsolatedRuntime` 接口上，Phase 1 由独立 dispatcher
+      接（见 `docs/superpowers/plans/2026-11-03-isolated-exec.md`）。
+      → `tests/test_studio_isolated.py`（16 条：路由、两个池互不阻塞、失败语义、
+      profile 标签、请求档位/回显、能力缺失、队列 deadline、失败不缓存）。
+      **未在真容器里验过**——Phase 1 的 Docker 后端落地后再补。
 - [x] 进程隔离：新 session、独立 cwd、env 白名单、`killpg` + `wait` 回收；
       → `services/studio/executor.py`（`start_new_session` / `CREATE_NEW_PROCESS_GROUP`）
 - [x] 超时：墙钟定时器 + `RLIMIT_CPU` 双保险；

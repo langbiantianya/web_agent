@@ -89,6 +89,10 @@ def build_exec_log(
     stderr_bytes: int,
     truncated: bool,
     stdout_digest: str,
+    profile: str = "",
+    image: str = "",
+    startup_ms: int = 0,
+    error_code: str = "",
     level: str = "info",
     ts: str | None = None,
 ) -> str:
@@ -108,6 +112,10 @@ def build_exec_log(
         stderr_bytes: stderr 字节数——**不记内容**。
         truncated: 输出是否被截断。
         stdout_digest: stdout 的 sha256 摘要。
+        profile: 实际档位（``fast`` / ``isolated``）。
+        image: 镜像目录名（isolated 才有意义）。
+        startup_ms: 沙箱启动耗时（fast 为 0）。
+        error_code: 机器可读的失败码。
         level: 日志级别。
         ts: 时间戳（ISO 8601）；不给就用当前时间。
 
@@ -131,6 +139,10 @@ def build_exec_log(
         "stderr_bytes": stderr_bytes,
         "truncated": truncated,
         "stdout_digest": _digest_with_algorithm(stdout_digest),
+        "profile": profile,
+        "image": image,
+        "startup_ms": startup_ms,
+        "error_code": error_code,
     }
     return json.dumps(payload, ensure_ascii=False)
 

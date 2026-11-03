@@ -137,6 +137,8 @@ async def lifespan(app: FastAPI):
         except StudioStartupError as exc:
             logger.error("studio 不可用：%s", exc)
             raise
+        if studio_enabled:
+            await _audit_skill_runtime()
         set_optional_tools_enabled(studio_enabled)
     except BaseException:
         # 启动失败：把已经建立的资源回滚掉，别让它们悬到进程退出
@@ -148,6 +150,40 @@ async def lifespan(app: FastAPI):
     logger.info("正在关闭…")
     await _close_resources()
     logger.info("已关闭")
+
+
+async def _audit_skill_runtime() -> None:
+    """启动期对账：被 Agent 绑定的技能，在本部署能不能执行。
+
+    为什么不在 ``init_studio`` 里做：它不碰数据库，只负责 studio 侧（版本、
+    ``ready``、能力）。技能侧要查库，放在这里、等数据库可用之后。
+
+    **数据库暂时不可用不阻塞启动**（与 ``recover_stale_runs`` 同口径）；
+    但如果数据库是好的、只是技能配置错了，那就必须启动失败——配置错了应该在
+    部署时暴露，而不是等模型第一次调用。
+
+    Raises:
+        StudioStartupError: 有技能声明 isolated，但本部署跑不了，且
+            ``studio_exec_required`` 为真。
+    """
+    from app.config.db import SessionLocal
+    from app.core.skill_runtime import audit_skill_runtime_bindings
+    from app.core.studio import get_studio_client
+
+    client = get_studio_client()
+    if client is None or client.health_info is None:
+        return
+    try:
+        async with SessionLocal() as db:
+            await audit_skill_runtime_bindings(
+                db,
+                client.health_info,
+                required=settings.studio_exec_required,
+            )
+    except StudioStartupError:
+        raise
+    except Exception:  # pragma: no cover - 数据库暂时不可用时不阻塞启动
+        logger.exception("启动期技能运行档审计失败（数据库可能尚未就绪）")
 
 
 async def _close_resources() -> None:

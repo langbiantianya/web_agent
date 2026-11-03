@@ -59,17 +59,63 @@ _STATUS_TO_PROTO = {
     STATUS_CANCELLED: studio_pb2.EXEC_STATUS_CANCELLED,
 }
 
-_SUPPORTED_LANGUAGES = ("python", "bash", "node")
-
-# 档位名（§2.4）。
+# 档位名（§2.4）。请求用 proto 枚举，响应回显实际档位。
 PROFILE_FAST = "fast"
 PROFILE_ISOLATED = "isolated"
+
+_PROFILE_TO_PROTO = {
+    PROFILE_FAST: studio_pb2.EXEC_PROFILE_FAST,
+    PROFILE_ISOLATED: studio_pb2.EXEC_PROFILE_ISOLATED,
+}
+
+_PROTO_TO_PROFILE = {
+    studio_pb2.EXEC_PROFILE_FAST: PROFILE_FAST,
+    studio_pb2.EXEC_PROFILE_ISOLATED: PROFILE_ISOLATED,
+}
 
 # 请求非法 / 运行时不支持——``studio_exec_failed_total`` 的 reason 取值
 # （skill-service §12.1）。执行器那边的三个在 :mod:`services.studio.executor`。
 FAILURE_INVALID_REQUEST = "invalid_request"
 FAILURE_UNKNOWN_LANGUAGE = "unknown_language"
 FAILURE_ISOLATED_UNAVAILABLE = "isolated_unavailable"
+FAILURE_CAPABILITY_MISSING = "capability_missing"
+FAILURE_IMAGE_UNKNOWN = "image_unknown"
+
+
+def _requested_profile(value: int) -> str:
+    """proto 枚举 → 我们的档位名；``UNSPECIFIED`` 返回空串（沿用服务端路由）。"""
+    return _PROTO_TO_PROFILE.get(int(value), "")
+
+
+def _default_error_code(status: str) -> str:
+    """按终态给一个机器可读的默认错误码（执行器没给时用）。"""
+    return {
+        STATUS_FAILED: "failed",
+        STATUS_TIMEOUT: "timeout",
+        STATUS_LIMITED: "limited",
+        STATUS_CANCELLED: "cancelled",
+    }.get(status, "")
+
+
+def _image_digest(ref: str) -> str:
+    """从 ``image@sha256:...`` 里取出 digest（没有就返回空串）。"""
+    _, sep, digest = ref.partition("@")
+    return digest if sep else ""
+
+
+def _timeout_outcome(error: str) -> ExecOutcome:
+    """造一个「排队就耗尽了时限」的结果。"""
+    return ExecOutcome(
+        status=STATUS_TIMEOUT,
+        exit_code=-1,
+        stdout="",
+        stderr="",
+        truncated=False,
+        duration_ms=0,
+        error=error,
+        stdout_digest="",
+        error_code="timeout",
+    )
 
 
 class QueueFullError(Exception):
@@ -118,6 +164,11 @@ class _ExecutionPool:
     def release(self) -> None:
         """把并发位还回去。"""
         self._semaphore.release()
+
+    @property
+    def waiting(self) -> int:
+        """当前在队列里等并发位的请求数（只读，供 Health 上报）。"""
+        return self._waiting
 
 
 class StudioService(studio_pb2_grpc.StudioServicer):
@@ -190,20 +241,36 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             self.metrics.failed_total.inc(reason=FAILURE_INVALID_REQUEST)
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, problem)
 
-        if request.language not in _SUPPORTED_LANGUAGES:
+        # 语言校验必须对着**本实例配置的**运行时清单，而不是一个常量：镜像里
+        # 没装 node 时，请求应该在配置期/入口就被拒，而不是「启动失败」。
+        if request.language not in self.config.languages:
             self.metrics.failed_total.inc(reason=FAILURE_UNKNOWN_LANGUAGE)
             await context.abort(
                 grpc.StatusCode.FAILED_PRECONDITION,
-                f"本实例不支持 {request.language} 运行时"
+                f"unknown_language: 本实例不支持 {request.language} 运行时"
                 f"（支持：{'、'.join(self.config.languages)}）",
             )
+
+        # 请求档位 → 实际档位。规则是**只能升、不能降**：请求 isolated 就绝不
+        # 改走 fast；运维列表命中时可以把 fast 升级成 isolated。
+        requested = _requested_profile(request.profile)
+        profile = self._resolve_profile(request.skill, requested)
+
+        # 镜像名必须在目录里。目录是服务端配置，调用方只能按名字请求——永远
+        # 不能自己指定完整 ref。
+        if profile == PROFILE_ISOLATED and request.image:
+            if self.config.image_ref(request.image) is None:
+                self.metrics.failed_total.inc(reason=FAILURE_IMAGE_UNKNOWN)
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    f"image_unknown: 本实例没有登记镜像「{request.image}」",
+                )
 
         cached = self._lookup_dedup(request.request_id)
         if cached is not None:
             logger.info("命中去重窗口，直接返回上次的结果：%s", request.request_id)
             return cached
 
-        profile = self._profile_for(request.skill)
         launcher = (
             self._isolated_launcher
             if profile == PROFILE_ISOLATED
@@ -220,37 +287,50 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             self.metrics.failed_total.inc(reason=FAILURE_ISOLATED_UNAVAILABLE)
             await context.abort(
                 grpc.StatusCode.FAILED_PRECONDITION,
-                f"技能「{request.skill}」走 {PROFILE_ISOLATED} 档"
+                f"capability_missing: 技能「{request.skill}」走 {PROFILE_ISOLATED} 档"
                 "（每次执行起一次性容器），但本实例没有部署容器运行时，"
                 "无法执行。",
             )
 
+        # 排队时间计入时限（§8.1）：排队本身也要有上限，否则一个超过时限的
+        # 请求还会占着队列位，最后只换来一个「排队耗尽」的 TIMEOUT。
         queue_started = time.monotonic()
-        try:
-            await pool.acquire()
-        except QueueFullError:
-            await context.abort(
-                grpc.StatusCode.RESOURCE_EXHAUSTED,
-                f"等待队列已满（{pool.max_queue}），请退避重试",
-            )
-        # 排队时长：从「发出」算到「拿到并发位」（§8.1）。
-        self.metrics.queue_wait.observe(time.monotonic() - queue_started)
-        self.metrics.exec_active.inc()
+        wait_budget = deadline - queue_started
+        outcome: ExecOutcome | None = None
+        if wait_budget <= 0:
+            outcome = _timeout_outcome("排队时间已耗尽执行时限")
+        else:
+            try:
+                await asyncio.wait_for(pool.acquire(), timeout=wait_budget)
+            except asyncio.TimeoutError:
+                outcome = _timeout_outcome(
+                    f"排队时间超过执行时限（{request.timeout_ms} 毫秒）"
+                )
+            except QueueFullError:
+                await context.abort(
+                    grpc.StatusCode.RESOURCE_EXHAUSTED,
+                    f"sandbox_capacity: 等待队列已满（{pool.max_queue}），请退避重试",
+                )
+        self.metrics.queue_wait.observe(
+            time.monotonic() - queue_started, profile=profile
+        )
 
+        if outcome is not None:
+            # 没拿到并发位：不 release，也不占 exec_active。
+            self._record_metrics(
+                request, outcome, time.monotonic() - queue_started, profile
+            )
+            response = self._to_response(outcome, profile)
+            if outcome.status in (STATUS_COMPLETED, STATUS_TIMEOUT):
+                self._store_dedup(request.request_id, response)
+            return response
+
+        self.metrics.exec_active.inc()
         started = time.monotonic()
         try:
             remaining_ms = int(max(0.0, deadline - time.monotonic()) * 1000)
             if remaining_ms <= 0:
-                outcome = ExecOutcome(
-                    status=STATUS_TIMEOUT,
-                    exit_code=-1,
-                    stdout="",
-                    stderr="",
-                    truncated=False,
-                    duration_ms=0,
-                    error="排队时间已耗尽执行时限",
-                    stdout_digest="",
-                )
+                outcome = _timeout_outcome("排队时间已耗尽执行时限")
             else:
                 outcome = await launcher.run(
                     ExecSpec(
@@ -261,12 +341,16 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                         argv=tuple(request.argv),
                         stdin=request.stdin,
                         timeout_ms=remaining_ms,
+                        image=request.image,
                     )
                 )
         except LauncherUnavailableError as exc:
             # 档位不可用：转成 FAILED_PRECONDITION（§10.2 同一类问题）。
-            self.metrics.failed_total.inc(reason=FAILURE_ISOLATED_UNAVAILABLE)
-            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+            self.metrics.failed_total.inc(reason=FAILURE_CAPABILITY_MISSING)
+            await context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"capability_missing: {exc}",
+            )
         except asyncio.CancelledError:
             # 调用方取消（§8.3）。gRPC 的取消不传播到对端的进程组，所以 studio
             # 侧的自设时限是**兜底**，不是可选项。
@@ -276,12 +360,16 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             self.metrics.exec_active.dec()
 
         self._record_metrics(request, outcome, time.monotonic() - started, profile)
-        response = self._to_response(outcome)
-        self._store_dedup(request.request_id, response)
+        response = self._to_response(outcome, profile)
+        # 只缓存「有结论」的结果：瞬时故障（调度失败、拉镜像失败）不该被缓存
+        # 60 秒，否则重试会被静默吞掉。
+        if outcome.status in (STATUS_COMPLETED, STATUS_TIMEOUT):
+            self._store_dedup(request.request_id, response)
         logger.info(
-            "执行完成：skill=%s script=%s status=%s exit=%s 用时 %sms",
+            "执行完成：skill=%s script=%s profile=%s status=%s exit=%s 用时 %sms",
             request.skill,
             request.script,
+            profile,
             outcome.status,
             outcome.exit_code,
             outcome.duration_ms,
@@ -295,6 +383,9 @@ class StudioService(studio_pb2_grpc.StudioServicer):
 
         必须**便宜**：不跑脚本、不读文件（§13.3 的探针要求）。
 
+        除了原来的单值字段，这里按**档位**报能力：调用方要在启动期/配置期
+        判断「这个实例能不能跑我的 isolated 技能」，单值 ``profile`` 不够用。
+
         Args:
             request: ``HealthRequest``。
             context: gRPC 上下文。
@@ -302,33 +393,75 @@ class StudioService(studio_pb2_grpc.StudioServicer):
         Returns:
             ``HealthResponse``。
         """
+        fast_ready = self._ready
+        isolated_ready = self._ready and self._isolated_launcher.available
+        # 实例默认档不可用 = 整体不可用；非默认档不可用只降级那个档。
+        default_ready = (
+            isolated_ready if self.config.profile == PROFILE_ISOLATED else fast_ready
+        )
+        if not self._ready:
+            isolated_detail = "正在停机"
+        elif not self._isolated_launcher.available:
+            isolated_detail = "未部署沙箱运行时（isolated 档不可用）"
+        else:
+            isolated_detail = ""
         return studio_pb2.HealthResponse(
-            ready=self._ready,
+            ready=default_ready,
             version=self.config.version,
             language_info=[
                 studio_pb2.LanguageInfo(name=name) for name in self.config.languages
             ],
             max_concurrency=self.config.max_concurrency,
             profile=self.config.profile,
+            profiles=[
+                studio_pb2.ProfileInfo(
+                    name=PROFILE_FAST,
+                    ready=fast_ready,
+                    max_concurrency=self.config.max_concurrency,
+                    queue_depth=self._fast_pool.waiting,
+                    detail="" if fast_ready else "正在停机",
+                ),
+                studio_pb2.ProfileInfo(
+                    name=PROFILE_ISOLATED,
+                    ready=isolated_ready,
+                    max_concurrency=self.config.isolated_max_concurrency,
+                    queue_depth=self._isolated_pool.waiting,
+                    detail=isolated_detail,
+                ),
+            ],
+            images=[
+                studio_pb2.ImageInfo(
+                    name=name,
+                    # Phase 0 只有一份语言矩阵；Phase 1 起按镜像分别配置。
+                    languages=list(self.config.languages),
+                    digest=_image_digest(ref),
+                )
+                for name, ref in self.config.isolated_images
+            ],
+            isolated_startup_budget_ms=self.config.isolated_startup_budget_ms,
         )
 
     # ------------------------------------------------------------- 内部
 
-    def _profile_for(self, skill: str) -> str:
-        """这个技能走哪个档位（§2.4）。
+    def _resolve_profile(self, skill: str, requested: str) -> str:
+        """请求档位 → 实际档位（§2.4、§14.3）。
 
-        档位由**服务侧配置**决定，不放在请求里——所以 proto 不必加字段、调用方
-        也不用关心（§2.4）。规则两条：
+        规则是**只能升、不能降**：
 
-        1. 实例默认档是 ``isolated`` → 全部技能都走 isolated；
-        2. 否则，命中 ``isolated_skill_codes`` 的技能走 isolated，其余走 fast。
+        1. 请求 ``isolated`` → 一定走 isolated（能力不够就拒绝，绝不改走 fast）；
+        2. 实例默认档是 ``isolated`` → 全部走 isolated；
+        3. 否则命中 ``isolated_skill_codes`` 的技能**升级**为 isolated；
+        4. 其余走 fast。
 
         Args:
             skill: 技能 code。
+            requested: 请求档位名；空串表示老客户端没带。
 
         Returns:
             ``fast`` 或 ``isolated``。
         """
+        if requested == PROFILE_ISOLATED:
+            return PROFILE_ISOLATED
         if self.config.profile == PROFILE_ISOLATED:
             return PROFILE_ISOLATED
         if skill in self.config.isolated_skill_codes:
@@ -355,7 +488,9 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             language=language,
             profile=profile,
         )
-        self.metrics.exec_duration.observe(elapsed, language=language)
+        self.metrics.exec_duration.observe(
+            elapsed, language=language, profile=profile
+        )
         if outcome.status == STATUS_TIMEOUT:
             self.metrics.timeout_total.inc(language=language)
         if outcome.truncated:
@@ -376,6 +511,10 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             stderr_bytes=outcome.stderr_bytes,
             truncated=outcome.truncated,
             stdout_digest=outcome.stdout_digest,
+            profile=profile,
+            image=request.image,
+            startup_ms=outcome.startup_ms,
+            error_code=outcome.error_code or _default_error_code(outcome.status),
         )
 
     def _validate(self, request) -> str | None:
@@ -398,13 +537,18 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                 return f"argv 单项超过 {self.config.max_argv_item_chars} 字符上限"
         if len(request.stdin) > self.config.max_stdin_chars:
             return f"stdin 超过 {self.config.max_stdin_chars} 字符上限"
+        if len(request.image) > 64:
+            return "image 超过 64 字符上限"
         return None
 
-    def _to_response(self, outcome: ExecOutcome) -> studio_pb2.ExecResponse:
+    def _to_response(
+        self, outcome: ExecOutcome, profile: str
+    ) -> studio_pb2.ExecResponse:
         """把执行结果转成 proto 响应。
 
         Args:
             outcome: 执行结果。
+            profile: **实际**使用的档位——必须回显，供调用方对账防降级。
 
         Returns:
             ``ExecResponse``。
@@ -418,6 +562,11 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             duration_ms=outcome.duration_ms,
             error=outcome.error,
             stdout_digest=outcome.stdout_digest,
+            profile=_PROFILE_TO_PROTO.get(
+                profile, studio_pb2.EXEC_PROFILE_UNSPECIFIED
+            ),
+            startup_ms=outcome.startup_ms,
+            error_code=outcome.error_code or _default_error_code(outcome.status),
         )
 
     def _lookup_dedup(self, request_id: str) -> studio_pb2.ExecResponse | None:

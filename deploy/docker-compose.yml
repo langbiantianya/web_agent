@@ -22,7 +22,7 @@ services:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
         # 国内构建时换成镜像源：mirrors.aliyun.com
         APT_MIRROR: ${APT_MIRROR:-}
-    image: webagent/studio:1.0.0
+    image: webagent/studio:2.0.0
     container_name: webagent-studio
     ports:
       - "9000:9000"
@@ -33,7 +33,7 @@ services:
       STUDIO_MAX_QUEUE: "16"
       STUDIO_MAX_TIMEOUT_MS: "60000"
       STUDIO_PROFILE: "fast"
-      STUDIO_VERSION: "1.0.0"
+      STUDIO_VERSION: "2.0.0"
     # 脚本的工作目录。给它一个独立卷，免得写满开发机的磁盘。
     tmpfs:
       - /tmp:size=128m

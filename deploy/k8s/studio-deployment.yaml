@@ -52,7 +52,7 @@ spec:
         - name: studio
           # 镜像版本固定。**生产里应当再钉到 digest**（`image@sha256:...`）——
           # 只钉 tag 的话，tag 被重新推送就等于换了镜像。
-          image: registry.example.com/webagent/studio:1.0.0
+          image: registry.example.com/webagent/studio:2.0.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: grpc
@@ -95,6 +95,15 @@ spec:
               value: "2"
             - name: STUDIO_ISOLATED_MAX_QUEUE
               value: "4"
+            # 沙箱调度器的地址（skill-service §2.4 / D1）。空 = 本实例没有
+            # isolated 运行时；配了技能码却没配它会在启动时失败（fail fast）。
+            - name: STUDIO_ISOLATED_DISPATCHER_ADDR
+              value: ""
+            # 镜像目录：`目录名=image@sha256:...`。调用方只能按目录名请求。
+            - name: STUDIO_ISOLATED_IMAGES
+              value: ""
+            - name: STUDIO_ISOLATED_STARTUP_BUDGET_MS
+              value: "15000"
             # 脚本进程的 oom_score_adj（skill-service §13.2）：调到 1000，
             # 容器内存被打爆时被 OOM killer 挑中的是**脚本**而不是 studio 自己。
             - name: STUDIO_OOM_SCORE_ADJ
@@ -102,7 +111,7 @@ spec:
             - name: STUDIO_PROFILE
               value: "fast"
             - name: STUDIO_VERSION
-              value: "1.0.0"
+              value: "2.0.0"
             - name: TMPDIR
               value: "/tmp"
           resources:

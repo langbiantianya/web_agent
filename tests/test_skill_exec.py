@@ -24,7 +24,13 @@ from app.core.skill_exec import (
     validate_argv,
     validate_script_path,
 )
-from app.core.studio import ExecResult, StudioHealth, StudioUnavailableError
+from app.core.studio import (
+    ExecResult,
+    StudioHealth,
+    StudioImage,
+    StudioProfile,
+    StudioUnavailableError,
+)
 from app.repo.skill_repo import skill_repo
 
 _counter = itertools.count()
@@ -38,11 +44,24 @@ class _FakeStudio:
         result: ExecResult | None = None,
         error: Exception | None = None,
         languages: tuple[str, ...] = ("python", "bash", "node"),
+        version: str = "1.0.0",
+        isolated_ready: bool | None = None,
+        images: tuple[StudioImage, ...] = (),
     ) -> None:
         """记住要返回什么。"""
         self.result = result or ExecResult("completed", 0, "", "", False, 5, "", "d")
         self.error = error
-        self.health_info = StudioHealth(True, "1.0.0", languages, 4, "fast")
+        profiles = (
+            ()
+            if isolated_ready is None
+            else (
+                StudioProfile("fast", ready=True),
+                StudioProfile("isolated", ready=isolated_ready),
+            )
+        )
+        self.health_info = StudioHealth(
+            True, version, languages, 4, "fast", profiles=profiles, images=images
+        )
         self.calls: list[dict] = []
 
     async def exec_script(self, **kwargs):
@@ -53,11 +72,17 @@ class _FakeStudio:
         return self.result
 
 
-async def _make_skill(db, script: str = "print('hi')"):
+async def _make_skill(db, script: str = "print('hi')", **metadata):
     """建一个带脚本的技能。"""
     code = f"exec_{next(_counter)}"
     sk = await skill_repo.create(
-        db, code=code, name=code, description="d", body="b", content_hash="h"
+        db,
+        code=code,
+        name=code,
+        description="d",
+        body="b",
+        content_hash="h",
+        metadata_=metadata or None,
     )
     await skill_repo.put_resource(
         db, sk.id, "scripts/run.py", script.encode(), "text/x-python", 1
@@ -379,6 +404,90 @@ async def test_exec_rejects_language_studio_does_not_support(db, fake_studio):
     assert ok is False
     assert "bash" in text
     assert studio.calls == []
+
+
+async def test_exec_uses_skill_runtime_declaration(db, fake_studio):
+    """技能声明 isolated + 镜像 + 时限 → 请求里带上它们。"""
+    studio = fake_studio(
+        _FakeStudio(
+            result=ExecResult(
+                "completed",
+                0,
+                "ok",
+                "",
+                False,
+                5,
+                "",
+                "d",
+                profile="isolated",
+                startup_ms=1200,
+            ),
+            version="2.0.0",
+            isolated_ready=True,
+            images=(StudioImage("ml", ("python",), "sha256:x"),),
+        )
+    )
+    sk = await _make_skill(
+        db,
+        **{
+            "runtime-profile": "isolated",
+            "runtime-image": "ml",
+            "runtime-timeout-ms": "1234",
+        },
+    )
+    ok, text = await exec_skill_script(
+        db, skill=sk.code, script="scripts/run.py", allowed_codes={sk.code}
+    )
+    assert ok is True
+    call = studio.calls[0]
+    assert call["profile"] == "isolated"
+    assert call["image"] == "ml"
+    assert call["timeout_ms"] == 1234
+    assert "profile: isolated" in text
+    assert "startup_ms: 1200" in text
+
+
+async def test_exec_rejects_isolated_when_runtime_missing(db, fake_studio):
+    """声明 isolated 但 studio 没有沙箱运行时 → 明确拒绝，不发请求。"""
+    studio = fake_studio(_FakeStudio(version="2.0.0", isolated_ready=False))
+    sk = await _make_skill(db, **{"runtime-profile": "isolated"})
+    ok, text = await exec_skill_script(
+        db, skill=sk.code, script="scripts/run.py", allowed_codes={sk.code}
+    )
+    assert ok is False
+    assert "强隔离" in text
+    assert studio.calls == []
+
+
+async def test_exec_rejects_old_studio_without_profiles(db, fake_studio):
+    """老 studio 没有 profiles → 不能把 isolated 当 fast 跑。"""
+    studio = fake_studio(_FakeStudio(version="1.0.0"))
+    sk = await _make_skill(db, **{"runtime-profile": "isolated"})
+    ok, text = await exec_skill_script(
+        db, skill=sk.code, script="scripts/run.py", allowed_codes={sk.code}
+    )
+    assert ok is False
+    assert "强隔离" in text
+    assert studio.calls == []
+
+
+async def test_exec_rejects_downgraded_result(db, fake_studio):
+    """studio 回显 fast、请求是 isolated → 拒绝结果，不当成功用。"""
+    fake_studio(
+        _FakeStudio(
+            result=ExecResult(
+                "completed", 0, "ok", "", False, 5, "", "d", profile="fast"
+            ),
+            version="2.0.0",
+            isolated_ready=True,
+        )
+    )
+    sk = await _make_skill(db, **{"runtime-profile": "isolated"})
+    ok, text = await exec_skill_script(
+        db, skill=sk.code, script="scripts/run.py", allowed_codes={sk.code}
+    )
+    assert ok is False
+    assert "已拒绝" in text
 
 
 # --------------------------------------------------------------- 工具注册

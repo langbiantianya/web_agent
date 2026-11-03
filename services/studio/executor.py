@@ -120,6 +120,9 @@ class ExecOutcome:
         stderr_bytes: stderr 的**字节数**。
         failure_reason: 启动失败的原因分类（``runtime_missing`` /
             ``spawn_failed`` / ``unknown_language``）；没失败是空串。
+        startup_ms: 沙箱启动耗时（毫秒）；fast 档恒为 0。
+        error_code: 机器可读的失败码（``timeout`` / ``limited`` / ...），
+            没有失败是空串。调用方按它分支，不靠匹配人话。
     """
 
     status: str
@@ -133,6 +136,8 @@ class ExecOutcome:
     stdout_bytes: int = 0
     stderr_bytes: int = 0
     failure_reason: str = ""
+    startup_ms: int = 0
+    error_code: str = ""
 
 
 def _build_env(cwd: str) -> dict[str, str]:

@@ -455,11 +455,11 @@ def build_metrics() -> StudioMetrics:
         exec_duration=registry.histogram(
             "studio_exec_duration_seconds",
             "端到端耗时（秒）",
-            ("language",),
+            ("language", "profile"),
         ),
         exec_active=registry.gauge("studio_exec_active", "当前在跑的脚本数"),
         queue_wait=registry.histogram(
-            "studio_exec_queue_wait_seconds", "排队时长（秒）"
+            "studio_exec_queue_wait_seconds", "排队时长（秒）", ("profile",)
         ),
         timeout_total=registry.counter(
             "studio_exec_timeout_total", "超时次数", ("language",)

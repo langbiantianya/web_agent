@@ -40,6 +40,7 @@ from app.core.skill_pack import (
     render_skill_md,
 )
 from app.core.skill_paths import SkillPathError, validate_resource_path
+from app.core.skill_runtime import SkillRuntimeError, parse_skill_runtime
 from app.repo.skill_repo import skill_repo
 from app.schemas.skill import (
     SkillCreate,
@@ -61,6 +62,24 @@ router = APIRouter(prefix="/api/skills", tags=["skills"])
 def _sha256(data: bytes) -> str:
     """内容的 sha256（十六进制）。"""
     return hashlib.sha256(data).hexdigest()
+
+
+def _validate_runtime_metadata(metadata: dict | None) -> None:
+    """手工创建/更新技能时，运行档声明也要在写路径上校验。
+
+    导入路径已经由 :func:`app.core.skill_pack.parse_skill_md` 校验；这里是
+    另一条写路径（表单 / API），不能让它绕过。
+
+    Args:
+        metadata: 技能的 metadata。
+
+    Raises:
+        BadRequestError: 运行档声明不合法。
+    """
+    try:
+        parse_skill_runtime(metadata)
+    except SkillRuntimeError as exc:
+        raise BadRequestError(f"运行档声明不合法：{exc}") from exc
 
 
 def _to_out(skill, used_by: list[str] | None = None) -> SkillOut:
@@ -322,6 +341,7 @@ async def create_skill(payload: SkillCreate, db: DbSession, author: AdminDep) ->
             f"name 必须与 code 一致（规范要求 name 等于目录名）："
             f"code={payload.code}，name={payload.name}"
         )
+    _validate_runtime_metadata(payload.metadata)
     skill = await skill_repo.create(
         db,
         code=payload.code,
@@ -354,6 +374,8 @@ async def update_skill(
     # 「不传」与「清空」是两件事。
     if "metadata" in fields and fields["metadata"] is None:
         fields["metadata"] = {}
+    if "metadata" in fields:
+        _validate_runtime_metadata(fields["metadata"])
     if "enabled" in fields and fields["enabled"] is not None:
         fields["enabled"] = 1 if fields["enabled"] else 0
     if "body" in fields:

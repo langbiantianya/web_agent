@@ -29,12 +29,23 @@ studio **没有技能的概念**——它收到的是「一段脚本正文 + 一
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import settings
 from app.core.skill_paths import SkillPathError, validate_resource_path
-from app.core.studio import ExecResult, StudioError, get_studio_client
+from app.core.skill_runtime import (
+    REQUIRED_ISOLATED_STUDIO_VERSION,
+    SkillRuntimeError,
+    runtime_from_skill,
+)
+from app.core.studio import (
+    ExecResult,
+    StudioError,
+    get_studio_client,
+    version_at_least,
+)
 from app.core.studio_context import current_exec_context, make_request_id
 
 logger = logging.getLogger(__name__)
@@ -147,10 +158,13 @@ def validate_argv(argv: list[str] | None) -> list[str]:
     return out
 
 
-async def read_script(
+async def _load_script(
     db: AsyncSession, code: str, path: str, max_chars: int
-) -> str:
-    """从数据库里读出脚本正文。
+) -> tuple[str, Any]:
+    """从数据库里读出脚本正文与技能行。
+
+    返回技能行是为了顺带拿到它的运行档声明（``metadata`` 里的
+    ``runtime-profile`` / ``runtime-image``），不必再查一次库。
 
     Args:
         db: 数据库会话。
@@ -159,7 +173,7 @@ async def read_script(
         max_chars: 正文字符上限。
 
     Returns:
-        脚本正文。
+        ``(脚本正文, 技能行)``。
 
     Raises:
         SkillExecError: 技能不存在、没有这个资源、资源不是文本、超长。
@@ -181,6 +195,27 @@ async def read_script(
         raise SkillExecError(
             f"脚本正文超过 {max_chars} 字符上限（当前 {len(content)} 字符）。"
         )
+    return content, skill
+
+
+async def read_script(
+    db: AsyncSession, code: str, path: str, max_chars: int
+) -> str:
+    """从数据库里读出脚本正文。
+
+    Args:
+        db: 数据库会话。
+        code: 技能 code。
+        path: 脚本相对路径（已规整）。
+        max_chars: 正文字符上限。
+
+    Returns:
+        脚本正文。
+
+    Raises:
+        SkillExecError: 技能不存在、没有这个资源、资源不是文本、超长。
+    """
+    content, _skill = await _load_script(db, code, path, max_chars)
     return content
 
 
@@ -199,7 +234,12 @@ def format_exec_result(result: ExecResult) -> str:
     lines: list[str] = []
     if result.status != "completed":
         lines.append(f"status: {result.status}")
+    if result.profile and result.profile != "fast":
+        lines.append(f"profile: {result.profile}")
+        lines.append(f"startup_ms: {result.startup_ms}")
     lines.append(f"exit_code: {result.exit_code}")
+    if result.error_code:
+        lines.append(f"error_code: {result.error_code}")
     if result.error:
         lines.append(f"error: {result.error}")
     lines.append("--- stdout ---")
@@ -249,22 +289,53 @@ async def exec_skill_script(
         clean_argv = validate_argv(argv)
         if len(stdin) > MAX_STDIN_CHARS:
             raise SkillExecError(f"stdin 超过 {MAX_STDIN_CHARS} 字符上限")
-        content = await read_script(
+        content, skill_row = await _load_script(
             db, skill, cleaned_path, settings.studio_exec_max_script_chars
         )
-    except SkillExecError as exc:
+        runtime = runtime_from_skill(skill_row)
+    except (SkillExecError, SkillRuntimeError) as exc:
         return False, f"错误：{exc}"
 
-    # studio 报出来的运行时才是它真能跑的（skill-service §10.2）。
     health = client.health_info
-    if health is not None and health.languages and language not in health.languages:
+    if runtime.is_isolated:
+        # 档位能力按 TTL 刷新：studio 滚动升级 / 镜像变化之后，启动时那份
+        # 能力快照可能已经过时。
+        ensure = getattr(client, "ensure_health", None)
+        if ensure is not None:
+            health = await ensure()
+        if health is None or not health.supports_isolated:
+            return False, (
+                f"错误：技能「{skill}」声明了强隔离执行（isolated 档），"
+                "但 studio 没有可用的沙箱运行时。请让运维部署调度器，"
+                "或把该技能的 runtime-profile 改回 fast。"
+            )
+        if not version_at_least(health.version, REQUIRED_ISOLATED_STUDIO_VERSION):
+            return False, (
+                f"错误：技能「{skill}」需要 studio >= "
+                f"{REQUIRED_ISOLATED_STUDIO_VERSION}（当前 {health.version}）。"
+            )
+        if runtime.image and health.image(runtime.image) is None:
+            return False, (
+                f"错误：技能「{skill}」声明的镜像「{runtime.image}」"
+                "不在 studio 的镜像目录里。"
+            )
+
+    # studio 报出来的运行时才是它真能跑的（skill-service §10.2）。isolated 技能
+    # 以目标镜像声明的语言为准——它和 fast 镜像的运行时集可能不同。
+    allowed_languages = health.languages if health is not None else ()
+    if runtime.is_isolated and health is not None and runtime.image:
+        image = health.image(runtime.image)
+        if image is not None and image.languages:
+            allowed_languages = image.languages
+    if health is not None and allowed_languages and language not in allowed_languages:
         return False, (
             f"错误：studio 不支持 {language} 运行时"
-            f"（当前支持：{'、'.join(health.languages)}）。"
+            f"（当前支持：{'、'.join(allowed_languages)}）。"
         )
 
     ctx = current_exec_context()
     request_id = make_request_id(skill, cleaned_path, clean_argv)
+    timeout = runtime.timeout_ms if runtime.timeout_ms is not None else timeout_ms
 
     try:
         result = await client.exec_script(
@@ -274,7 +345,9 @@ async def exec_skill_script(
             content=content,
             argv=clean_argv,
             stdin=stdin,
-            timeout_ms=timeout_ms,
+            timeout_ms=timeout,
+            profile=runtime.profile,
+            image=runtime.image,
             run_id=ctx.run_id if ctx else "",
             node_id=ctx.node_id if ctx else "",
             request_id=request_id,
@@ -283,6 +356,22 @@ async def exec_skill_script(
         # studio 不可用 / 超时 / 参数被拒——都是**服务级**问题，回灌给模型，
         # 不失败节点（§17.5）。
         logger.warning("studio 执行失败：%s", exc)
+        # 能力类失败说明启动时那份快照可能已经过时（studio 滚动升级、镜像变化）。
+        # 把时间戳清掉，下一次 isolated 调用会强制重新探活。
+        if exc.code in ("capability_missing", "image_unknown"):
+            try:
+                client.health_fetched_at = None
+            except AttributeError:
+                pass
         return False, f"错误：{exc}"
+
+    # 最后一道对账：请求了 isolated，结果却不是 isolated。真正的 StudioClient
+    # 已经在响应处拦过（StudioDowngradeError）；这里再拦一次，是为了让
+    # 「不管客户端怎么实现，降级结果都不会被当成成功」这件事留在消费点上。
+    if runtime.is_isolated and result.profile != "isolated":
+        return False, (
+            f"错误：studio 实际以 {result.profile or '未知'} 档执行了要求 isolated "
+            "档的脚本，已拒绝该结果。"
+        )
 
     return result.ok, format_exec_result(result)

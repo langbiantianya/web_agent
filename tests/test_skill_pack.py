@@ -136,6 +136,26 @@ def test_parse_skill_md_accepts_allowed_tools():
     assert parsed.frontmatter.allowed_tools == "calc, now"
 
 
+def test_parse_skill_md_accepts_runtime_metadata():
+    """运行档用扁平键声明，导入期能读出来。"""
+    parsed = parse_skill_md(
+        "---\nname: x\ndescription: d\nmetadata:\n"
+        "  runtime-profile: isolated\n  runtime-image: ml\n"
+        "  runtime-timeout-ms: '60000'\n---\n正文\n"
+    )
+    assert parsed.frontmatter.metadata["runtime-profile"] == "isolated"
+    assert parsed.frontmatter.metadata["runtime-image"] == "ml"
+
+
+def test_parse_skill_md_rejects_bad_runtime_metadata():
+    """非法运行档声明在导入期就拒，不留到执行时。"""
+    with pytest.raises(SkillPackError):
+        parse_skill_md(
+            "---\nname: x\ndescription: d\nmetadata:\n"
+            "  runtime-profile: gpu\n---\n正文\n"
+        )
+
+
 def test_parse_skill_md_handles_crlf():
     """Windows 上编辑过的 SKILL.md 有 CRLF，解析不能因此失败。"""
     text = "---\r\nname: x\r\ndescription: d\r\n---\r\n\r\n正文\r\n"

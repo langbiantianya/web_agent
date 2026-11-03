@@ -10,6 +10,13 @@ service Studio {
   rpc Health(HealthRequest) returns (HealthResponse);
 }
 
+// 执行档位。请求里带上它，服务端只能升、不能降；响应里回显**实际**档位。
+enum ExecProfile {
+  EXEC_PROFILE_UNSPECIFIED = 0;  // 老客户端：沿用服务端路由
+  EXEC_PROFILE_FAST = 1;         // 容器内独立进程组（默认）
+  EXEC_PROFILE_ISOLATED = 2;     // 每次执行起一次性沙箱
+}
+
 // 执行结果的状态。
 // **gRPC 层面成功 ≠ 脚本成功**：脚本自己 exit 1 是 COMPLETED + exit_code=1，
 // 业务失败要靠 status/exit_code 表达，不能用 gRPC status 报错——调用方要把
@@ -34,6 +41,8 @@ message ExecRequest {
   string run_id = 8;          // 关联一次 run（审计）
   string node_id = 9;         // 关联一个节点
   string request_id = 10;     // 追踪键；同键在去重窗口内不重复执行
+  ExecProfile profile = 11;   // 调用方请求的档位；服务端只能升、不能降
+  string image = 12;          // 镜像目录名（不是完整 ref）；空 = default
 }
 
 message ExecResponse {
@@ -45,6 +54,9 @@ message ExecResponse {
   int64 duration_ms = 6;
   string error = 7;            // 服务级错误说明（不是脚本的 stderr）
   string stdout_digest = 8;    // stdout 的 sha256，用于审计与去重
+  ExecProfile profile = 9;     // **实际**使用的档位，必须回显
+  int64 startup_ms = 10;       // 沙箱启动耗时（fast 为 0）
+  string error_code = 11;      // 稳定枚举字符串；见 docs/skill-service.md §5.1
 }
 
 message HealthRequest {}
@@ -54,7 +66,26 @@ message HealthResponse {
   string version = 2;
   repeated LanguageInfo language_info = 3;
   int32 max_concurrency = 4;
-  string profile = 5;          // 当前隔离档：fast | isolated
+  string profile = 5;          // 当前隔离档：fast | isolated（兼容字段）
+  repeated ProfileInfo profiles = 6;   // 按档位报能力
+  repeated ImageInfo images = 7;       // isolated 可用的镜像目录
+  int64 isolated_startup_budget_ms = 8;  // 沙箱启动预算（毫秒）
+}
+
+// 一个档位现在能不能用。`ready=false` 时 `detail` 说明原因。
+message ProfileInfo {
+  string name = 1;             // fast | isolated
+  bool ready = 2;
+  int32 max_concurrency = 3;
+  int32 queue_depth = 4;
+  string detail = 5;
+}
+
+// isolated 可用的镜像（目录名，不是完整 ref）。
+message ImageInfo {
+  string name = 1;             // 如 default / ml-py311
+  repeated string languages = 2;   // 该镜像能跑的运行时
+  string digest = 3;           // image@sha256:...
 }
 
 message LanguageInfo {

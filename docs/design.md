@@ -3174,6 +3174,13 @@ service Studio {
   rpc Health(HealthRequest) returns (HealthResponse);
 }
 
+// 执行档位。请求里带上它，服务端只能升、不能降；响应里回显**实际**档位。
+enum ExecProfile {
+  EXEC_PROFILE_UNSPECIFIED = 0;  // 老客户端：沿用服务端路由
+  EXEC_PROFILE_FAST = 1;         // 容器内独立进程组（默认）
+  EXEC_PROFILE_ISOLATED = 2;     // 每次执行起一次性沙箱
+}
+
 // 执行结果的状态。
 // **gRPC 层面成功 ≠ 脚本成功**：脚本自己 exit 1 是 COMPLETED + exit_code=1，
 // 业务失败要靠 status/exit_code 表达，不能用 gRPC status 报错——调用方要把
@@ -3198,6 +3205,8 @@ message ExecRequest {
   string run_id = 8;          // 关联一次 run（审计）
   string node_id = 9;         // 关联一个节点
   string request_id = 10;     // 追踪键；同键在去重窗口内不重复执行
+  ExecProfile profile = 11;   // 调用方请求的档位；服务端只能升、不能降
+  string image = 12;          // 镜像目录名（不是完整 ref）；空 = default
 }
 
 message ExecResponse {
@@ -3209,6 +3218,9 @@ message ExecResponse {
   int64 duration_ms = 6;
   string error = 7;            // 服务级错误说明（不是脚本的 stderr）
   string stdout_digest = 8;    // stdout 的 sha256，用于审计与去重
+  ExecProfile profile = 9;     // **实际**使用的档位，必须回显
+  int64 startup_ms = 10;       // 沙箱启动耗时（fast 为 0）
+  string error_code = 11;      // 稳定枚举字符串；见 docs/skill-service.md §5.1
 }
 
 message HealthRequest {}
@@ -3218,7 +3230,26 @@ message HealthResponse {
   string version = 2;
   repeated LanguageInfo language_info = 3;
   int32 max_concurrency = 4;
-  string profile = 5;          // 当前隔离档：fast | isolated
+  string profile = 5;          // 当前隔离档：fast | isolated（兼容字段）
+  repeated ProfileInfo profiles = 6;   // 按档位报能力
+  repeated ImageInfo images = 7;       // isolated 可用的镜像目录
+  int64 isolated_startup_budget_ms = 8;  // 沙箱启动预算（毫秒）
+}
+
+// 一个档位现在能不能用。`ready=false` 时 `detail` 说明原因。
+message ProfileInfo {
+  string name = 1;             // fast | isolated
+  bool ready = 2;
+  int32 max_concurrency = 3;
+  int32 queue_depth = 4;
+  string detail = 5;
+}
+
+// isolated 可用的镜像（目录名，不是完整 ref）。
+message ImageInfo {
+  string name = 1;             // 如 default / ml-py311
+  repeated string languages = 2;   // 该镜像能跑的运行时
+  string digest = 3;           // image@sha256:...
 }
 
 message LanguageInfo {
@@ -3346,6 +3377,8 @@ studio 容器应满足：
 | `STUDIO_EXEC_MAX_TIMEOUT_MS` | 60000 | 模型能请求的时限上限（写死在配置里，模型改不了） |
 | `STUDIO_EXEC_MAX_SCRIPT_CHARS` | 200000 | 脚本正文长度上限 |
 | `STUDIO_EXEC_LB_POLICY` | `round_robin` | gRPC 的负载均衡策略。Phase 3 落地时补的——见下 |
+| `STUDIO_EXEC_MIN_VERSION` | `1.0.0` | studio 的最低版本。默认不卡 fast-only 部署；声明 isolated 的技能另要求 `>= 2.0.0` |
+| `STUDIO_EXEC_HEALTH_TTL_SEC` | `30` | studio 能力缓存的 TTL；isolated 调用前按它刷新（0 = 每次刷新） |
 
 **「地址为空」与「连不上」是两件事**，别混：
 
@@ -3355,6 +3388,13 @@ studio 容器应满足：
 | 地址有 + 连上了 | 启用 |
 | 地址有 + 连不上 + `STUDIO_EXEC_REQUIRED=true` | **启动失败**（§22.8.6） |
 | 地址有 + 连不上 + `STUDIO_EXEC_REQUIRED=false` | 正常启动，`skill_exec` 不注册，只记一条警告 |
+
+**技能怎么声明档位（2.0.0）**：SKILL.md 的 `metadata` 用扁平键声明——
+`runtime-profile: isolated` / `runtime-image: ml-py311` / `runtime-timeout-ms: "60000"`。
+档位是脚本的**事实**，随技能走；`STUDIO_ISOLATED_SKILL_CODES` 只是运维的**升级覆盖**。
+服务端只能升、不能降，响应里的 `profile` 必须回显实际档位，调用方拿它做最后一道断言
+（不对账就拒绝结果，见 skill-service §14.3）。声明 isolated 的技能要求 studio
+`>= 2.0.0` 且 `Health.profiles[isolated].ready=true`。
 
 **`STUDIO_EXEC_LB_POLICY` 为什么必须有**（skill-service §13.4）：gRPC 用 HTTP/2
 **长连接**，默认的 `pick_first` 会**只连上第一个 DNS 解析结果**，之后再也不换。
@@ -3375,6 +3415,7 @@ A 记录）并指定 `round_robin`。**Service 侧也必须是 headless 的**—
 | gRPC 客户端 | `app/core/studio.py`（`StudioClient` / `init_studio` / 错误码翻译） |
 | 每次调用的执行上下文 | `app/core/studio_context.py`（`request_id` 靠 run + 节点 + tool_call_id 算） |
 | `skill_exec` 工具 | `app/core/skill_exec.py`（校验 + 规整）、`app/core/tools.py`（handler + 注册开关） |
+| 技能运行档声明 | `app/core/skill_runtime.py`（`runtime-profile` 解析/校验/启动期审计） |
 | 启动期检查与注册联动 | `app/main.py`（lifespan）、`app/core/tools.py::set_optional_tools_enabled` |
 | 敏感词兜底 | `app/core/tools.py::_screen_tool_output`（MCP 与 skill_exec 共用） |
 | **服务侧参考实现** | `services/studio/`（gRPC server + 进程隔离 + 超时 + 截断 + 限流 + 去重 + 优雅停机） |

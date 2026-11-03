@@ -129,6 +129,13 @@ class Settings(BaseSettings):
     # gRPC 会一直连着第一个解析结果——**扩缩容等于白扩**，而且极难发现
     # （skill-service §13.4）。排查问题时可以临时改成 ``pick_first``。
     studio_exec_lb_policy: str = "round_robin"
+    # studio 的最低版本。默认 1.0.0：fast-only 部署不该被 2.0.0 的语义变更卡住。
+    # 只有「声明了 isolated 的技能」才另外要求 >= 2.0.0 且上报 profiles[isolated]。
+    studio_exec_min_version: str = "1.0.0"
+    # 能力缓存（Health）的 TTL（秒）。studio 滚动升级后镜像/档位可能变化，
+    # 一直用启动时那份会误判；调用 isolated 前会按这个 TTL 刷新。
+    # 0 表示每次都刷新（测试用）。
+    studio_exec_health_ttl_sec: float = 30.0
 
     # ---- LLM ----
     openai_timeout: float = 120.0

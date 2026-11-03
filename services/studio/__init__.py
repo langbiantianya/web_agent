@@ -108,6 +108,9 @@ async def serve(
     from services.studio.reaper import sweep_stale_processes
 
     cfg = config or StudioConfig.from_env()
+    # 配置不自洽就在启动时失败：配了 isolated 却没配调度器，等于让每个
+    # isolated 请求都在运行时炸；不如在部署时就暴露。
+    cfg.validate()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
@@ -126,12 +129,15 @@ async def serve(
     server.add_insecure_port(address)
     await server.start()
     logger.info(
-        "studio 已启动：%s（版本 %s，运行时 %s，并发上限 %s，隔离档 %s）",
+        "studio 已启动：%s（版本 %s，运行时 %s，fast 并发 %s，isolated 并发 %s，"
+        "隔离档 %s，沙箱调度器 %s）",
         address,
         cfg.version,
         "、".join(cfg.languages) or "（无）",
         cfg.max_concurrency,
+        cfg.isolated_max_concurrency,
         cfg.profile,
+        cfg.isolated_dispatcher_addr or "（未配置）",
     )
 
     # 指标端点（§12.1）。端口 0 表示不启用。
