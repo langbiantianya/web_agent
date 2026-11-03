@@ -252,6 +252,30 @@ def test_format_exec_result_marks_truncation():
     assert "截断" in text
 
 
+def test_format_exec_result_limited_shape():
+    """被资源限制杀掉（``LIMITED``）要说清状态与原因（skill-service §13.2）。
+
+    模型要能一眼看出「这不是脚本自己崩了，是被内存限额打死的」——否则它只会
+    看到一句没头没尾的 ``exit_code: -1``。
+    """
+    text = format_exec_result(
+        ExecResult(
+            "limited",
+            -1,
+            "",
+            "",
+            False,
+            1200,
+            "脚本被 OOM killer 杀掉（退出码 137（128+9））：内存超出容器限额。",
+            "",
+        )
+    )
+    assert "status: limited" in text
+    assert "exit_code: -1" in text
+    assert "OOM killer" in text
+    assert "内存超出容器限额" in text
+
+
 # --------------------------------------------------------------- 执行
 
 

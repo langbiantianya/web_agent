@@ -24,6 +24,8 @@
 | 环境变量白名单 | 调用方在请求里带的东西直接进环境 | §6.3 |
 | ``RLIMIT_*`` | 写爆磁盘、fork 炸弹、core dump 泄露数据 | §6.4 |
 | 输出上限 + 停止读取 | ``cat /dev/urandom`` 把内存吃光 | §9.2 |
+| ``oom_score_adj`` 调高 | OOM killer 优先杀**脚本**而不是 studio | §13.2 |
+| SIGKILL 退出码判定 | 被资源限制杀掉 ≠ 脚本跑完了 | §13.2 |
 
 **容器级的加固（只读 rootfs、非 root、禁出网、零凭据）不在代码里**——那是在编排
 平台的容器配置里做的（skill-service §7）。代码里的这些只是第二道。
@@ -45,6 +47,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from services.studio.config import StudioConfig
+from services.studio.oom import (
+    describe_sigkill,
+    is_sigkilled,
+    oom_killed_since,
+    read_oom_kill_count,
+    set_oom_score_adj,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +136,7 @@ def _build_env(cwd: str) -> dict[str, str]:
     return env
 
 
-def _make_preexec(cpu_seconds: int):
+def _make_preexec(cpu_seconds: int, oom_score_adj: int):
     """造一个 ``preexec_fn``：在子进程里设资源限额（§6.4）。
 
     只有 POSIX 有 ``resource`` 模块——Windows 上的进程内限额做不到，容器级的
@@ -135,6 +144,9 @@ def _make_preexec(cpu_seconds: int):
 
     Args:
         cpu_seconds: ``RLIMIT_CPU`` 的秒数。
+        oom_score_adj: 脚本进程的 ``oom_score_adj``（§13.2）；越大越容易被
+            OOM killer 挑中。设不上去也不致命——内核在同分时按内存占用挑，
+            吃内存的脚本本来就是首选。
 
     Returns:
         ``preexec_fn``；不支持时返回 ``None``。
@@ -161,6 +173,8 @@ def _make_preexec(cpu_seconds: int):
             resource.setrlimit(resource.RLIMIT_NPROC, (64, 64))
         except (ValueError, OSError):
             pass
+        # 容器内存被打爆时，让内核**优先杀这个脚本**而不是 studio（§13.2）。
+        set_oom_score_adj(oom_score_adj)
 
     return _apply
 
@@ -238,12 +252,17 @@ class ScriptRunner:
             script_path = Path(workdir) / filename
             script_path.write_text(content, encoding="utf-8")
             env = _build_env(workdir)
+            # **起进程之前**先记一次 OOM 计数——脚本可能一起来就把内存打爆，
+            # 记晚了就分不清「这次被 OOM 杀的」和「之前就杀过」（§13.2）。
+            oom_kill_before = read_oom_kill_count()
             proc = await self._spawn(
                 interpreter, str(script_path), list(argv or []), env, timeout_ms
             )
             stdin_task = asyncio.create_task(self._write_stdin(proc, stdin))
             try:
-                return await self._collect(proc, timeout_ms, started)
+                return await self._collect(
+                    proc, timeout_ms, started, oom_kill_before
+                )
             finally:
                 if not stdin_task.done():
                     stdin_task.cancel()
@@ -309,7 +328,9 @@ class ScriptRunner:
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:
             kwargs["start_new_session"] = True
-            preexec = _make_preexec(max(1, timeout_ms // 1000))
+            preexec = _make_preexec(
+                max(1, timeout_ms // 1000), self.config.oom_score_adj
+            )
             if preexec is not None:
                 kwargs["preexec_fn"] = preexec
         return await asyncio.create_subprocess_exec(
@@ -321,6 +342,7 @@ class ScriptRunner:
         proc,
         timeout_ms: int,
         started: float,
+        oom_kill_before: int | None = None,
     ) -> ExecOutcome:
         """读输出、等退出、超时则杀进程组。
 
@@ -328,6 +350,8 @@ class ScriptRunner:
             proc: 子进程。
             timeout_ms: 执行时限。
             started: 开始时刻（``time.monotonic``）。
+            oom_kill_before: 起进程前读到的 cgroup ``oom_kill`` 计数；用来判断
+                本次执行期间是不是真的发生了 OOM（§13.2）。
 
         Returns:
             :class:`ExecOutcome`。
@@ -397,6 +421,17 @@ class ScriptRunner:
 
         if status == STATUS_COMPLETED:
             exit_code = proc.returncode if proc.returncode is not None else -1
+            if is_sigkilled(exit_code):
+                # §13.2：被 SIGKILL 杀掉 = 被资源限制干掉，**不是**「脚本跑完了」。
+                # 契约里是 LIMITED，退出码按契约是 -1，原因写进 error。
+                raw_code = exit_code
+                status = STATUS_LIMITED
+                exit_code = -1
+                error = describe_sigkill(
+                    raw_code,
+                    oom_killed_since(oom_kill_before, read_oom_kill_count()),
+                )
+                logger.warning("脚本被 SIGKILL 杀掉：%s", error)
         stdout_bytes = _bytes_of(stdout_task)
         stderr_bytes = _bytes_of(stderr_task)
         # UTF-8 解码，失败用 replace（§9.3）。
