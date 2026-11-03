@@ -87,11 +87,29 @@ studio **没有技能的概念**。它收到的是「一段脚本正文 + 路径
 | `fast`（默认） | 容器内**独立进程组** + 独立临时工作目录 + 只读 rootfs | 几十~几百毫秒 | 纯计算：解析、转换、统计 |
 | `isolated` | 每次执行起一个**一次性容器** | 秒级 | 触碰第三方库、需要完整依赖树的脚本 |
 
-**当前只实现 `fast`。** `isolated` 是演进项。
+**`fast` 档已实现；`isolated` 档目前是「骨架」。** 骨架指的是：接口、独立队列、
+失败语义都在，**容器运行时没有部署**。
 
 档位由**服务侧配置**决定（按 `skill` code 列表），不放在请求里——这样 proto 不必加字段，
 调用方也不用关心。将来若要按请求选档，需要给 `ExecRequest` 加 `profile` 字段，属于
 **破坏性兼容变更**（见 §14.2）。
+
+**骨架的具体形态**（`services/studio/launcher.py`）：
+
+| 部件 | 状态 |
+| --- | --- |
+| `Launcher` 抽象（两个档位对外形状一致） | ✅ |
+| 路由（按 `STUDIO_ISOLATED_SKILL_CODES` 的技能码列表） | ✅ |
+| `isolated` 档**自己的**并发池与等待队列（§8.4） | ✅ |
+| 一次性容器执行器（`IsolatedRuntime` 接口） | ❌ **没实现** |
+| 运行时缺失时的失败语义 | ✅ `FAILED_PRECONDITION` +「没有部署容器运行时」 |
+
+**为什么不实现容器执行器**：起容器要挂 Docker socket，等于把宿主 root 等价权限交给
+一个「跑模型指定的代码」的进程，与 §7 的「无宿主挂载」直接冲突。
+
+**绝不悄悄退回 `fast` 档**：悄悄退回是最坏的一种降级——调用方以为拿到的是强隔离，
+实际不是，而且**没有任何痕迹**。所以档位不可用时必须明确说出来（§12 的失败模式表
+是同一口径：「studio 不可用」要回灌给模型，「isolated 档不可用」同理）。
 
 ---
 
@@ -399,6 +417,10 @@ gRPC 的取消会传播到服务端的 handler，studio 应当：
 `isolated` 档（每请求起一次性容器）的开销是秒级、资源占用高一个数量级。它必须**单独排队**，
 不能和 `fast` 档抢同一个并发池——否则几个慢脚本能把快脚本全堵死。
 
+**已实现**：两个档位各有自己的并发池与等待队列（`STUDIO_ISOLATED_MAX_CONCURRENCY` /
+`STUDIO_ISOLATED_MAX_QUEUE`）。这条是**可执行验证**的——测试里用一个假的容器执行器
+占住 `isolated` 档的并发位，`fast` 档的执行照常立刻返回（§19 的测试条目）。
+
 ---
 
 ## 9. 输入输出契约
@@ -515,7 +537,10 @@ studio 容器里**看不到**任何业务文件：
 | `studio_orphan_process_total` | counter | —— | 启动巡检发现的残留进程数 |
 
 `studio_exec_failed_total{reason}` 的 `reason` 取值：`runtime_missing` / `spawn_failed` /
-`invalid_request` / `unknown_language`。
+`invalid_request` / `unknown_language` / `isolated_unavailable`。
+
+最后一个是「这个技能走 `isolated` 档，但本实例没有部署容器运行时」——它是一个**启动
+失败**，所以进这个指标；但它同时会以 `FAILED_PRECONDITION` 回给调用方（§2.4）。
 
 **落地**（`services/studio/metrics.py`）：`/metrics` 端点监听 `STUDIO_METRICS_PORT`
 （默认 `9090`，设成 `0` 就不启用），输出 **Prometheus 文本 exposition 格式**
@@ -750,7 +775,8 @@ cgroup 的 `oom_kill` 计数 +1。
 ## 18. 已知限制
 
 1. **`fast` 档不是强隔离**。同一容器内先后两次执行之间理论上存在残留（临时目录、环境
-   变量、打开的文件）。需要强隔离的走 `isolated` 档，而它当前**未实现**。
+   变量、打开的文件）。需要强隔离的走 `isolated` 档，而它当前**只有骨架**——接口与
+   独立队列都在，**容器运行时没实现**（§2.4）。
 2. **禁出网**。需要外网的脚本做不了——这是有意的（§11.1），但会让一部分技能写不出来。
 3. **无凭据**。需要 API key / 数据库口令的脚本做不了。这类需求应该走 MCP 工具。
 4. **输入只支持文本**。二进制输入、二进制输出都不支持（§9.1、§9.3）。
@@ -764,7 +790,9 @@ cgroup 的 `oom_kill` 计数 +1。
    个实例是可能的。
 10. **日志里没有脚本输出**。为了不落敏感数据，stdout/stderr 只进执行结果不进日志
     （§12.2）。事后排查只能靠 `stdout_digest`。
-11. **`isolated` 档与 `profile` 字段尚未落地**（§2.4、§14.3）。
+11. **`isolated` 档的容器执行器未实现**（§2.4）。档位路由与独立队列已落地，运行时
+    缺失时明确报错——但强隔离本身**还没有**。需要强隔离的技能现在只能继续留在
+    `fast` 档，或者等运行时部署。
 
 ---
 
@@ -779,6 +807,15 @@ cgroup 的 `oom_kill` 计数 +1。
       一行都不用改；studio 容器不装 web_agent 的代码，只拷这个目录即可。
 - [x] studio 服务：gRPC server + 并发闸门 + 队列 + 执行器；
       → `services/studio/server.py`、`services/studio/executor.py`
+- [ ] `isolated` 隔离档（每请求起一次性容器）；
+      → **骨架已落地**（`services/studio/launcher.py`）：`Launcher` 抽象、按技能码
+      列表的档位路由（`STUDIO_ISOLATED_SKILL_CODES`）、`isolated` 档自己的并发池与
+      等待队列（§8.4）、运行时缺失时明确的 `FAILED_PRECONDITION`（**不悄悄退回
+      fast 档**）。**没做的是容器执行器本身**——起容器要挂 Docker socket，与 §7
+      的「无宿主挂载」直接冲突；接缝留在 `IsolatedRuntime` 接口上。
+      → `tests/test_studio_isolated.py`（9 条：路由、两个池互不阻塞、失败语义、
+      profile 标签）。
+      **未在真容器里验过**——本地测试全过，真容器那一次没跑成（远端机器不可达）。
 - [x] 进程隔离：新 session、独立 cwd、env 白名单、`killpg` + `wait` 回收；
       → `services/studio/executor.py`（`start_new_session` / `CREATE_NEW_PROCESS_GROUP`）
 - [x] 超时：墙钟定时器 + `RLIMIT_CPU` 双保险；

@@ -168,6 +168,10 @@ STUDIO_EXEC_LB_POLICY=round_robin   # 默认值，显式写出来是为了让人
     **必须**有一条放行 9090 的 ingress 规则给抓取器——不放行的话，指标端点在容器
     里好好地跑着，抓取器却连不上。清单里那条规则的命名空间/标签是**占位值**，
     按你的监控栈改。
+12. **`isolated` 档没有容器运行时。** 清单里 `STUDIO_ISOLATED_SKILL_CODES` 默认留空
+    ——**填了技能码，那些技能会拿到明确的 `FAILED_PRECONDITION`**（而不是悄悄退回
+    `fast` 档）。参考实现不提供一次性容器执行器：起容器要挂 Docker socket，与
+    「无宿主挂载」的加固模型直接冲突（skill-service §2.4、§8.4）。
 
 ### 指标端点
 
