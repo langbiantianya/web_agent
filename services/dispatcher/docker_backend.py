@@ -159,7 +159,10 @@ class DockerBackend:
                     network_disabled=True,
                     read_only=True,
                     user="1000:1000",
-                    working_dir="/tmp",
+                    # runner 用 ``python -m services.sandbox.runner`` 启动，必须
+                    # 从镜像里装了包的 /app 解析模块；脚本进程自己的工作目录仍由
+                    # runner 在 /tmp 下另建，不会把用户文件写进只读 rootfs。
+                    working_dir="/app",
                     cap_drop=["ALL"],
                     security_opt=["no-new-privileges"],
                     pids_limit=_PIDS_LIMIT,

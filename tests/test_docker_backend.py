@@ -120,6 +120,9 @@ def test_container_template_is_fixed_and_hardened(tmp_path):
     assert kwargs["network_disabled"] is True
     assert kwargs["read_only"] is True
     assert kwargs["user"] == "1000:1000"
+    # 镜像把 services 包放在 /app；从 /tmp 启动会让 ``python -m`` 找不到
+    # services.sandbox.runner，脚本根本进不了 runner。
+    assert kwargs["working_dir"] == "/app"
     assert kwargs["cap_drop"] == ["ALL"]
     assert "no-new-privileges" in kwargs["security_opt"]
     assert kwargs["pids_limit"] == 256
