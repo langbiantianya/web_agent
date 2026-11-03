@@ -601,9 +601,11 @@ graph TB
 - [x] `tests/test_dispatcher.py`（8 条）：健康、转发、镜像/参数校验、错误映射、饱和 503、404、关闭。
 - [x] `tests/test_dispatcher_runtime.py`（4 条）：结果映射、HTTP 错误、不可达、坏地址。
 - [x] `tests/test_docker_backend.py`（5 条）：固定模板/加固参数、控制帧解析、OOM、结果丢失、未知镜像。
-- [ ] `tests/test_studio_isolated_e2e.py`（`@pytest.mark.docker`）：真 Docker，断言
-      容器 `NetworkMode=none`、`ReadonlyRootfs=true`、非 root、无 env、无挂载、
-      脚本读不到宿主文件。**待有 Docker 的环境**——本机沙箱起不了子进程。
+- [x] 真 Docker isolated e2e：2026-11-04 使用正式 studio/dispatcher/sandbox 镜像，
+      验证三种运行时、只读 rootfs、非 root、caps 全 drop、NoNewPrivs、无网络、
+      无凭据、资源限额、payload 只读挂载和容器自动删除。可重复的基础加固测试在
+      `tests/test_sandbox_docker_e2e.py`；完整五场景结果见
+      `services/studio/DESIGN.md` §20。
 - [x] 文档：`services/studio/DESIGN.md` §2.4 从「骨架」改为「Docker 后端已落地」；补执行链路与控制帧。
 
 **验收**：lab 里一条 isolated 技能真的在独立容器里跑完；`docker inspect` 能证明加固项；

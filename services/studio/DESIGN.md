@@ -123,7 +123,7 @@ studio.Exec(profile=isolated)
 | 启动期版本下限 + 技能绑定审计（Phase 0） | ✅ |
 | Docker 执行体：`DispatcherRuntime` + dispatcher + 沙箱镜像（Phase 1） | ✅ |
 | 控制帧协议（4 KB 分片 + END 摘要） | ✅ `services/sandbox/protocol.py` |
-| 真实 Docker 环境 e2e | ⏳ 需要一台有 Docker 的机器（本机沙箱起不了子进程） |
+| 真实 Docker 环境 e2e | ✅ 2026-11-04 用正式镜像跑通（§20） |
 | K8s Job 后端 | ❌ Phase 2 |
 
 **为什么不让 studio 直接起容器**：起容器要挂 Docker socket 或给 K8s 凭据，而 studio
@@ -882,7 +882,7 @@ K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota�
 
 1. **`fast` 档不是强隔离**。同一容器内先后两次执行之间理论上存在残留（临时目录、环境
    变量、打开的文件）。需要强隔离的走 `isolated` 档；Docker 后端已在 Phase 1 落地
-   （§2.4、§13.6），但**真 Docker e2e 尚未跑**，K8s 后端在 Phase 2。
+   （§2.4、§13.6）并已完成真 Docker e2e（§20），K8s 后端在 Phase 2。
 2. **禁出网**。需要外网的脚本做不了——这是有意的（§11.1），但会让一部分技能写不出来。
 3. **无凭据**。需要 API key / 数据库口令的脚本做不了。这类需求应该走 MCP 工具。
 4. **输入只支持文本**。二进制输入、二进制输出都不支持（§9.1、§9.3）。
@@ -898,9 +898,9 @@ K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota�
     （§12.2）。事后排查只能靠 `stdout_digest`。
 11. **`isolated` 的 K8s 后端未实现**（§2.4）。Docker 后端已在 Phase 1 落地：
     `services/sandbox/` + `services/dispatcher/` + `DispatcherRuntime`，studio 自己不挂
-    socket；控制帧、超时、OOM、取消由 dispatcher/runner 处理。**尚未在真实 Docker 上
-    跑 e2e**（本机沙箱起不了子进程）；K8s Job 后端在 Phase 2。需要 K8s 强隔离的部署
-    要等 Phase 2。
+    socket；控制帧、超时、OOM、取消由 dispatcher/runner 处理。真 Docker 下的加固和
+    五类真实故障已跑通（§20）；K8s Job 后端仍在 Phase 2，需要 K8s 强隔离的部署要等
+    Phase 2。
 
 ---
 
@@ -927,7 +927,7 @@ K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota�
       → 测试：`tests/test_studio_isolated.py`（16 条）+ `tests/test_sandbox_protocol.py`（8）、
       `test_sandbox_runner.py`、`test_dispatcher.py`（8）、`test_dispatcher_runtime.py`（4）、
       `test_docker_backend.py`（5）。
-      **真 Docker e2e 未跑**——本机沙箱起不了子进程；K8s Job 后端在 Phase 2。
+      **真 Docker e2e 已于 2026-11-04 跑通**（§20）；K8s Job 后端在 Phase 2。
 - [x] 进程隔离：新 session、独立 cwd、env 白名单、`killpg` + `wait` 回收；
       → `services/studio/executor.py`（`start_new_session` / `CREATE_NEW_PROCESS_GROUP`）
 - [x] 超时：墙钟定时器 + `RLIMIT_CPU` 双保险；
@@ -1005,6 +1005,60 @@ K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota�
       修法见主设计 §22.8.4。
       → 本轮又加了**第五个场景：OOM**——模型拿到的是 `status: limited` +
       「内存超出容器限额」的说明，并把它原样转述给用户，run 本身没失败。
+
+---
+
+## 20. 2026-11-04 isolated 真 Docker 复验
+
+测试机为 4 vCPU / 1.8 GB RAM，使用正式 `services/studio/Dockerfile`、
+`services/dispatcher/Dockerfile` 和 `services/sandbox/Dockerfile` 构建的镜像，
+串行启动真实 MySQL、Redis、web_agent、studio、dispatcher 与一次性 sandbox。
+
+### 20.1 镜像与运行时
+
+- 正式 studio 容器以非 root、只读 rootfs、`cap-drop=ALL`、
+  `no-new-privileges`、192/256 MB 内存限制运行。
+- `Health` 报告 `python`、`bash`、`node` 三种运行时。
+- 三个脚本分别返回 `PY_OK`、`BASH_OK`、`NODE_OK`，均为
+  `COMPLETED + exit_code=0`。
+
+### 20.2 真 sandbox 加固
+
+在实际创建的 sandbox 容器上通过 `docker inspect` 和容器内探测确认：
+
+- `Config.NetworkDisabled=true`，运行期没有网络端点；DNS 和外连均被阻断。
+- rootfs 只读，写 `/pwned` 失败；运行用户为 `1000:1000`。
+- `CapDrop=["ALL"]`、`CapAdd` 为空、`Privileged=false`。
+- `no-new-privileges`、`PidsLimit=256`、`Memory=512 MiB`、`NanoCpus=1 CPU`。
+- 只挂载只读 payload，没有 Docker socket、数据库口令、应用密钥或模型 Key。
+- 执行完成后一次性容器自动删除，无 sandbox 残留。
+
+### 20.3 真实 MiniMax 五场景
+
+使用 `MiniMax-M3.1-Flash`、端点 `https://api.minimax.cn/v1`，技能声明
+`runtime-profile=isolated`，完整链路为 web_agent → studio → dispatcher →
+一次性 sandbox → 模型结果回灌。
+
+| 场景 | 工具结果 | run |
+| --- | --- | --- |
+| happy | `ok=true`，`profile=isolated`，`exit_code=0`，stdout 含 `FULLSTACK_OK_1357` | ✅ done |
+| timeout | `ok=false`，`status=timeout`，`error_code=sandbox_timeout` | ✅ done，未失败 |
+| busy | `ok=false`，等待队列满（0），模型得到“studio 忙不过来” | ✅ done，未失败 |
+| studio down | `ok=false`，`Connection refused`，模型得到“连不上 studio” | ✅ done，未失败 |
+| sandbox OOM | `ok=false`，`status=limited`，`exit_code=-1`，`error_code=sandbox_oom` | ✅ done，未失败 |
+
+### 20.4 真实验证发现并修复的问题
+
+1. dispatcher 从 `/tmp` 启动 `python -m services.sandbox.runner`，而包在 `/app`，
+   导致所有 isolated 请求在执行前失败。修复为工作目录 `/app`，脚本自身仍在独立
+   `/tmp` 工作目录运行。
+2. `mkdtemp` 默认 `0700`，uid 1000 的 sandbox 无法读取 payload。修复为执行目录
+   `0755`、payload `0644`，同时保持 payload 只读挂载。
+3. 只有 runner 的子脚本被 cgroup OOM killer 杀掉时，容器级 `OOMKilled` 可能为
+   false。runner 现在比较 cgroup v1/v2 的累计 `oom_kill`，返回
+   `LIMITED + sandbox_oom`，避免误报成模糊的 `sandbox_signal`。
+
+K8s Job、NetworkPolicy、gVisor/Kata 等集群行为仍不在本次 Docker 验证范围内。
 
 ---
 
