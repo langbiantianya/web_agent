@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -14,6 +16,27 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+VERSIONS_DIR = ROOT / "alembic" / "versions"
+
+# MySQL 不允许这几类列带字面量默认值（报错 1101）：
+# "BLOB, TEXT, GEOMETRY or JSON column 'xxx' can't have a default value"。
+# VARCHAR / INTEGER 等普通类型带默认值是允许的，不在禁列范围内。
+MYSQL_NO_DEFAULT_TYPES = {
+    "TEXT",
+    "UNICODETEXT",
+    "LARGEBINARY",
+    "JSON",
+    "BLOB",
+    "LONGTEXT",
+    "MEDIUMTEXT",
+    "TINYTEXT",
+    "LONGBLOB",
+    "MEDIUMBLOB",
+    "TINYBLOB",
+    "JSONB",
+    "GEOMETRY",
+}
 
 EXPECTED_TABLES = {
     "agent",
@@ -195,3 +218,169 @@ def test_unique_constraints_enforced(
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(f"INSERT INTO {table} {columns} VALUES {extra}")
         conn.rollback()
+
+
+def _dotted_name(node: ast.AST) -> str | None:
+    """把 ``sa.Text`` / ``mysql.LONGTEXT`` 这样的属性链还原成末段名字。
+
+    只取末段（``Text``）就够了：判定禁列只看类型本身，不看它挂在哪个命名空间下。
+    """
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _column_type_name(node: ast.AST) -> str | None:
+    """取列的类型名，剥掉 ``with_variant`` 这层方言包装。
+
+    ``sa.Text().with_variant(mysql.LONGTEXT(), "mysql")`` 的类型仍然是 Text 系，
+    一样不能让 MySQL 接受默认值，所以必须往里剥。
+    """
+    if isinstance(node, ast.Call):
+        func = node.func
+        # sa.Text() / mysql.LONGTEXT()
+        if isinstance(func, ast.Attribute):
+            if func.attr == "with_variant" and func.value is not None:
+                return _column_type_name(func.value)
+            return func.attr
+        # 直接传类型类：sa.Text
+        return _dotted_name(func)
+    # 直接传类型：sa.Text
+    return _dotted_name(node)
+
+
+def test_no_text_or_json_column_has_server_default():
+    """迁移里禁止出现「TEXT/JSON/BLOB 类列带字面量默认值」。
+
+    MySQL 会直接拒绝这种 DDL：
+
+    ``(1101, "BLOB, TEXT, GEOMETRY or JSON column 'prompt' can't have a
+    default value")``
+
+    这个坑在本地测不出来——SQLite 和 PostgreSQL 都接受 TEXT 默认值，测试套件
+    用的又是 SQLite，所以它只在真 MySQL 部署时才炸，而且炸在建表阶段，容器
+    陷入 CrashLoop。开发期唯一挡得住它的办法就是静态扫迁移脚本。
+
+    带默认值本身不是错（VARCHAR/INTEGER 列完全合法，比如 status 的
+    ``server_default="pending"``），只有 MySQL 禁列类型才是问题，所以按类型判。
+    """
+    offenders: list[str] = []
+    for py_file in sorted(VERSIONS_DIR.glob("*.py")):
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and func.attr == "Column"):
+                continue
+            # sa.Column(name, type, ...) —— 类型是第 2 个位置参数
+            if len(node.args) < 2:
+                continue
+            type_name = _column_type_name(node.args[1])
+            if type_name is None or type_name.upper() not in MYSQL_NO_DEFAULT_TYPES:
+                continue
+            has_default = any(kw.arg == "server_default" for kw in node.keywords)
+            if has_default:
+                column = node.args[0]
+                col_name = (
+                    column.value if isinstance(column, ast.Constant) else "<动态列名>"
+                )
+                offenders.append(f"{py_file.name}:{node.lineno} 列 {col_name} ({type_name})")
+
+    assert not offenders, (
+        "MySQL 不允许 TEXT/JSON/BLOB 列带默认值（1101），请去掉这些列的 "
+        "server_default，改用 ORM 的 Python 侧 default：\n  " + "\n  ".join(offenders)
+    )
+
+
+# 只用来确定方言，**不建立任何连接**：alembic 的离线模式（``--sql``）只渲染
+# DDL，不连库，所以这里不需要真的 MySQL。
+MYSQL_DIALECT_URL = "mysql+asyncmy://render:render@127.0.0.1:3306/render_only"
+
+# MySQL 拒绝的「函数默认值没括号」：DEFAULT now() 是非法的，
+# 只有 DEFAULT (now()) 才是合法的表达式默认值（MySQL 8.0.13+）。
+BARE_FUNC_DEFAULT_RE = re.compile(r"DEFAULT\s+(?!\()[A-Za-z_]+\s*\(")
+
+# 列定义行里出现「文本/二进制/JSON 类型 + DEFAULT」就是 1101。
+# 渲染出来的 DDL 每个列定义占一行，所以按行匹配即可（``[^\n]*`` 不跨行）。
+TEXT_TYPE_DEFAULT_RE = re.compile(
+    r"^\s*\w+\s+(?:TINY|MEDIUM|LONG)?(?:TEXT|BLOB)\b[^\n]*\bDEFAULT\b",
+    re.MULTILINE | re.IGNORECASE,
+)
+JSON_TYPE_DEFAULT_RE = re.compile(
+    r"^\s*\w+\s+(?:JSON|JSONB)\b[^\n]*\bDEFAULT\b",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _render_mysql_ddl() -> str:
+    """离线渲染「升级到 head」的完整 MySQL DDL。
+
+    用 alembic 的 ``--sql``（离线）模式：不连数据库，只把每个迁移会发出的
+    SQL 打出来。这样就能在**没有 MySQL 的机器上**检查「发给 MySQL 的 DDL 是否
+    会被服务端拒绝」——这正是本地测试唯一缺的那一环。
+    """
+    env = {**os.environ, "DATABASE_URL": MYSQL_DIALECT_URL}
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head", "--sql"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def test_mysql_ddl_uses_only_defaults_mysql_accepts():
+    """渲染出来的 MySQL DDL 里不能有服务端会拒绝的默认值写法。
+
+    一条硬规则，是真 MySQL 上撞出来的：
+
+    **TEXT/BLOB/JSON 列不能带默认值**——服务端报 1101
+    "BLOB, TEXT, GEOMETRY or JSON column 'xxx' can't have a default value"。
+
+    这类错误在本地测不出来——SQLite 和 PostgreSQL 都接受 TEXT 默认值，测试
+    套件用的又是 SQLite，所以它只在真 MySQL 部署时才炸，而且炸在建表阶段，
+    容器陷入 CrashLoop。
+
+    （函数默认值必须带括号那条由下面那条更精确的测试负责。）
+    """
+    ddl = _render_mysql_ddl()
+    assert ddl.strip(), "离线渲染出来的 DDL 是空的，说明 alembic 离线模式没跑起来"
+
+    problems = [
+        f"TEXT/BLOB 列带默认值：{m.group(0).strip()}"
+        for m in TEXT_TYPE_DEFAULT_RE.finditer(ddl)
+    ]
+    problems += [
+        f"JSON 列带默认值：{m.group(0).strip()}"
+        for m in JSON_TYPE_DEFAULT_RE.finditer(ddl)
+    ]
+
+    assert not problems, (
+        "渲染出的 MySQL DDL 里有服务端会拒绝的默认值写法（1101）：\n  "
+        + "\n  ".join(problems)
+    )
+
+
+def test_mysql_ddl_keeps_function_defaults_parenthesized():
+    """函数默认值在 DDL 里必须带括号——逐个点名检查，别只靠正则。
+
+    这是上一条测试的**精确版**：只认 ``DEFAULT (now())`` 这种带括号的写法，
+    其余的函数默认值（``now()`` / ``current_timestamp()`` / ``uuid()`` …）
+    一律算违规。MySQL 8.0.13 之后才支持表达式默认值，且语法要求带括号。
+    """
+    ddl = _render_mysql_ddl()
+    offenders = [
+        line.strip()
+        for line in ddl.splitlines()
+        if BARE_FUNC_DEFAULT_RE.search(line)
+    ]
+    assert not offenders, (
+        "MySQL 的表达式默认值必须带括号（DEFAULT (now()) 合法，DEFAULT now() "
+        "报 1067）：\n  " + "\n  ".join(offenders)
+    )

@@ -41,6 +41,13 @@ def upgrade() -> None:
     给 id，实际报错是 "NOT NULL constraint failed: run_approval.id"。
     而模型（:data:`app.models.base.PK`）带回落、ORM 建表又是对的，于是**只有
     走迁移建出来的库**会出问题——测试用 create_all 建库，根本测不到。
+
+    另外 prompt 列**不能**带 ``server_default``：MySQL 不允许 TEXT/BLOB/JSON
+    这类列带字面量默认值，迁移在 MySQL 上会直接报
+    "(1101, BLOB, TEXT, GEOMETRY or JSON column 'prompt' can't have a default
+    value)"。SQLite 和 PostgreSQL 都接受，所以这个坑在本地测不出来。
+    ORM 侧（:data:`app.models.run_approval.RunApproval.prompt`）本来就只有
+    Python 侧的 ``default=""``，由 SQLAlchemy 在 INSERT 时填，两边就此对齐。
     """
     op.create_table(
         "run_approval",
@@ -53,7 +60,7 @@ def upgrade() -> None:
         sa.Column("run_id", sa.BigInteger(), nullable=False),
         sa.Column("node_id", sa.String(length=64), nullable=False),
         sa.Column("status", sa.String(length=16), nullable=False, server_default="pending"),
-        sa.Column("prompt", sa.Text(), nullable=False, server_default=""),
+        sa.Column("prompt", sa.Text(), nullable=False),
         sa.Column("comment", sa.Text(), nullable=True),
         sa.Column("decided_by", sa.String(length=64), nullable=True),
         sa.Column(

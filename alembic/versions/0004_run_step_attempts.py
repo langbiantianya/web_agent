@@ -33,6 +33,18 @@ depends_on = None
 # 与 app.models.base.DATETIME3 保持一致：MySQL 用 fsp=3，其余方言用通用 DateTime
 DATETIME3 = sa.DateTime().with_variant(mysql_dialect.DATETIME(fsp=3), "mysql")
 
+# MySQL 的**表达式默认值必须带括号**：``DEFAULT (now())`` 合法，``DEFAULT now()``
+# 会被服务端拒绝，报 (1067, "Invalid default value for 'requested_at'")。
+#
+# 这个差异只在 ALTER 路径上出现：SQLAlchemy 渲染 CREATE TABLE 时会把函数默认值
+# 包成 ``(now())``，渲染 ``ALTER TABLE ... CHANGE`` 时却原样输出 ``now()``。
+# 所以迁移里必须手写 ``sa.text("(now())")``，不能图省事写 ``sa.func.now()``。
+#
+# ORM 侧（:data:`app.models.run_approval.RunApproval.requested_at`）用
+# ``sa.func.now()`` 是安全的——它只出现在 CREATE TABLE 里，渲染结果同样是
+# ``(now())``，两边因此对齐。
+MYSQL_NOW_DEFAULT = sa.text("(now())")
+
 
 def upgrade() -> None:
     """加 attempts_json 列；MySQL 上顺带修 run_approval 的时间列精度。"""
@@ -46,7 +58,7 @@ def upgrade() -> None:
                 existing_type=sa.DateTime(),
                 type_=DATETIME3,
                 existing_nullable=False,
-                existing_server_default=sa.func.now(),
+                existing_server_default=MYSQL_NOW_DEFAULT,
             )
             batch.alter_column(
                 "decided_at",
@@ -65,7 +77,7 @@ def downgrade() -> None:
                 existing_type=DATETIME3,
                 type_=sa.DateTime(),
                 existing_nullable=False,
-                existing_server_default=sa.func.now(),
+                existing_server_default=MYSQL_NOW_DEFAULT,
             )
             batch.alter_column(
                 "decided_at",
