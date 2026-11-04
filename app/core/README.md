@@ -90,5 +90,5 @@ Workflow 的 `definition` 包含 `entry`、`nodes`、`edges` 和可选 `inputTem
 ## 相关文档
 
 - [API 与 SSE 协议](../api/README.md)
-- [主设计文档](../DESIGN.md)
+- [版本化主设计目录](../design/README.md)
 - [studio 执行服务](../../services/studio/README.md)

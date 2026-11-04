@@ -68,7 +68,10 @@ proto 契约只有一份：[`studio.proto`](../../proto/webagent/studio/v1/studi
 
 ## 相关文档
 
-- [studio 完整设计](DESIGN.md)
+- [studio 设计目录](design/README.md)
+- [studio V4 当前设计](design/v4-current.md)
+- [全局设计总目录](../../docs/design/README.md)
+- [设计 TODO](../../docs/design/TODO.md)
 - [dispatcher](../dispatcher/README.md)
 - [sandbox](../sandbox/README.md)
 - [部署说明](../../deploy/README.md)

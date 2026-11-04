@@ -3,8 +3,9 @@
 契约文件只有一份：``proto/webagent/studio/v1/studio.proto``。改契约的流程是
 
 1. 改 proto 文件；
-2. **同步改两份文档里贴的 proto 片段**（``app/DESIGN.md`` §22.8.3 与
-   ``services/studio/DESIGN.md`` §5）——三处必须逐字一致；
+2. **同步改两份文档里贴的 proto 片段**
+   （``app/design/v4-tools-skills.md`` §22.8.3 与
+   ``services/studio/design/v4-current.md`` §5）——三处必须逐字一致；
 3. 跑本脚本重新生成桩代码；
 4. 跑 ``python scripts/check_proto_contract.py`` 确认三处仍然一致。
 

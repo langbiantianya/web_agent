@@ -18,13 +18,13 @@ pytest -q tests/test_proto_contract.py
 
 一致性检查还会比对以下文档中的 proto 片段：
 
-- `app/DESIGN.md` §22.8.3
-- `services/studio/DESIGN.md` §5
+- `app/design/v4-tools-skills.md` §22.8.3
+- `services/studio/design/v4-current.md` §5
 
 修改契约时，三处内容必须逐字一致，并重新生成桩代码。
 
 ## 相关文档
 
 - [studio 服务](../services/studio/README.md)
-- [studio 完整设计](../services/studio/DESIGN.md)
+- [studio 设计目录](../services/studio/design/README.md)
 - [脚本说明](../scripts/README.md)

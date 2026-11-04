@@ -159,5 +159,7 @@ DATABASE_URL=sqlite+aiosqlite:///./web_agent.db
 
 - [HTTP API 与会话协议](api/README.md)
 - [编排、事件与工具运行时](core/README.md)
-- [完整主设计文档](DESIGN.md)
+- [版本化设计目录](design/README.md)
+- [全局设计总目录与版本历史](../docs/design/README.md)
+- [设计 TODO](../docs/design/TODO.md)
 - [项目级文档目录](../README.md)

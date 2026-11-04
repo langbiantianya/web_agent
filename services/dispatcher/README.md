@@ -48,4 +48,5 @@ Docker socket 只挂载到 dispatcher。studio 和 sandbox 都看不到它。
 | `docker_backend.py` | Docker 固定模板调度 |
 | `config.py` | dispatcher 环境配置 |
 
-完整协议和安全要求见 [studio 设计文档](../studio/DESIGN.md) 与 [sandbox 说明](../sandbox/README.md)。
+完整协议和安全要求见 [studio 设计目录](../studio/design/README.md) 与
+[sandbox 说明](../sandbox/README.md)。

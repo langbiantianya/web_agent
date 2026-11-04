@@ -43,7 +43,7 @@ python scripts/check_docstrings.py
 ```
 
 - `gen_proto.py` 从唯一 proto 文件生成 Python 桩代码。
-- `check_proto_contract.py` 校验 proto 与 `app/DESIGN.md`、`services/studio/DESIGN.md` 中的片段逐字一致。
+- `check_proto_contract.py` 校验 proto 与 V4 主设计、studio V4 设计中的片段逐字一致。
 - `check_docstrings.py` 扫描 Python 函数并报告缺失 docstring。
 
 新增函数必须写 docstring。参数、返回值和异常语义较复杂时，使用 Google 风格字段说明。

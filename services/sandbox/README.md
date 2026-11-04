@@ -39,4 +39,4 @@ stdout 专用于协议帧，脚本原始 stdout/stderr 会先被捕获，再嵌�
 
 - [dispatcher](../dispatcher/README.md)
 - [studio](../studio/README.md)
-- [studio 完整设计](../studio/DESIGN.md)
+- [studio 设计目录](../studio/design/README.md)

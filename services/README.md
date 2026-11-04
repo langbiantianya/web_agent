@@ -33,6 +33,6 @@ flowchart LR
 
 ## 相关文档
 
-- [studio 完整设计](studio/DESIGN.md)
+- [studio 设计目录](studio/design/README.md)
 - [部署说明](../deploy/README.md)
 - [主服务文档目录](../README.md)

@@ -11,11 +11,12 @@
 | 主服务 | [app/README.md](app/README.md) | 架构图、快速开始、配置、模块地图 |
 | API | [app/api/README.md](app/api/README.md) | REST 接口、SSE ticket、事件协议、恢复策略 |
 | 核心运行时 | [app/core/README.md](app/core/README.md) | Workflow、LangGraph、审批、工具、Redis 和敏感内容过滤 |
-| 完整主设计 | [app/DESIGN.md](app/DESIGN.md) | 数据模型、通信、编排、扩展和演进设计 |
+| 设计总目录 | [docs/design/README.md](docs/design/README.md) | V1–V4 版本、迭代记录、已移除方案和设计入口 |
+| 设计 TODO | [docs/design/TODO.md](docs/design/TODO.md) | 尚未完成的工作与优先级 |
 | Web 页面 | [web/README.md](web/README.md) | 功能验证台与后台管理 |
 | 独立服务 | [services/README.md](services/README.md) | studio、dispatcher、sandbox 的拓扑与信任边界 |
 | studio | [services/studio/README.md](services/studio/README.md) | 脚本执行、档位、资源限制和运维入口 |
-| studio 完整设计 | [services/studio/DESIGN.md](services/studio/DESIGN.md) | gRPC 契约、进程隔离、沙箱和部署设计 |
+| studio 设计 | [services/studio/design/README.md](services/studio/design/README.md) | gRPC 契约、进程隔离、沙箱和部署设计 |
 | dispatcher | [services/dispatcher/README.md](services/dispatcher/README.md) | isolated 档控制面、HTTP 接口和环境变量 |
 | sandbox | [services/sandbox/README.md](services/sandbox/README.md) | 一次性执行容器、控制帧和容器安全属性 |
 | 脚本 | [scripts/README.md](scripts/README.md) | 数据、压测、模型训练、proto 与文档检查 |
@@ -37,6 +38,8 @@
 | 部署脚本执行服务 | [deploy/README.md](deploy/README.md) |
 | 运行测试或压测 | [tests/README.md](tests/README.md) 与 [scripts/README.md](scripts/README.md) |
 | 修改 studio 契约 | [proto/README.md](proto/README.md) |
+| 查版本演进或已移除方案 | [docs/design/README.md](docs/design/README.md) |
+| 继续开发设计能力 | [docs/design/TODO.md](docs/design/TODO.md) |
 
 ## 系统边界
 
@@ -88,6 +91,8 @@ python run.py
 
 - 模块文档放在对应模块目录，根 README 只维护导航。
 - 新增模块时同时新增 `README.md`，并在本页补充入口。
+- 主设计按版本拆分；新增迭代写新版本页，并在设计总目录登记“新增、替换、移除”。
+- 未完成事项只写进 [`docs/design/TODO.md`](docs/design/TODO.md)，不要在设计正文另建待办清单。
 - Python 函数必须有 docstring；新增或修改公共函数时补充参数、返回值、异常和副作用说明。
 - 文档移动后同步更新代码、测试和脚本中的路径引用。
 

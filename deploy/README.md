@@ -47,5 +47,5 @@ docker compose -f deploy/docker-compose.lab.yml up -d --build
 ## 相关文档
 
 - [服务模块总览](../services/README.md)
-- [studio 设计](../services/studio/DESIGN.md)
+- [studio 设计](../services/studio/design/README.md)
 - [项目文档目录](../README.md)

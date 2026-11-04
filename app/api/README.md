@@ -81,4 +81,4 @@ curl -N "$BASE/api/runs/$RUN/stream?ticket=$TICKET&last_seq=0"
 
 - [主服务入门](../README.md)
 - [核心编排与数据流](../core/README.md)
-- [完整 API 设计](../DESIGN.md#8-api-设计)
+- [V1 API 设计](../design/v1-foundation.md#8-api-设计)

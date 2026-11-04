@@ -1,5 +1,8 @@
 # Skill 基础（V4 Phase 1）Implementation Plan
 
+> 历史实施记录：本文保留当时任务，不是当前 TODO。当前待办见
+> [设计 TODO](../../design/TODO.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把 Skill 从「部署目录」搬进数据库，落成可 CRUD、可导入导出、可审计、可注入提示词、可被模型按需读资源的一套完整能力——**不依赖 MCP，也不依赖 studio**。

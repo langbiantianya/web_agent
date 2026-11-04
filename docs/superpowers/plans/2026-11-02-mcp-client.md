@@ -1,5 +1,8 @@
 # MCP 客户端（V4 Phase 2）Implementation Plan
 
+> 历史实施记录：本文保留当时任务，不是当前 TODO。当前待办见
+> [设计 TODO](../../design/TODO.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把 MCP 接成本项目的**第二个工具来源**——外部服务器声明的 schema 与执行器天然同源，于是「模型能调的」与「服务端能执行的」在快照层面仍然对得上。闭环本身（§17.3）一个字不改。
