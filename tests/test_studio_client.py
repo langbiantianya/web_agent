@@ -292,8 +292,8 @@ def test_channel_target_keeps_explicit_scheme():
 def test_lb_policy_defaults_to_round_robin(monkeypatch):
     """默认策略是 ``round_robin``，不是 gRPC 的 ``pick_first``。
 
-    ``pick_first`` 只连第一个解析结果——配上 headless Service，扩缩容就等于
-    白扩，而且症状极难发现（服务看着完全正常，只是没吃满）。
+    ``pick_first`` 只连第一个解析结果；多后端 DNS 下会失去轮询能力。
+    这里钉住默认值与环境变量覆盖，避免悄悄退回单地址行为。
     """
     monkeypatch.setattr(settings, "studio_exec_lb_policy", "round_robin")
     assert _lb_policy() == "round_robin"

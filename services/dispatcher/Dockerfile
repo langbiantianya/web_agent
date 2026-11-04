@@ -6,7 +6,7 @@
 # （services/sandbox/Dockerfile）。所以这个镜像可以装 docker SDK——沙箱镜像不行。
 #
 # 安全边界：dispatcher 的凭据是「能创建容器」。它只按固定模板创建：镜像来自目录、
-# 无网络、只读 rootfs、非 root、capabilities 全 drop。调用方不能传 Pod/容器模板。
+# 无网络、只读 rootfs、非 root、capabilities 全 drop。调用方不能传容器模板。
 #
 # **lab 里以 root 跑**是为了挂 /var/run/docker.sock（socket 通常是 root:docker）。
 # 生产建议用 docker-socket-proxy 把 API 收敛成只允许 create/start/logs/remove，

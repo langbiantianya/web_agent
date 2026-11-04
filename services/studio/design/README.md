@@ -2,7 +2,7 @@
 
 studio 的调用侧设计在主服务的 [V4 设计](../../../app/design/v4-tools-skills.md)，当前服务侧设计在 [v4-current.md](v4-current.md)。
 
-当前优先级是 Docker isolated Phase 1；Kubernetes Job 后端、真实集群安全验证、取消传播和供应链加固仍在 [全局 TODO](../../../docs/design/TODO.md) 中。
+当前部署与隔离实现以 Docker Compose、dispatcher 和一次性 sandbox 为准；取消传播、供应链加固等未完成事项统一维护在 [全局 TODO](../../../docs/design/TODO.md) 中。
 
 ## 文档边界
 

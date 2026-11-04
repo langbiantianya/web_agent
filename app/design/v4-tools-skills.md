@@ -2,7 +2,7 @@
 
 > V4 把工具来源扩展到 MCP，并把 Skill 作为可复用领域知识与受控脚本执行单元接入。
 
-> 状态：已实现。Docker isolated Phase 1 与真实 MiniMax 五场景已验证；K8s isolated Phase 2 仍待办。
+> 状态：已实现。Docker isolated 后端与真实 MiniMax 五场景均已验证。
 
 > 总目录见 [docs/design/README.md](../../docs/design/README.md)，未完成事项见 [TODO](../../docs/design/TODO.md)。
 
@@ -1206,7 +1206,7 @@ studio 容器应满足：
 | `STUDIO_EXEC_TIMEOUT_MS` | 30000 | 单次执行默认时限 |
 | `STUDIO_EXEC_MAX_TIMEOUT_MS` | 60000 | 模型能请求的时限上限（写死在配置里，模型改不了） |
 | `STUDIO_EXEC_MAX_SCRIPT_CHARS` | 200000 | 脚本正文长度上限 |
-| `STUDIO_EXEC_LB_POLICY` | `round_robin` | gRPC 的负载均衡策略。Phase 3 落地时补的——见下 |
+| `STUDIO_EXEC_LB_POLICY` | `round_robin` | 多后端 DNS 下使用的 gRPC 负载均衡策略 |
 | `STUDIO_EXEC_MIN_VERSION` | `1.0.0` | studio 的最低版本。默认不卡 fast-only 部署；声明 isolated 的技能另要求 `>= 2.0.0` |
 | `STUDIO_EXEC_HEALTH_TTL_SEC` | `30` | studio 能力缓存的 TTL；isolated 调用前按它刷新（0 = 每次刷新） |
 
@@ -1226,14 +1226,10 @@ studio 容器应满足：
 （不对账就拒绝结果，见 skill-service §14.3）。声明 isolated 的技能要求 studio
 `>= 2.0.0` 且 `Health.profiles[isolated].ready=true`。
 
-**`STUDIO_EXEC_LB_POLICY` 为什么必须有**（skill-service §13.4）：gRPC 用 HTTP/2
-**长连接**，默认的 `pick_first` 会**只连上第一个 DNS 解析结果**，之后再也不换。
-配上普通 ClusterIP Service，扩缩容就等于白扩——加了 Pod，流量一点都不过去。而这个
-症状极难发现：服务看着完全正常，只是没吃满。
-
-所以客户端建通道时给地址加 `dns:///` 前缀（让 gRPC 的 DNS 解析器返回**全部**
-A 记录）并指定 `round_robin`。**Service 侧也必须是 headless 的**——两边配对才有
-意义，单改一边等于没改。
+**`STUDIO_EXEC_LB_POLICY` 为什么必须有**（skill-service §13.4）：gRPC 使用 HTTP/2
+长连接，默认的 `pick_first` 只会使用第一个 DNS 解析结果。若一个名字对应多个 studio
+健康实例，客户端需要加 `dns:///` 前缀并使用 `round_robin`，请求才能分散到全部地址。
+只有单实例时使用默认策略即可。
 
 #### 22.8.9 落地情况（Phase 3）
 
@@ -1251,7 +1247,7 @@ A 记录）并指定 `round_robin`。**Service 侧也必须是 headless 的**—
 | **服务侧参考实现** | `services/studio/`（gRPC server + 进程隔离 + 超时 + 截断 + 限流 + 去重 + 优雅停机） |
 | **isolated Docker 后端** | `services/sandbox/`（runner + 控制帧 + 镜像）、`services/dispatcher/`（只调度的控制面）、`services/studio/dispatcher_runtime.py`（studio 侧 HTTP 客户端） |
 | 探针 / 启动巡检 | `services/studio/healthcheck.py`、`services/studio/reaper.py` |
-| 部署产物 | `services/studio/Dockerfile`、`services/sandbox/Dockerfile`、`services/dispatcher/Dockerfile`、`deploy/k8s/`、`deploy/docker-compose.yml` |
+| 部署产物 | `services/studio/Dockerfile`、`services/sandbox/Dockerfile`、`services/dispatcher/Dockerfile`、`deploy/docker-compose.yml` |
 
 **为什么本仓库同时交付服务侧**：§22.13 的验收项「脚本在 studio 容器里跑、web_agent
 进程内没有起任何子进程」必须有一个**真的** studio 才能验证。只做调用侧 + mock，
@@ -1444,24 +1440,18 @@ HTTP 上够不着——技能包根本传不进来。所以 `/api/skills` 前缀
     准入靠 admin 权限 + 审计留痕，而不是靠过滤器。
 19. **技能上传的请求体上限与管理员门禁共用同一把密钥**。放宽只对带对 `X-Admin-Key` 的请求
     生效（§22.11），所以密钥一旦泄露，放宽后的上限也一起泄露了——两者是同一条信任边界。
-20. **`isolated` 隔离档的 Docker 后端已落地，K8s 后端还没有**。档位路由、独立并发池、
+20. **`isolated` 隔离档使用 Docker 后端**。档位路由、独立并发池、
     请求/回显、`Health` 按档位报能力、启动审计都在（skill-service §2.4、§8.4）；
-    Phase 1 另加了 `services/sandbox/`（runner + 控制帧 + 镜像）与
-    `services/dispatcher/`（只调度的控制面，Docker socket 只在这里）。schema 是
+    `services/sandbox/` 提供 runner、控制帧与镜像，`services/dispatcher/` 是只调度的
+    控制面（Docker socket 只在这里）。schema 是
     「studio 不挂 socket，dispatcher 按固定模板起一次性容器」。**真 Docker e2e 已于
     2026-11-04 跑通**：三种运行时、只读 rootfs、非 root、无网络、零凭据、资源限制、
-    payload 只读挂载和自动删除均已验证；K8s Job 后端仍在 Phase 2。
-21. **K8s 清单没有在真实集群上验证过**。`deploy/k8s/` 里的清单是照着文档逐条写的。
-    **镜像与容器配置已经在真 Docker 上逐条实测过**（§22.14），但 NetworkPolicy 是否
-    真的拦住出向、headless + `round_robin` 是否真把流量摊到多个 Pod 上，这两条**仍然
-    未实测**——它们依赖集群的 CNI 与 DNS 行为，Docker 上只能用 `internal: true` 的网络
-    等效实现，不等于 K8s 的 NetworkPolicy 生效。
-    `deploy/k8s/README.md` 里列了部署前要先跑的三条自检命令。
-22. **studio 服务侧是参考实现，不是生产就绪的服务**。`services/studio/` 做完了契约、进程隔离、
+    payload 只读挂载和自动删除均已验证。
+21. **studio 服务侧是参考实现，不是生产就绪的服务**。`services/studio/` 做完了契约、进程隔离、
     超时、截断、限流、去重、优雅停机这些**功能**，指标导出与结构化日志也已补上
-    （§12.1、§12.2）；isolated 的 Docker 执行体在 Phase 1 补上，K8s 执行体还没有。
+    （§12.1、§12.2），isolated 的 Docker 执行体也已落地。
     它的定位是「把调用侧与服务侧的边界钉清楚，并让验收能真的跑起来」，不是直接上生产。
-23. **真实模型那一环已在真部署上实测**（§22.14）。用的是 MiniMax 的 **M Plan /
+22. **真实模型那一环已在真部署上实测**（§22.14）。用的是 MiniMax 的 **M Plan /
     Coding Plan 专用 key**——它与按量付费接口**不通用**（按量付费那把 key 在国内站与
     海外站一律 `402 insufficient_balance` / `401 invalid api key`），端点与 key 一换就通了。
     五个场景（正常 / 超时 / 忙不过来 / studio 宕机 / sandbox OOM）全部符合预期。
@@ -1679,17 +1669,9 @@ studio 报的是 `COMPLETED` + `exit_code=-9`，模型拿到一句没头没尾�
 
 #### 22.14.5 还没验到的
 
-- **K8s 侧**：NetworkPolicy 是否真拦出向、headless + `round_robin` 是否真摊流量、
-  `terminationGracePeriodSeconds` 与 drain 超时的配合——都依赖集群行为，Docker 上
-  无法等效验证（§22.12 第 21 条）。
 - **studio 自己成为最大占用者时的 OOM**：实测里被杀的永远是吃内存的脚本，studio 活着。
   但如果 studio 自己的常驻内存反而比脚本大（泄漏之类），内核可能挑中它——那就会变成
   「连不上 studio」。这条没测，也不该靠 `oom_score_adj` 兜（它只加在脚本进程上）。
-- **`isolated` Docker 后端没在真 Docker 里验过**：Phase 0 的档位/能力协商与 Phase 1 的
-  `services/sandbox/` + `services/dispatcher/` 都有本地测试钉着（协议、dispatcher HTTP、
-  Docker 固定模板、控制帧解析），但**真容器里的那一次还没跑**——开发机沙箱起不了子进程。
-  `tests/test_sandbox_docker_e2e.py` 已写好，在有 Docker 的机器上跑一次即可补上；
-  K8s 后端在 Phase 2。
 
 ---
 

@@ -7,7 +7,7 @@
 
 **Goal:** 让技能包里的脚本能**真的跑起来**——但不在 web_agent 进程内跑。脚本经 gRPC 交给一个独立的 studio 服务执行，主服务进程里**不起任何子进程**。
 
-**Architecture:** 一份 proto 契约（仓库里只有这一份，两边都从它生成代码）；调用侧 `app/core/studio.py`（gRPC 客户端 + 启动期兼容性检查）与 `app/core/skill_exec.py`（三道调用侧校验）；服务侧 `services/studio/`（gRPC server + 进程隔离 + 超时 + 截断 + 限流 + 去重 + 优雅停机）；部署产物 `services/studio/Dockerfile` 与 `deploy/k8s/`。
+**Architecture:** 一份 proto 契约（仓库里只有这一份，两边都从它生成代码）；调用侧 `app/core/studio.py`（gRPC 客户端 + 启动期兼容性检查）与 `app/core/skill_exec.py`（三道调用侧校验）；服务侧 `services/studio/`（gRPC server + 进程隔离 + 超时 + 截断 + 限流 + 去重 + 优雅停机）；部署产物 `services/studio/Dockerfile` 与 `deploy/docker-compose.yml`。
 
 **Tech Stack:** Python 3.11+ / FastAPI / SQLAlchemy 2.0 async / Alembic / `grpcio` 1.85（+ `grpcio-tools` 生成桩代码）/ pytest-asyncio（`asyncio_mode = auto`）
 
@@ -131,17 +131,16 @@
 **Files:**
 - Create: `services/studio/Dockerfile`、`services/studio/requirements.txt`
 - Create: `services/studio/healthcheck.py`、`services/studio/reaper.py`
-- Create: `deploy/k8s/studio-{deployment,service,networkpolicy}.yaml`、`deploy/k8s/README.md`
 - Create: `deploy/docker-compose.yml`
 - Modify: `app/core/studio.py`、`app/config/settings.py`、`.env.example`
 
 - [x] 镜像：python / bash / node 三运行时，版本钉死，**零凭据**，非 root，只装 `grpcio` 一个依赖。
-- [x] `STUDIO_EXEC_LB_POLICY`（默认 `round_robin`）：客户端建通道时加 `dns:///` 前缀。**Service 侧也必须 headless**——两边配对才有意义，单改一边等于没改（skill-service §13.4）。
-- [x] 探针用 **exec** 而不是 K8s 的 `grpc:` 探针——后者发的是标准健康检查协议 `grpc.health.v1.Health/Check`，跟契约里的 `Health` 对不上。
+- [x] `STUDIO_EXEC_LB_POLICY`（默认 `round_robin`）：客户端建通道时加 `dns:///` 前缀，服务发现解析出多个地址时由客户端分配连接。
+- [x] 健康检查调用本项目契约里的 `Health`，避免依赖标准健康检查协议。
 - [x] 启动巡检：按 **cwd 在临时目录里**判定残留进程，不按进程名匹配；没有 `/proc` 的平台上不做任何事。
 - [x] **优雅停机先摘 readiness 再 drain**（§13.5）。修掉一个更要命的 bug：**取消 grpc 的 `wait_for_termination()` 那个 task 会让后面的 `server.stop()` 直接抛 `CancelledError`**，停机路径整个断掉。
 
-**本环境不可验证**：K8s 清单没在真实集群上跑过（本机没有 Docker，也没有集群）。镜像构建、探针在镜像里跑通、只读 rootfs 下的 tmpfs 挂载、NetworkPolicy 是否真拦住出向、headless + round_robin 是否真把流量摊开——这五条都只做了「对照文档逐条写」。
+**本环境限制**：当时只完成了静态配置与单元测试；镜像构建、容器内健康检查和只读 rootfs 下的运行，后来在真实 Docker 环境中补齐验证。
 
 ### Task 9: 文档回写
 
@@ -221,8 +220,6 @@ happy 场景里模型把工具返回的退出码与 stdout **逐字转述**了�
 
 ### 还没验到的
 
-- **K8s 侧**：NetworkPolicy、headless + `round_robin` 摊流量、drain 与
-  `terminationGracePeriodSeconds` 的配合——依赖集群行为，Docker 上无法等效验证。
 - **studio 自己成为最大占用者时的 OOM**：实测里被杀的永远是吃内存的脚本、studio 活着；
   反过来的情况没测（也不该靠 `oom_score_adj` 兜——它只加在脚本进程上）。
 
@@ -230,16 +227,14 @@ happy 场景里模型把工具返回的退出码与 stdout **逐字转述**了�
 
 ## 遗留与已知限制
 
-1. **K8s 清单未在真实集群验证**（Docker 侧已实测，见上）。
-2. **studio 服务侧是参考实现**：没有多档隔离（`isolated` 档未实现）。
+1. **studio 服务侧是参考实现**：当时没有多档隔离（`isolated` 档未实现）。
    指标导出与结构化日志已补上（skill-service §12.1、§12.2）。
-3. **`isolated` 隔离档只有骨架**：档位路由、独立队列、运行时缺失时的明确报错都
+2. **`isolated` 隔离档只有骨架**：档位路由、独立队列、运行时缺失时的明确报错都
    落地了（skill-service §2.4、§8.4），**容器执行器本身没做**——起容器要挂
    Docker socket，与 §7 的「无宿主挂载」冲突。
-4. **容器级 OOM 已补**：§13.2 的判定已实现并在真容器里验过（256 MB 限额 + 申请 1 GB
+3. **容器级 OOM 已补**：§13.2 的判定已实现并在真容器里验过（256 MB 限额 + 申请 1 GB
    → `LIMITED` + `exit_code=-1` + 「内存超出容器限额」，studio 存活，cgroup 的
    `oom_kill` 计数 +1）。剩下的尾巴是「studio 自己成为最大占用者」那一种情形。
-5. **本机没有 bash**：studio 的 bash 运行时在测试里被跳过（生产镜像里是齐的）。
-6. **`oom_score_adj` 只能写 `/proc`**：`prctl` 那条路在容器里返回 0 却不生效——
+4. **本机没有 bash**：studio 的 bash 运行时在测试里被跳过（生产镜像里是齐的）。
+5. **`oom_score_adj` 只能写 `/proc`**：`prctl` 那条路在容器里返回 0 却不生效——
    实现走 proc 路径并回读验证（skill-service §13.2）。
-7. **K8s 侧未实测**：NetworkPolicy、headless 摊流量、drain 与 grace period 的配合。

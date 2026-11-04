@@ -11,7 +11,6 @@
 | Skill 指令包与资源工具 | V4 | 已实现 |
 | studio fast 档 | V4 | 已实现并验证 |
 | studio isolated Docker 档 | V4 / Phase 1 | 已实现并在真 Docker 验证 |
-| studio isolated Kubernetes 档 | V4 / Phase 2 | 未实现 |
 
 代码、proto 和自动化测试是最终事实来源；设计文档解释边界、取舍和演进原因。若文档与可执行契约冲突，以 `proto/` 与测试为准，并同步修正文档。
 
@@ -43,7 +42,7 @@
 | [API 说明](../../app/api/README.md) | HTTP、SSE 与前端接入 |
 | [核心运行时说明](../../app/core/README.md) | Workflow、AgentRunner、工具和状态管理 |
 | [服务拓扑](../../services/README.md) | web_agent、studio、dispatcher、sandbox 的信任边界 |
-| [部署说明](../../deploy/README.md) | Docker Compose、K8s 与安全配置 |
+| [部署说明](../../deploy/README.md) | Docker Compose 与安全配置 |
 | [性能报告](../../scripts/PERFORMANCE.md) | 容量实测与成本模型 |
 | [测试策略](../../tests/README.md) | 测试层次与集成验证 |
 | [历史实施计划](../superpowers/plans/README.md) | 已完成迭代的原始任务记录，不是当前 TODO |
@@ -62,7 +61,7 @@
 | V3 | DAG、条件边、并行 reducer、人工审批、工具调用闭环、PostgreSQL 适配、容量实测 | 审批节点不再用特殊 Agent code 冒充；条件与 DAG 错误前移到配置期 | 已完成 |
 | V3.4 | 字符 n-gram 逻辑回归敏感内容过滤、API 与 LLM 双防线 | 不再依赖关键词表作为唯一拦截手段 | 已完成 |
 | V4 | MCP stdio/Streamable HTTP、MCP 工具目录、Skill 指令包、`skill_resource`、`skill_exec` | 工具来源不再局限于代码注册表；MCP 不再使用已废弃的 HTTP+SSE 双端点传输 | 已完成 |
-| V4 isolated | studio → dispatcher → 一次性 sandbox、档位能力协商、独立并发池、真 Docker 加固和五场景验证 | isolated 不再只是骨架；禁止静默降级到 fast | Docker 已完成，K8s 待办 |
+| V4 isolated | studio → dispatcher → 一次性 sandbox、档位能力协商、独立并发池、真 Docker 加固和五场景验证 | isolated 不再只是骨架；禁止静默降级到 fast | Docker 已完成 |
 
 ## 已移除、已替换或明确不做
 

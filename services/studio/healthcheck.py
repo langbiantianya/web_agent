@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """studio 的探针命令行工具（skill-service §13.3）。
 
-## 为什么不用 K8s 的 ``grpc:`` 探针
+## 为什么使用独立的 Health 探针
 
-K8s 的 gRPC 探针发的是 ``grpc.health.v1.Health/Check``——**gRPC 健康检查
-标准协议**。而 studio 实现的是契约里自己的 ``Health`` 方法
+标准 gRPC 健康检查协议是 ``grpc.health.v1.Health/Check``。studio 实现的是
+契约里自己的 ``Health`` 方法
 （``webagent.studio.v1.Studio/Health``），字段是 ``ready / version /
 language_info / max_concurrency / profile``，跟标准协议对不上。
 

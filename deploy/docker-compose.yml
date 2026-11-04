@@ -9,9 +9,8 @@
 #
 # **本环境没有 Docker，这份文件没有实测过。**
 #
-# 注意这里**故意**没有照搬 K8s 那套加固（只读 rootfs、非 root、禁出网）——
-# docker compose 跑在开发机上，那些限制会让本地调试很别扭。**生产部署看
-# deploy/k8s/，不要拿这份当生产配置。**
+# 注意这里是**开发配置**：为了便于本地调试，没有启用完整的只读 rootfs 和
+# 网络隔离。需要验证隔离执行时使用 `docker-compose.lab.yml`。
 services:
   studio:
     build:

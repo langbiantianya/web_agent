@@ -22,8 +22,7 @@
 | 脚本 | [scripts/README.md](scripts/README.md) | 数据、压测、模型训练、proto 与文档检查 |
 | 性能报告 | [scripts/PERFORMANCE.md](scripts/PERFORMANCE.md) | 实测吞吐、并发容量和压测偏差 |
 | 测试 | [tests/README.md](tests/README.md) | 测试层次、并行隔离和端到端验证 |
-| 部署 | [deploy/README.md](deploy/README.md) | Docker Compose、Kubernetes 和安全配置 |
-| K8s | [deploy/k8s/README.md](deploy/k8s/README.md) | studio 清单、探针和集群部署步骤 |
+| 部署 | [deploy/README.md](deploy/README.md) | Docker Compose、安全配置和运行方式 |
 | Proto | [proto/README.md](proto/README.md) | 唯一契约来源、桩代码生成和一致性检查 |
 
 ## 按任务查找

@@ -62,14 +62,9 @@ _PROTO_TO_PROFILE = {
     studio_pb2.EXEC_PROFILE_ISOLATED: PROFILE_ISOLATED,
 }
 
-# gRPC 的负载均衡策略（skill-service §13.4）。
-#
-# 默认 gRPC 的 ``pick_first`` 会**只连上第一个 DNS 解析结果**，之后再也不换——
-# 配上 K8s 的普通 ClusterIP Service，扩缩容就等于白扩：加了 Pod，流量一点都
-# 不过去。而这个症状极难发现（服务看着完全正常，只是没吃满）。
-#
-# 解法是 **headless Service + 客户端自己轮询**：``dns:///`` 前缀让 gRPC 用
-# DNS 解析器拿到**全部** A 记录，``round_robin`` 再把请求分给它们。
+# gRPC 的负载均衡策略（skill-service §13.4）。默认 ``pick_first`` 只会使用
+# 第一个解析结果；当同一个名字解析出多个后端地址时，长连接不会自动分摊。
+# ``dns:///`` 前缀让 gRPC 获取全部 A 记录，``round_robin`` 再把请求分给它们。
 LB_POLICY_DEFAULT = "round_robin"
 
 # proto 枚举 → 我们的状态名。
@@ -271,8 +266,8 @@ def version_at_least(actual: str, minimum: str) -> bool:
 def channel_target(addr: str) -> str:
     """把配置里的地址转成 gRPC 的 target。
 
-    ``dns:///`` 前缀是必需的：它让 gRPC 用 DNS 解析器拿到**全部** A 记录，
-    而不是只拿第一个。轮询策略要配合它才有意义（skill-service §13.4）。
+    ``dns:///`` 前缀让 gRPC 用 DNS 解析器拿到**全部** A 记录，而不是只拿第一个。
+    轮询策略要配合它才有意义（skill-service §13.4）。
 
     已经带 scheme 的地址（``unix:`` / ``xds:`` / ``dns:///`` …）原样返回——
     那种场景下解析器由用户自己指定。

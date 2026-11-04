@@ -9,9 +9,9 @@
 # 2. **只读 rootfs + 非 root**——脚本只往 cwd（临时目录）写。
 # 3. **运行时固定版本**——python / bash / node 三样，版本钉死。
 #
-# 这几条在**编排平台的容器配置**里也要再设一遍（只读 rootfs、drop capabilities、
-# no-new-privileges、seccomp、pidsLimit、禁出网）。镜像里能做的是「非 root」与
-# 「不装多余的东西」，其余靠 K8s 的 securityContext 与 NetworkPolicy。
+# 这几条在**容器启动配置**里也要再设一遍（只读 rootfs、drop capabilities、
+# no-new-privileges、pidsLimit、禁出网）。镜像里能做的是「非 root」与
+# 「不装多余的东西」，其余由 Docker Compose 或调度器落实。
 
 # ---------------------------------------------------------------- 运行时来源
 #
@@ -64,18 +64,14 @@ COPY proto/ ./proto/
 COPY webagent/ ./webagent/
 COPY services/ ./services/
 
-# 非 root（§7）。uid 1000 是 K8s 里常见的约定；K8s 的 securityContext 里还要
-# 再写一遍 runAsNonRoot / runAsUser，两边一致才不会出现「镜像里是 root 但
-# K8s 说非 root」的错配。
+# 非 root（§7）。容器启动时也必须显式使用 uid 1000，保持镜像与运行配置一致。
 RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin studio \
     && chown -R 1000:1000 /app
 USER 1000
 
 EXPOSE 9000
 
-# 健康检查探针用（§13.3）。K8s 的 grpc: 探针发的是 gRPC 健康检查标准协议
-# grpc.health.v1.Health/Check，跟我们的 Health 方法对不上，所以用 exec 探针
-# 调我们自己的方法。
+# 健康检查探针用（§13.3），调用 studio 自己的 Health 方法。
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-m", "services.studio.healthcheck", "--addr", "127.0.0.1:9000"]
 

@@ -6,23 +6,17 @@
 
 ## 工作室与隔离执行
 
-- [ ] **P0：Kubernetes Job 后端**
-  实现 `K8sJobBackend`、最小权限 RBAC、Job/Pod 固定模板、日志读取、OOM/驱逐判定和删除回收。当前只有 Docker Phase 1。
-
-- [ ] **P0：真实 K8s 集群验证**
-  验证 NetworkPolicy 真正阻断出向、headless Service + `round_robin` 能摊平流量、drain 与 `terminationGracePeriodSeconds` 配合、PodSecurity 与 ResourceQuota 生效。
-
 - [ ] **P1：取消传播到 sandbox**
   gRPC 取消目前不保证结束 dispatcher/sandbox。需要定义取消协议，并验证取消后 5 秒内容器消失。
 
 - [ ] **P1：供应链与更强运行时隔离**
-  镜像目录中的 ref 固定到 digest；评估 cosign 校验、自定义 seccomp、gVisor 或 Kata；补准入策略，禁止目录外镜像与特权参数。
+  镜像目录中的 ref 固定到 digest；评估镜像签名校验与自定义 seccomp；禁止目录外镜像、特权参数和额外宿主挂载。
 
 - [ ] **P1：sandbox trace 传播**
   将 W3C `traceparent` 带入 payload、runner 日志与 studio/dispatcher 调用，形成跨服务链路。
 
 - [ ] **P1：多级背压与配额**
-  当前有 studio isolated 池和 dispatcher in-flight，但没有命名空间配额、技能级配额、预算和预热池。需要补齐容量治理。
+  当前有 studio isolated 池和 dispatcher in-flight，但没有技能级配额、预算和预热池。需要补齐容量治理。
 
 - [ ] **P1：sandbox 阶段指标**
   当前有 studio 执行指标，但还缺少独立的 `sandbox_start_seconds`、`sandbox_total{phase}` 与成本指标，难以单独分析容器启动和失败阶段。

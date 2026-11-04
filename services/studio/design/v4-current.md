@@ -1,6 +1,6 @@
 # V4：studio 当前服务设计
 
-> 状态：V4 已实现；Docker isolated 后端与真 Docker 五场景已验证。K8s isolated 后端仍属 TODO。
+> 状态：V4 已实现；Docker isolated 后端与真 Docker 五场景已验证。
 
 > 调用侧设计见 [V4 主设计](../../../app/design/v4-tools-skills.md)；全局目录与版本历史见 [设计总目录](../../../docs/design/README.md)。
 
@@ -68,8 +68,8 @@ studio **没有技能的概念**。它收到的是「一段脚本正文 + 路径
 | `fast`（默认） | 容器内**独立进程组** + 独立临时工作目录 + 只读 rootfs | 几十~几百毫秒 | 纯计算：解析、转换、统计 |
 | `isolated` | 每次执行起一个**一次性容器** | 秒级 | 触碰第三方库、需要完整依赖树的脚本 |
 
-**`fast` 档已实现；`isolated` 档的 Docker 后端已落地（Phase 1），K8s 后端待 Phase 2。**
-Phase 0 补了请求档位、响应回显、`Health` 按档位报能力、启动期审计；Phase 1 补了
+**`fast` 档与 `isolated` Docker 后端均已实现。** 请求档位、响应回显、
+`Health` 按档位报能力、启动期审计，以及
 `services/sandbox/`（runner + 控制帧 + 镜像）与 `services/dispatcher/`（只调度的控制面）。
 
 档位由**技能声明**（`metadata.runtime-profile`）算出来，随请求的 `profile` 带到服务端；
@@ -103,9 +103,8 @@ studio.Exec(profile=isolated)
 | Docker 执行体：`DispatcherRuntime` + dispatcher + 沙箱镜像（Phase 1） | ✅ |
 | 控制帧协议（4 KB 分片 + END 摘要） | ✅ `services/sandbox/protocol.py` |
 | 真实 Docker 环境 e2e | ✅ 2026-11-04 用正式镜像跑通（§20） |
-| K8s Job 后端 | ❌ Phase 2 |
 
-**为什么不让 studio 直接起容器**：起容器要挂 Docker socket 或给 K8s 凭据，而 studio
+**为什么不让 studio 直接起容器**：起容器需要挂 Docker socket，而 studio
 里跑着模型指定的代码——这等于把宿主 root 等价权限交给脚本，与 §7 的「零凭据、无宿主
 挂载」直接冲突。所以 Docker socket 只在 **dispatcher** 里，studio 通过内部 HTTP 调它；
 dispatcher 只按固定模板建容器，从不执行 `content`。
@@ -120,7 +119,7 @@ dispatcher 只按固定模板建容器，从不执行 `content`。
 
 ### 3.1 进程模型
 
-studio 是一个**单进程 gRPC 服务**（不是一个 Pod 起 N 个进程的池）：
+studio 是一个**单进程 gRPC 服务**（不是一个容器起 N 个进程的池）：
 
 ```text
 studio 容器
@@ -399,8 +398,8 @@ code 分支，**不匹配整句人话**。
 ## 7. 沙箱加固
 
 容器层面的加固**不在 studio 里做**：Docker 后端由 dispatcher 的固定模板设置
-（`services/dispatcher/docker_backend.py` 的 `containers.create(...)`），K8s 后端
-（Phase 2）对应的是编排平台清单；沙箱镜像本身只负责「非 root + 不装多余的东西」
+（`services/dispatcher/docker_backend.py` 的 `containers.create(...)`）；沙箱镜像本身
+只负责「非 root + 不装多余的东西」
 （`services/sandbox/Dockerfile`）。runner 里的进程组 / ulimit / 临时目录是第二道。
 
 | 项 | 要求 | 为什么 |
@@ -408,16 +407,14 @@ code 分支，**不匹配整句人话**。
 | 凭据 | **零**（不注入任何 env、不挂载任何 secret） | 它执行的是模型指定的代码 |
 | rootfs | **只读** | 脚本只往 cwd（临时目录）写 |
 | 可写目录 | 只有 cwd 与 `/tmp`（tmpfs 或空卷） | 写完即弃 |
-| 特权 | `privileged: false`、`allowPrivilegeEscalation: false` | —— |
+| 特权 | `privileged=false`、`no-new-privileges` | 阻止权限提升 |
 | capabilities | 全部 drop（含 `CAP_NET_RAW`） | —— |
 | 用户 | 非 root（uid 1000 之类） | —— |
 | `no-new-privileges` | 开 | 阻止 setuid 提权 |
-| seccomp | 默认 profile（或更严的自定义 profile） | 挡 syscall 面 |
-| AppArmor / SELinux | 默认 profile | 同上 |
+| seccomp | 使用运行时默认 profile（可按部署策略收紧） | 挡 syscall 面 |
 | PID 限额 | `pidsLimit`（如 256） | fork 炸弹的容器级兜底 |
-| 出网 | **禁**（NetworkPolicy `ingress/egress: []`） | 见 §11 |
-| 宿主挂载 | **无**（`hostPath` 一律不给） | 逃逸的最短路径 |
-| 节点标签 | 打专用标签 + taint/toleration | 防止被别的负载挤占 |
+| 出网 | **禁**（Docker `network_disabled=true`） | 见 §11 |
+| 宿主挂载 | **只有一个只读 payload**，不给 Docker socket 或业务目录 | 逃逸的最短路径 |
 
 > **「零凭据」是这一整节的重点。** studio 容器里如果有一个能用的 API key，那么一次
 > 提示词注入就够了：模型让脚本读出那个 key 并打印到 stdout，脚本的结果会被回灌进 prompt，
@@ -545,7 +542,7 @@ stdout 还会附一个 `stdout_digest`（sha256）——审计用，也让调用
 
 - **不走脚本**——走 MCP 工具（主设计 §21）。MCP 工具是**受控**的、有白名单的、经过协议
   的外部访问路径，比在脚本里 `curl` 强得多；
-- 或者用白名单出网（`NetworkPolicy` 只放行特定域名），但那时要重新评估 §15 的威胁模型。
+- 当前 Docker sandbox 固定关闭网络，不提供脚本级出网开关。
 
 ### 11.2 文件系统
 
@@ -641,20 +638,17 @@ counter / gauge / histogram 三种类型，自己写一百来行就够，HTTP �
 
 ### 13.1 编排形态
 
-K8s Deployment（无状态）：
+Docker Compose 部署由三部分组成：
 
-| 项 | 建议 | 理由 |
+| 组件 | 建议 | 理由 |
 | --- | --- | --- |
-| `replicas` | 2 起 | studio 挂了脚本能力就没了（主设计 §22.12 第 2 条） |
-| `resources.requests.cpu` | 1 | 主要是等 I/O，但 python 启动不算便宜 |
-| `resources.requests.memory` | 512Mi | 解释器 + 脚本 |
-| `resources.limits.memory` | 2Gi | 硬顶；超了就是 `LIMITED` |
-| `resources.limits.cpu` | 2 | —— |
-| `pidsLimit` | 256 | fork 炸弹的容器级兜底 |
-| `readOnlyRootFilesystem` | true | §7 |
-| `allowPrivilegeEscalation` | false | §7 |
-| `runAsNonRoot` / uid 1000 | true | §7 |
-| `seccompProfile` | RuntimeDefault | §7 |
+| `studio` | 1 CPU / 2 GB 内存上限 | 解释器、队列与 fast 档执行 |
+| `studio-dispatcher` | 1 CPU / 256 MB 内存上限 | 只持有 Docker socket，不执行脚本正文 |
+| 一次性 sandbox | 1 CPU / 512 MB / 256 PIDs | 每次执行独立创建并删除 |
+
+生产部署应使用 `deploy/docker-compose.lab.yml` 的网络与加固配置，并按宿主机容量设置
+并发和队列。studio 无状态，可以启动多个实例；调用方可用 DNS 多地址与 `round_robin`
+分配请求。
 
 ### 13.2 内存与 `LIMITED`
 
@@ -703,18 +697,11 @@ cgroup 的 `oom_kill` 计数 +1。
 
 `Health` 必须**便宜**：不能跑脚本、不能读文件。
 
-### 13.4 gRPC 与 K8s Service 的坑
+### 13.4 gRPC 多后端
 
-**gRPC 用 HTTP/2 长连接，K8s 的普通 Service 只能把连接固定到某一个 Pod**——客户端会一直
-和那一个 Pod 说话，扩缩容等于白扩。
-
-解法：
-
-- **headless Service**（`clusterIP: None`）+ 客户端自己做 DNS 轮询（gRPC 的
-  `round_robin` 策略，或自己解析后端列表）；
-- 或者上服务网格 / gRPC xDS 做真正的客户端侧负载均衡。
-
-**不要**用普通 ClusterIP Service 就以为扩缩容生效了——那是最容易踩且最难发现的坑。
+gRPC 使用 HTTP/2 长连接，`pick_first` 只使用第一个解析地址。多个 studio 实例通过同一个
+DNS 名字暴露时，客户端应使用 `dns:///` 与 `round_robin`，或使用明确的服务发现方案；
+只有单实例时不需要额外配置。
 
 ### 13.5 优雅停机
 
@@ -745,9 +732,6 @@ payload 走**只读 bind mount**：dispatcher 写一个对 Docker daemon 可见�
 studio 启动时会探一次 dispatcher 的 `/health`：探不到就把 isolated 标成不可用
 （`Health.profiles[isolated].ready=false`），**不会**悄悄退回 fast。dispatcher 在运行期
 挂掉时，isolated 请求返回 `status=failed` + `error_code=sandbox_unavailable`。
-
-K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota）在 Phase 2；
-`deploy/k8s/` 目前仍是 fast 档的清单。
 
 ---
 
@@ -829,7 +813,7 @@ K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota�
 | dispatcher | 镜像/参数校验、饱和 503、错误映射、健康 | `tests/test_dispatcher.py`、`test_dispatcher_runtime.py` |
 | Docker 后端 | 固定模板/加固参数、OOM、结果丢失、未知镜像 | `tests/test_docker_backend.py`（假 Docker 客户端） |
 | 契约 | proto 与生成代码一致；两边文档里的片段与 proto 文件一致 | CI 里跑一个比较脚本 |
-| 集成 | 真起容器、真脚本、真实 gRPC | docker-compose / kind 起一个 studio |
+| 集成 | 真起容器、真脚本、真实 gRPC | Docker Compose 起一套 studio |
 | 真 Docker | 无网络、只读 rootfs、非 root、读不到宿主凭据 | `tests/test_sandbox_docker_e2e.py`（没有 Docker 时 skip） |
 | 跨语言 | python / bash / node 各跑通一遍 | 三个各一个最小脚本 |
 | 故障注入 | studio 被 kill / 超时 / OOM / 队列满 / dispatcher 挂 | 集成测试里人为构造 |
@@ -862,25 +846,23 @@ K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota�
 
 1. **`fast` 档不是强隔离**。同一容器内先后两次执行之间理论上存在残留（临时目录、环境
    变量、打开的文件）。需要强隔离的走 `isolated` 档；Docker 后端已在 Phase 1 落地
-   （§2.4、§13.6）并已完成真 Docker e2e（§20），K8s 后端在 Phase 2。
+   （§2.4、§13.6）并已完成真 Docker e2e（§20）。
 2. **禁出网**。需要外网的脚本做不了——这是有意的（§11.1），但会让一部分技能写不出来。
 3. **无凭据**。需要 API key / 数据库口令的脚本做不了。这类需求应该走 MCP 工具。
 4. **输入只支持文本**。二进制输入、二进制输出都不支持（§9.1、§9.3）。
 5. **取消不保证杀掉脚本**。gRPC 取消不传播到对端的进程组（§8.3）。
 6. **去重是尽力而为**。`request_id` 的窗口过期或 studio 重启后，重复执行仍可能发生（§5.2）。
 7. **单镜像多运行时**。镜像体积随运行时数量线性增长；某语言用得少时应该拆成多个
-   Deployment 按 language 路由（§10.1、§10.3）。
-8. **扩缩容依赖 headless Service**。用普通 ClusterIP Service 会让 gRPC 长连接固定在一个
-   Pod 上，扩缩容等于白扩（§13.4）。
+   独立服务实例并按 language 路由（§10.1、§10.3）。
+8. **多实例扩缩容需要服务发现配合**。gRPC 长连接会固定到单个实例；增删容器时必须同步
+   更新解析结果，并让客户端连接均衡策略感知这些变化（§13.4）。
 9. **没有脚本级别的配额**。配额是**实例级**的（并发数、队列深度、时限）；单个技能跑满整
    个实例是可能的。
 10. **日志里没有脚本输出**。为了不落敏感数据，stdout/stderr 只进执行结果不进日志
     （§12.2）。事后排查只能靠 `stdout_digest`。
-11. **`isolated` 的 K8s 后端未实现**（§2.4）。Docker 后端已在 Phase 1 落地：
-    `services/sandbox/` + `services/dispatcher/` + `DispatcherRuntime`，studio 自己不挂
-    socket；控制帧、超时、OOM、取消由 dispatcher/runner 处理。真 Docker 下的加固和
-    五类真实故障已跑通（§20）；K8s Job 后端仍在 Phase 2，需要 K8s 强隔离的部署要等
-    Phase 2。
+11. **`isolated` 只提供 Docker 后端**。实现位于 `services/sandbox/` +
+    `services/dispatcher/` + `DispatcherRuntime`，studio 自己不挂 socket；控制帧、超时、
+    OOM、取消由 dispatcher/runner 处理。真 Docker 下的加固和五类真实故障已跑通（§20）。
 
 ---
 
@@ -907,7 +889,7 @@ K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota�
       → 测试：`tests/test_studio_isolated.py`（16 条）+ `tests/test_sandbox_protocol.py`（8）、
       `test_sandbox_runner.py`、`test_dispatcher.py`（8）、`test_dispatcher_runtime.py`（4）、
       `test_docker_backend.py`（5）。
-      **真 Docker e2e 已于 2026-11-04 跑通**（§20）；K8s Job 后端在 Phase 2。
+      **真 Docker e2e 已于 2026-11-04 跑通**（§20）。
 - [x] 进程隔离：新 session、独立 cwd、env 白名单、`killpg` + `wait` 回收；
       → `services/studio/executor.py`（`start_new_session` / `CREATE_NEW_PROCESS_GROUP`）
 - [x] 超时：墙钟定时器 + `RLIMIT_CPU` 双保险；
@@ -916,10 +898,10 @@ K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota�
       → `services/studio/executor.py::_drain`
 - [x] 容器加固：只读 rootfs、非 root、drop capabilities、no-new-privileges、seccomp、
       `pidsLimit`、零凭据、禁出网；
-      → `deploy/k8s/studio-deployment.yaml`、`deploy/k8s/studio-networkpolicy.yaml`。
+      → `deploy/docker-compose.yml`、`deploy/docker-compose.lab.yml` 与
+      `services/dispatcher/docker_backend.py` 的固定模板。
       **已在真 Docker 上实测**（只读 rootfs、非 root、capabilities 全 0、
-      `NoNewPrivs=1`、禁出网、零凭据、环境变量白名单——11 项全过，见
-      `deploy/k8s/README.md`）；**仍未在真实 K8s 集群上验证** NetworkPolicy 那一条。
+      `NoNewPrivs=1`、禁出网、零凭据、环境变量白名单——11 项全过）。
 - [x] 启动巡检：杀残留进程；
       → `services/studio/reaper.py`（按 cwd 在临时目录里判定，不按进程名匹配；没有 `/proc`
       的平台上不做任何事）
@@ -949,7 +931,7 @@ K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota�
       一次执行记全了什么、失败原因分类、日志里**没有输出内容**）
 - [x] `Health` 实现（便宜、可做探针）；
       → `services/studio/server.py::Health`；探针命令行工具 `services/studio/healthcheck.py`
-      （用 exec 探针而不是 K8s 的 `grpc:` 探针——后者发的是标准健康检查协议，跟契约对不上）
+      （调用本项目契约里的 `Health`，服务端输出明确就绪状态）
 - [x] 镜像：python / bash / node 三运行时，版本固定；
       → `services/studio/Dockerfile`。**已在真 Docker 上构建并跑通**（369 MB）；
       多阶段构建、node 二进制拷贝、apt 装 bash/tini 都验过了。
@@ -958,9 +940,9 @@ K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota�
       只装 `grpcio` 会在容器里直接 `ModuleNotFoundError: No module named 'google'`
       （本地开发机被 `grpcio-tools` 顺带装上了，所以本地全绿）。
       → `tests/test_studio_deps.py`
-- [x] 部署：Deployment（replicas ≥ 2）+ **headless Service** + 探针；
-      → `deploy/k8s/`。客户端侧的 `round_robin` 策略见 `app/core/studio.py::channel_target`
-      与 `STUDIO_EXEC_LB_POLICY`——**Service 与客户端两边配对才有意义**，单改一边等于没改。
+- [x] 部署：Docker 镜像 + Compose 编排 + 健康检查；
+      → `deploy/docker-compose.yml`、`deploy/docker-compose.lab.yml`。多实例场景的服务发现
+      与客户端连接均衡策略见 `app/core/studio.py::channel_target`。
 - [x] web_agent 侧：gRPC 客户端、启动期兼容性检查、`skill_exec` 工具、路径校验；
       → `app/core/studio.py`、`app/core/skill_exec.py`、`app/core/tools.py`
 - [x] 契约一致性 CI 检查（proto 文件 vs 两份文档里的片段）；
@@ -1038,7 +1020,7 @@ K8s 的等价形态（Job + ServiceAccount/RBAC + NetworkPolicy + ResourceQuota�
    false。runner 现在比较 cgroup v1/v2 的累计 `oom_kill`，返回
    `LIMITED + sandbox_oom`，避免误报成模糊的 `sandbox_signal`。
 
-K8s Job、NetworkPolicy、gVisor/Kata 等集群行为仍不在本次 Docker 验证范围内。
+本次验证范围只覆盖 Docker 部署与一次性 sandbox。
 
 ---
 

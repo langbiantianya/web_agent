@@ -124,9 +124,8 @@ class Settings(BaseSettings):
     studio_exec_max_timeout_ms: int = 60000
     # 脚本正文长度上限（字符）。
     studio_exec_max_script_chars: int = 200000
-    # gRPC 的负载均衡策略。默认 ``round_robin``：配合 K8s 的 **headless
-    # Service**，请求会轮询到所有后端 Pod 上。用默认的 ``pick_first`` 的话，
-    # gRPC 会一直连着第一个解析结果——**扩缩容等于白扩**，而且极难发现
+    # gRPC 的负载均衡策略。默认 ``round_robin``：当一个 DNS 名字解析到多个后端时，
+    # 请求会轮询到这些地址；``pick_first`` 会一直使用第一个解析结果
     # （skill-service §13.4）。排查问题时可以临时改成 ``pick_first``。
     studio_exec_lb_policy: str = "round_robin"
     # studio 的最低版本。默认 1.0.0：fast-only 部署不该被 2.0.0 的语义变更卡住。
