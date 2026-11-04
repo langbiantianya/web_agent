@@ -1,6 +1,6 @@
 # web_agent 主服务设计索引
 
-主设计按版本拆分。当前系统由 V1–V4 累积组成；V4 页不重复粘贴早期章节，因此排障或修改基础协议时要回到对应版本。
+主设计按版本拆分。当前系统由 V1–V4.1 累积组成；版本页不重复粘贴早期章节，因此排障或修改基础协议时要回到对应版本。
 
 | 版本 | 文档 | 主要内容 |
 | --- | --- | --- |
@@ -8,6 +8,7 @@
 | V2 | [多实例与 LangGraph](v2-multi-instance.md) | Redis、租约、Stream 回放、LangGraph |
 | V3 | [编排、审批、工具与安全](v3-orchestration.md) | DAG、审批、工具、PG、敏感过滤 |
 | V4 | [MCP、Skill 与脚本执行](v4-tools-skills.md) | MCP、Skill、studio 调用侧 |
+| V4.1 | [数据库 LLM 接口与故障切换](v4.1-llm-endpoints.md) | 多接口优先级、加密 Key、请求失败自动切换 |
 
 跨项目版本历史、已移除方案和任务导航见 [设计总目录](../../docs/design/README.md)。未完成事项只在 [TODO](../../docs/design/TODO.md) 中维护。
 
@@ -17,4 +18,5 @@
 - 排查 run/SSE：读 V1、V2 与 V3。
 - 修改 Workflow：读 V1、V2-b、V3。
 - 接入 MCP 或 Skill：读 V3.2、V4。
+- 配置模型地址、Key 或故障切换：读 V4.1。
 - 修改 studio 契约：同时读 [V4 调用侧](v4-tools-skills.md) 和 [studio 服务侧](../../services/studio/design/v4-current.md)。

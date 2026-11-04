@@ -132,7 +132,10 @@ DATABASE_URL=postgresql+psycopg://user:pass@127.0.0.1:5432/agentdb
 DATABASE_URL=sqlite+aiosqlite:///./web_agent.db
 ```
 
-所有模型统一走 OpenAI 兼容接口，通过 `MINIMAX_BASE_URL`、`MINIMAX_MODEL`、`MINIMAX_API_KEY` 配置。变量名保留了 MiniMax 的历史命名，但端点可以指向 OpenAI、DeepSeek、Qwen 或本地 vLLM。
+所有模型统一走 OpenAI 兼容接口。运行期地址与 API Key 存在数据库 `llm_endpoint`
+表中，可按 `priority` 配置多个入口并在请求失败时依次切换。`.env` 中的
+`MINIMAX_BASE_URL` / `MINIMAX_MODEL` / `MINIMAX_API_KEY` 只用于首次灌入演示数据；
+之后通过 `/api/llm-endpoints` 管理，不需要重启服务。
 
 ## 模块地图
 

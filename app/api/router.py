@@ -7,6 +7,7 @@ from app.api.routes import (
     auth,
     conversation,
     health,
+    llm_endpoint,
     mcp,
     run,
     skill,
@@ -18,6 +19,7 @@ api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(agent.router)
+api_router.include_router(llm_endpoint.router)
 api_router.include_router(tool.router)
 api_router.include_router(workflow.router)
 api_router.include_router(conversation.router)

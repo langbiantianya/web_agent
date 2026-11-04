@@ -52,6 +52,7 @@ EXPECTED_TABLES = {
     "skill_revision",
     "mcp_server",
     "mcp_tool",
+    "llm_endpoint",
 }
 
 
@@ -179,6 +180,7 @@ def test_primary_keys_are_rowid_aliases(migrated_db: Path):
         ("message", {"idx_conv", "idx_run"}),
         ("run", {"idx_conv_status", "idx_status"}),
         ("conversation", {"idx_user"}),
+        ("llm_endpoint", {"idx_llm_endpoint_enabled_priority"}),
     ],
 )
 def test_design_indexes_exist(migrated_db: Path, table: str, expected: set[str]):

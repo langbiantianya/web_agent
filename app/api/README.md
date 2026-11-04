@@ -23,8 +23,14 @@
 | GET | `/api/runs/{id}/stream` | 订阅 SSE 事件流 |
 | POST | `/api/auth/sse-ticket` | 获取短期 SSE ticket |
 | GET | `/api/health` | 健康检查 |
+| GET/POST | `/api/llm-endpoints` | 列出或新增数据库 LLM 接口配置 |
+| GET/PUT/DELETE | `/api/llm-endpoints/{code}` | 查询、更新或删除接口配置 |
 
 Skill 与 MCP 管理接口分别位于 `/api/skills` 和 `/api/mcp/servers`。部署级写操作还要求管理员令牌，具体配置见 `.env.example`。
+
+LLM 接口配置要求 `X-Admin-Key`，API Key 不回显。多个启用项按 `priority` 数值
+从小到大尝试；同一优先级按创建顺序稳定排序。请求尚未输出内容时失败会切换下一项，
+已经向客户端输出 token 或 reasoning 后不会重放另一接口。
 
 ## 创建会话并订阅
 

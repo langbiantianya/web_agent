@@ -24,6 +24,7 @@ from app.config.db import SessionLocal, engine
 from app.config.settings import settings
 from app.core.crypto import encrypt
 from app.repo.agent_repo import agent_repo
+from app.repo.llm_endpoint_repo import llm_endpoint_repo
 from app.repo.workflow_repo import workflow_repo
 
 DEMO_BASE_URL = settings.minimax_base_url
@@ -109,13 +110,13 @@ async def main() -> int:
     """初始化演示数据并返回退出码。
 
     依次做三件事：确认表结构已由迁移建好（没有就提示先跑 ``alembic upgrade head``，
-    而不是自己建表）→ 写入 3 个演示 Agent（planner / researcher / writer，api_key
-    加密后落库）→ 写入 1 个串起三者的线性 Workflow ``default_pipeline``。
+    而不是自己建表）→ 写入数据库 LLM 接口配置 → 写入 3 个演示 Agent
+    （planner / researcher / writer）→ 写入 1 个串起三者的线性 Workflow
+    ``default_pipeline``。
     已存在的按 code 跳过，因此可以重复执行。
 
-    模型与端点来自环境变量（``MINIMAX_BASE_URL`` / ``MINIMAX_MODEL`` /
-    ``MINIMAX_API_KEY``，默认见 .env），换任何 OpenAI 兼容服务都只改配置，
-    不需要改这里的代码；缺 API Key 只告警不失败，方便接本地 vLLM。
+    环境变量只用于首次灌入演示接口配置；之后地址与 Key 以数据库
+    ``llm_endpoint`` 表为准。缺 API Key 只告警不失败，方便接本地 vLLM。
 
     返回码：0 成功；1 表结构不存在（需要先迁移）。
     """
@@ -132,6 +133,20 @@ async def main() -> int:
     print(f"ℹ️  演示模型：{DEMO_MODEL} @ {DEMO_BASE_URL}\n")
 
     async with SessionLocal() as db:
+        if await llm_endpoint_repo.get_by_code(db, "default"):
+            print("· LLM 接口 default 已存在，跳过")
+        else:
+            await llm_endpoint_repo.create(
+                db,
+                code="default",
+                name="默认接口",
+                base_url=DEMO_BASE_URL,
+                api_key_cipher=encrypt(DEMO_API_KEY),
+                priority=100,
+                enabled=1,
+            )
+            print("✅ LLM 接口 default 已创建")
+
         for spec in AGENTS:
             payload = {**spec, "api_key_cipher": encrypt(DEMO_API_KEY), "enabled": 1}
             if await agent_repo.get_by_code(db, spec["code"]):

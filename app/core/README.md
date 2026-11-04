@@ -45,6 +45,8 @@ Workflow 的 `definition` 包含 `entry`、`nodes`、`edges` 和可选 `inputTem
 
 - `type: "approval"` 的节点通过 LangGraph `interrupt()` 暂停。
 - 暂停点由 `checkpoint.py` 保存；批准后从暂停节点继续，前面的节点不会重跑。
+- `llm_endpoints.py` 每个节点从数据库按优先级加载启用的 OpenAI 兼容接口；
+  `AgentRunner` 在尚未输出内容时自动切换到下一接口。
 - 模型请求的内置工具、Skill 资源和 MCP 工具都先经过 `agent.tools` 白名单。
 - `skill_resource` 从数据库读取技能资源；`skill_exec` 通过 gRPC 调用独立 studio，主进程不执行技能脚本。
 - MCP 支持 stdio 与 Streamable HTTP，工具名格式为 `mcp__<server>__<tool>`。
@@ -75,6 +77,7 @@ Workflow 的 `definition` 包含 `entry`、`nodes`、`edges` 和可选 `inputTem
 | `orchestrator.py` | run 生命周期、节点调度、审批恢复 |
 | `run_graph.py` | LangGraph 图构建、节点执行和审批节点 |
 | `agent_runner.py` | OpenAI 兼容流式调用与工具闭环 |
+| `llm_endpoints.py` | 数据库 LLM 接口优先级与兼容回退 |
 | `tools.py` | 内置工具注册表和动态工具分发 |
 | `run_hub.py` | seq 分配、广播和取消 |
 | `event_writer.py` | 事件批量落库 |

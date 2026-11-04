@@ -169,6 +169,7 @@
 
 <nav>
   <button data-tab="agents" class="active">Agent 配置</button>
+  <button data-tab="endpoints">LLM 接口</button>
   <button data-tab="workflows">Workflow 编排</button>
   <button data-tab="convs">会话观测</button>
 </nav>
@@ -183,6 +184,23 @@
     <div class="card">
       <h2 id="agentTitle">选择左侧 Agent，或新建一个</h2>
       <div class="body" id="agentForm"></div>
+    </div>
+  </section>
+
+  <!-- ================================================== LLM 接口 -->
+  <section id="tab-endpoints" class="split hidden">
+    <div class="card">
+      <h2>接口列表 <span class="sp"><button class="sm primary" id="btnNewEndpoint">+ 新建</button></span></h2>
+      <div style="padding:10px 14px;border-bottom:1px solid var(--border)">
+        <label style="margin:0"><span>X-Admin-Key <span class="hint">（仅保存在当前页面内存）</span></span>
+          <input type="password" id="epAdminKey" autocomplete="current-password">
+        </label>
+      </div>
+      <div class="items" id="endpointList"></div>
+    </div>
+    <div class="card">
+      <h2 id="endpointTitle">选择左侧接口，或新建一个</h2>
+      <div class="body" id="endpointForm"></div>
     </div>
   </section>
 
@@ -227,7 +245,11 @@
    与 web/index.html 保持同一套写法，理由有二：inline handler 在将来加 CSP 时
    会整片失效；列表项是 innerHTML 重绘出来的，委托一次就够，不必每次重绘重绑。 */
 
-const state = { agents: [], wfs: [], convs: [], agent: null, wf: null, conv: null, tools: [] };
+const state = {
+  agents: [], wfs: [], convs: [], endpoints: [],
+  agent: null, wf: null, conv: null, endpoint: null, tools: [],
+};
+let adminKey = "";
 const $ = id => document.getElementById(id);
 
 // ------------------------------------------------------------ 基础设施
@@ -247,6 +269,7 @@ function errText(r, body) {
 async function api(path, opts) {
   opts = opts || {};
   const init = { method: opts.method || "GET", headers: { "Content-Type": "application/json" } };
+  if (opts.admin && adminKey) init.headers["X-Admin-Key"] = adminKey;
   if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
   const r = await fetch(path, init);
   if (r.status === 204) return null;
@@ -282,7 +305,7 @@ const esc = s => String(s == null ? "" : s)
 const fmtTime = s => s ? new Date(s).toLocaleString("zh-CN", { hour12: false }) : "—";
 
 function switchTab(name) {
-  ["agents", "workflows", "convs"].forEach(t => {
+  ["agents", "endpoints", "workflows", "convs"].forEach(t => {
     $("tab-" + t).classList.toggle("hidden", t !== name);
   });
   document.querySelectorAll("nav button").forEach(b => {
@@ -350,7 +373,6 @@ async function loadAgents() {
         <div class="sub">${esc(a.model)} · v${a.version}</div>
       </div>
       <span class="tag ${a.enabled ? "ok" : "warn"}">${a.enabled ? "启用" : "停用"}</span>
-      ${a.has_api_key ? '<span class="tag">key</span>' : '<span class="tag bad">无 key</span>'}
     </div>`).join("");
 }
 
@@ -369,9 +391,6 @@ function renderAgentForm() {
   if (!a) { box.innerHTML = '<div class="muted">选择左侧 Agent，或新建一个。</div>'; return; }
   $("agentTitle").textContent = a.isNew ? "新建 Agent" : "编辑 " + a.code;
 
-  // 编辑态不回填已存的 key：API 也不返回明文（只有 has_api_key）。
-  // 留空 = 不改动，这是 PUT 语义里最容易被误解的一条。
-  const keyHint = a.isNew ? "" : (a.has_api_key ? "已配置；留空表示保持不变" : "尚未配置");
   // 工具勾选：选项来自服务端注册表，已勾的按 Agent 已存的名字回填
   const picked = new Set(Array.isArray(a.tools) ? a.tools : []);
   const toolRows = renderToolGroups(state.tools, picked);
@@ -385,13 +404,8 @@ function renderAgentForm() {
     <label><span>描述</span><input type="text" id="a_desc" value="${esc(a.description || "")}"></label>
     <label><span>system_prompt <span class="hint">（每次调用都会带上）</span></span>
       <textarea class="prompt" id="a_prompt" rows="4">${esc(a.system_prompt || "")}</textarea></label>
-    <div class="grid2">
-      <label><span>model</span><input type="text" id="a_model" value="${esc(a.model || "")}"></label>
-      <label><span>base_url <span class="hint">（OpenAI 兼容协议，需带 /v1）</span></span>
-        <input type="text" id="a_base" value="${esc(a.base_url || "")}"></label>
-    </div>
-    <label><span>api_key ${keyHint ? '<span class="hint">（' + esc(keyHint) + '）</span>' : ""}</span>
-      <input type="password" id="a_key" placeholder="${a.isNew ? "sk-…" : "留空则不修改"}" autocomplete="new-password"></label>
+    <label><span>model <span class="hint">（接口地址与 Key 在「LLM 接口」页统一配置）</span></span>
+      <input type="text" id="a_model" value="${esc(a.model || "")}"></label>
     <div class="grid2">
       <label><span>temperature <span class="hint">0.0 – 2.0</span></span>
         <input type="number" id="a_temp" step="0.05" min="0" max="2" value="${a.temperature != null ? a.temperature : 0.7}"></label>
@@ -431,17 +445,12 @@ async function saveAgent() {
       description: $("a_desc").value.trim(),
       system_prompt: $("a_prompt").value,
       model: $("a_model").value.trim(),
-      base_url: $("a_base").value.trim(),
       temperature: parseFloat($("a_temp").value),
       max_tokens: parseInt($("a_max").value, 10),
       tools: tools.length ? tools : null,
       extra_params: extra,
       enabled: $("a_on").checked,
     };
-    const key = $("a_key").value;
-    // 留空就不带这个字段——带了等于把已存的 key 抹成空。
-    if (key) payload.api_key = key;
-
     const a = state.agent;
     if (a.isNew) {
       payload.code = $("a_code").value.trim();
@@ -463,6 +472,129 @@ async function delAgent() {
     renderAgentForm();
     await loadAgents();
   }, "已删除");
+}
+
+// ------------------------------------------------------------ LLM 接口
+
+/** 加载数据库接口配置。没有管理员 Key 时只显示提示，不影响其它页签。 */
+async function loadEndpoints() {
+  adminKey = $("epAdminKey").value.trim();
+  const el = $("endpointList");
+  if (!adminKey) {
+    state.endpoints = [];
+    el.innerHTML = '<div class="muted" style="padding:14px">填写 X-Admin-Key 后加载接口配置。</div>';
+    return;
+  }
+  try {
+    state.endpoints = await api("/api/llm-endpoints?limit=500", { admin: true });
+  } catch (e) {
+    state.endpoints = [];
+    el.innerHTML = '<div class="muted" style="padding:14px">' + esc(e.message) + "</div>";
+    return;
+  }
+  if (!state.endpoints.length) {
+    el.innerHTML = '<div class="muted" style="padding:14px">还没有接口配置</div>';
+    return;
+  }
+  el.innerHTML = state.endpoints.map((row, i) => `
+    <div data-act="endpoint" data-code="${esc(row.code)}"
+         class="${state.endpoint && state.endpoint.id === row.id ? "sel" : ""}">
+      <div style="min-width:0">
+        <div class="nm">${esc(row.name || row.code)} <span class="sub">${esc(row.code)}</span></div>
+        <div class="sub">#${i + 1} · priority ${row.priority} · ${esc(row.base_url)}</div>
+      </div>
+      <span class="tag ${row.enabled ? "ok" : "warn"}">${row.enabled ? "启用" : "停用"}</span>
+      ${row.has_api_key ? '<span class="tag">key</span>' : '<span class="tag bad">无 key</span>'}
+    </div>`).join("");
+}
+
+/** 新建接口配置草稿。 */
+function newEndpoint() {
+  state.endpoint = { isNew: true, priority: 100, enabled: true };
+  renderEndpointForm();
+}
+
+/** 选中并显示一条接口配置。 */
+function editEndpoint(code) {
+  state.endpoint = state.endpoints.find(row => row.code === code) || null;
+  renderEndpointForm();
+  loadEndpoints();
+}
+
+/** 渲染接口编辑表单；密钥永不回填。 */
+function renderEndpointForm() {
+  const row = state.endpoint, box = $("endpointForm");
+  if (!row) {
+    box.innerHTML = '<div class="muted">选择左侧接口，或新建一个。</div>';
+    return;
+  }
+  $("endpointTitle").textContent = row.isNew ? "新建 LLM 接口" : "编辑 " + row.code;
+  const keyHint = row.isNew
+    ? "可留空（例如本地无需鉴权的 vLLM）"
+    : (row.has_api_key ? "已配置；留空保持不变" : "尚未配置");
+  box.innerHTML = `
+    <div class="grid2">
+      <label><span>code <span class="hint">（创建后不可改）</span></span>
+        <input type="text" id="e_code" value="${esc(row.code || "")}" ${row.isNew ? "" : "disabled"}></label>
+      <label><span>名称</span><input type="text" id="e_name" value="${esc(row.name || "")}"></label>
+    </div>
+    <label><span>base_url <span class="hint">（OpenAI 兼容协议，通常带 /v1）</span></span>
+      <input type="text" id="e_base" value="${esc(row.base_url || "")}" placeholder="https://api.example.com/v1"></label>
+    <div class="grid2">
+      <label><span>priority <span class="hint">（越小越先尝试）</span></span>
+        <input type="number" id="e_priority" min="0" value="${row.priority != null ? row.priority : 100}"></label>
+      <label><span>api_key <span class="hint">（${esc(keyHint)}）</span></span>
+        <input type="password" id="e_key" placeholder="${row.isNew ? "sk-…（可留空）" : "留空则不修改"}" autocomplete="new-password"></label>
+    </div>
+    <label><span><input type="checkbox" id="e_on" ${row.enabled === false ? "" : "checked"} style="width:auto;margin-right:6px">启用</span></label>
+    <div class="row">
+      <button class="primary" data-act="save-endpoint">保存</button>
+      ${row.isNew ? "" : '<button class="danger" data-act="del-endpoint">删除</button>'}
+      <span class="muted">一个请求失败且尚未输出内容时，自动尝试下一个启用项</span>
+    </div>`;
+}
+
+/** 新增或更新一条接口配置。 */
+async function saveEndpoint() {
+  await guard(async () => {
+    adminKey = $("epAdminKey").value.trim();
+    if (!adminKey) throw new Error("请先填写 X-Admin-Key");
+    const payload = {
+      name: $("e_name").value.trim(),
+      base_url: $("e_base").value.trim(),
+      priority: parseInt($("e_priority").value, 10),
+      enabled: $("e_on").checked,
+    };
+    const key = $("e_key").value;
+    if (key || state.endpoint.isNew) payload.api_key = key;
+    const row = state.endpoint;
+    if (row.isNew) {
+      payload.code = $("e_code").value.trim();
+      state.endpoint = await api("/api/llm-endpoints", {
+        method: "POST", body: payload, admin: true,
+      });
+    } else {
+      state.endpoint = await api("/api/llm-endpoints/" + encodeURIComponent(row.code), {
+        method: "PUT", body: payload, admin: true,
+      });
+    }
+    await loadEndpoints();
+    renderEndpointForm();
+  }, "接口配置已保存");
+}
+
+/** 删除当前接口配置。 */
+async function delEndpoint() {
+  const row = state.endpoint;
+  if (!row || !confirm("删除接口配置「" + row.code + "」？")) return;
+  await guard(async () => {
+    await api("/api/llm-endpoints/" + encodeURIComponent(row.code), {
+      method: "DELETE", admin: true,
+    });
+    state.endpoint = null;
+    renderEndpointForm();
+    await loadEndpoints();
+  }, "接口配置已删除");
 }
 
 // ------------------------------------------------------------ Workflow
@@ -844,9 +976,11 @@ document.querySelectorAll("nav button").forEach(b => {
 });
 $("btnRefresh").addEventListener("click", () => refreshAll());
 $("btnNewAgent").addEventListener("click", newAgent);
+$("btnNewEndpoint").addEventListener("click", newEndpoint);
 $("btnNewWf").addEventListener("click", newWorkflow);
 $("btnNewConv").addEventListener("click", newConv);
 $("btnLoadConvs").addEventListener("click", () => guard(() => loadConvs()));
+$("epAdminKey").addEventListener("change", () => loadEndpoints());
 
 // 三个列表都用委托：item 是 innerHTML 重绘出来的，绑一次就够。
 function delegateList(id, handlers) {
@@ -862,6 +996,10 @@ delegateList("agentList", el => {
 
 delegateList("wfList", el => {
   if (el.dataset.act === "wf") editWorkflow(el.dataset.code);
+});
+
+delegateList("endpointList", el => {
+  if (el.dataset.act === "endpoint") editEndpoint(el.dataset.code);
 });
 
 delegateList("convList", el => {
@@ -892,6 +1030,11 @@ wireEditor("wfForm", {
   "node-del": el => rmNode(parseInt(el.dataset.i, 10)),
   "edge-add": addEdge,
   "edge-del": el => rmEdge(parseInt(el.dataset.i, 10)),
+});
+
+wireEditor("endpointForm", {
+  "save-endpoint": saveEndpoint,
+  "del-endpoint": delEndpoint,
 });
 
 // 编排输入框是 innerHTML 重绘的，委托到容器上统一同步，顺便刷新 JSON 预览。
@@ -953,8 +1096,9 @@ async function refreshAll() {
     // Agent 列表取下拉选项，所以三个都得先就位。
     await loadTools();
     await loadAgents();
-    await Promise.all([loadWorkflows(), loadConvs()]);
+    await Promise.all([loadEndpoints(), loadWorkflows(), loadConvs()]);
     renderAgentForm();
+    renderEndpointForm();
     renderWorkflowForm();
     if (state.conv) await renderConvDetail();
   });

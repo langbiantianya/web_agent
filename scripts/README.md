@@ -8,7 +8,8 @@
 python -m scripts.seed
 ```
 
-`seed.py` 创建 `planner / researcher / writer` 三个 Agent 和 `default_pipeline`。默认模型配置来自 `.env`。
+`seed.py` 创建数据库 LLM 接口 `default`、`planner / researcher / writer`
+三个 Agent 和 `default_pipeline`。`.env` 只提供首次灌入的接口地址与 Key。
 
 ## 敏感内容模型
 

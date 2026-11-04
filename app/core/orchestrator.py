@@ -44,6 +44,7 @@ from app.core.errors import (
     ToolLoopExceeded,
     redact_error_message,
 )
+from app.core.llm_endpoints import load_llm_endpoints
 from app.core.run_graph import NodeRunner, RunRejected, build_run_graph, recursion_limit
 from app.core.run_hub import RunHub, get_hub
 from app.core.skill_context import (
@@ -543,6 +544,7 @@ class Orchestrator:
         # 技能正文与技能白名单在**重试循环之前**取一次：重试是为了让同一个节点
         # 再试一次，不是让它看到不同的技能版本。
         skill_plan = await self._build_skill_plan(agent)
+        endpoints = await load_llm_endpoints(agent)
         # 白名单给的是**实际注入了**的那些技能：被预算挡掉的技能，模型压根没
         # 收到它的指令，自然也不该读到它的资源。
         token = set_current_skill_codes(set(skill_plan.codes))
@@ -583,6 +585,7 @@ class Orchestrator:
                             if m.get("role") == MessageRole.USER.value
                         ]
                         + [user_input],
+                        endpoints=endpoints,
                     )
                     result = await runner.run_with_tools(messages)
                     await self._finish_step(

@@ -18,8 +18,14 @@ class AgentBase(BaseModel):
     description: str = Field(default="", max_length=512)
     system_prompt: str = Field(min_length=1, max_length=MAX_SYSTEM_PROMPT)
     model: str = Field(min_length=1, max_length=128)
-    base_url: str = Field(min_length=1, max_length=255)
-    api_key: str = Field(default="", max_length=512, description="明文 api_key，落库前加密")
+    # 新部署的地址与 Key 在 llm_endpoint 表统一管理；这两个字段保留给旧客户端
+    # 与升级期兼容。两者为空时，运行期只使用数据库接口配置。
+    base_url: str = Field(default="", max_length=255)
+    api_key: str = Field(
+        default="",
+        max_length=512,
+        description="兼容字段：明文仅在写入时接收并加密，新配置请用 /api/llm-endpoints",
+    )
     temperature: float = Field(default=0.70, ge=0.0, le=2.0)
     max_tokens: int = Field(default=2048, ge=1, le=1_000_000)
     # 工具名列表（V3.2）。**不是** OpenAI 的 function schema——填的是注册表里

@@ -11,6 +11,7 @@ from app.models.enums import (
     RunStatus,
     StepStatus,
 )
+from app.models.llm_endpoint import LlmEndpoint
 from app.models.mcp_server import McpServer
 from app.models.mcp_tool import McpTool
 from app.models.message import Message
@@ -29,6 +30,7 @@ __all__ = [
     "Message",
     "MessageRole",
     "MessageStatus",
+    "LlmEndpoint",
     "McpServer",
     "McpTool",
     "Run",

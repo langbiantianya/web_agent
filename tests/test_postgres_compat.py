@@ -63,6 +63,8 @@ _EXPECTED_TABLES = {
     # V4：MCP（§21.6）
     "mcp_server",
     "mcp_tool",
+    # 数据库管理的 LLM 接口与故障切换
+    "llm_endpoint",
 }
 
 

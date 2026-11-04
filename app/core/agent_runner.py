@@ -3,6 +3,7 @@
 要点：
 - 统一走 ``/v1/chat/completions``，``base_url`` 可覆盖，OpenAI / DeepSeek / Qwen /
   vLLM 全部可接；
+- 接口地址与 Key 来自数据库，按 priority 尝试；尚未输出内容时失败会自动切换；
 - 每个 delta 转成 ``token`` / ``reasoning`` / ``tool_call`` 事件交给 RunHub；
 - **全程只用异步调用**：AsyncOpenAI + asyncio，禁止任何同步阻塞；
 - 每个 chunk 都检查取消标志，用户点「停止」后当前流立即收尾。
@@ -14,13 +15,14 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from openai import APIError, AsyncOpenAI, NOT_GIVEN
 
 from app.config.settings import settings
 from app.core.crypto import decrypt
 from app.core.errors import RunCancelled, SensitiveContentError, ToolLoopExceeded
+from app.core.llm_endpoints import LlmEndpointSpec, legacy_agent_endpoint
 from app.core.mcp.naming import is_mcp_name, parse_qualified_name
 from app.core.run_hub import RunEventDTO, RunHub
 from app.core.sensitive import screen_text
@@ -118,11 +120,11 @@ class LLMClientFactory:
         # 降级过一次就记住，别让每个工具轮次都重付一次必然被拒的请求。
         self._supports_usage: dict[str, bool] = {}
 
-    def get(self, agent: Agent) -> AsyncOpenAI:
+    def get(self, endpoint: LlmEndpointSpec) -> AsyncOpenAI:
         """按 ``(base_url, api_key)`` 取复用客户端，缺失时现建一个。
 
         Args:
-            agent: 已持久化的 Agent 配置。``api_key_cipher`` 存的是密文，这里会
+            endpoint: 数据库接口配置快照。``api_key_cipher`` 存的是密文，这里会
                 先解密；明文为空时用 ``"EMPTY"`` 占位，让本地 vLLM / Ollama 这类
                 不校验 key 的端点也能正常调用。
 
@@ -132,8 +134,8 @@ class LLMClientFactory:
         注意构造时 ``max_retries=0``：重试节奏由编排器的节点级指数退避统一负责，
         否则 SDK 会在内部悄悄重试，把 SSE 吐字一起卡住。
         """
-        base_url = agent.base_url.rstrip("/")
-        api_key = decrypt(agent.api_key_cipher) or "EMPTY"
+        base_url = endpoint.base_url.rstrip("/")
+        api_key = decrypt(endpoint.api_key_cipher) or "EMPTY"
         key = (base_url, api_key)
         client = self._clients.get(key)
         if client is None:
@@ -160,7 +162,7 @@ class LLMClientFactory:
             except RuntimeError:  # pragma: no cover - 没有运行中的事件循环
                 pass
 
-    def supports_usage(self, agent: Agent) -> bool:
+    def supports_usage(self, endpoint: LlmEndpointSpec) -> bool:
         """该端点是否支持 ``stream_options.include_usage``。
 
         第一次按 True 试；端点报错后降级并**记住**，之后的请求都不再带这个
@@ -168,11 +170,11 @@ class LLMClientFactory:
         （实测 3 次调用 = 6 个 HTTP 请求，其中 3 个是 400），而整条 run 的
         token 用量还会被记成 0。
         """
-        return self._supports_usage.get(agent.base_url.rstrip("/"), True)
+        return self._supports_usage.get(endpoint.base_url.rstrip("/"), True)
 
-    def mark_no_usage(self, agent: Agent) -> None:
+    def mark_no_usage(self, endpoint: LlmEndpointSpec) -> None:
         """记住「这个端点不支持 include_usage」，后续请求不再带它。"""
-        self._supports_usage[agent.base_url.rstrip("/")] = False
+        self._supports_usage[endpoint.base_url.rstrip("/")] = False
 
     async def aclose(self) -> None:
         """关闭并清空所有缓存客户端（进程退出时调用）。
@@ -199,6 +201,7 @@ class AgentRunner:
         hub: RunHub,
         is_cancelled: Callable[[], bool] | None = None,
         user_texts: list[str] | None = None,
+        endpoints: Sequence[LlmEndpointSpec] | None = None,
     ) -> None:
         """绑定一次「节点 × run」的执行上下文。
 
@@ -210,6 +213,8 @@ class AgentRunner:
         - ``user_texts``：**用户撰写的**、需要过敏感词筛的文本。编排器会显式
           指明「哪些是用户写的」——见 :meth:`_guard_sensitive` 的说明。不给就
           退回「筛所有 user 角色的消息」，保护直接复用本模块的调用方。
+        - ``endpoints``：数据库接口配置快照，已按优先级排序。直接构造 Runner
+          的测试与旧调用方不传时，使用 Agent 内嵌地址作为单元素兼容链。
         """
         self.agent = agent
         self.node_id = node_id
@@ -217,6 +222,13 @@ class AgentRunner:
         self.hub = hub
         self.is_cancelled = is_cancelled or (lambda: False)
         self.user_texts = user_texts
+        self.endpoints = tuple(endpoints or (legacy_agent_endpoint(agent),))
+        # 当前已确认可用的端点。一次流式调用内若发生故障切换，后续工具轮次
+        # 从成功端点继续，避免每一轮都先重试一个已知失败的配置。
+        self._endpoint_index = 0
+        # 只在本次端点尝试中记录是否已经把内容发给客户端。已经吐字后重试另一
+        # 端点会产生重复文本，因此只能失败，不能做无缝切换。
+        self._attempt_emitted_output = False
 
     async def run(self, messages: list[dict]) -> AgentResult:
         """流式跑完一次对话，把每个 delta 实时发出去。
@@ -246,11 +258,56 @@ class AgentRunner:
         # 消息、绕开 API 的内部调用、别的服务复用本模块，都逃不掉这一关。
         await self._guard_sensitive(messages)
 
-        client = _client_factory.get(self.agent)
+        if not self.endpoints:
+            raise RuntimeError("没有可用的 LLM 接口配置")
+
+        last_exc: APIError | None = None
+        for index in range(self._endpoint_index, len(self.endpoints)):
+            endpoint = self.endpoints[index]
+            self._attempt_emitted_output = False
+            try:
+                result = await self._run_endpoint(messages, endpoint)
+            except APIError as exc:
+                if self.is_cancelled():
+                    raise RunCancelled(f"run {self.run_id} 已被取消") from exc
+                if self._attempt_emitted_output:
+                    # 已经向客户端吐出 token/reasoning 后不能重放另一端点：那会
+                    # 产生重复文本，且无法判断用户已经看到多少。
+                    raise
+                last_exc = exc
+                if index + 1 < len(self.endpoints):
+                    logger.warning(
+                        "LLM 接口 %s（%s）失败，切换到下一配置",
+                        endpoint.display_name,
+                        endpoint.code,
+                    )
+                continue
+            self._endpoint_index = index
+            return result
+
+        assert last_exc is not None
+        raise last_exc
+
+    async def _run_endpoint(
+        self, messages: list[dict], endpoint: LlmEndpointSpec
+    ) -> AgentResult:
+        """在单一接口上完成一次流式调用。
+
+        调用方负责在失败且尚未输出内容时切换接口；这里只保留“同一端点不支持
+        ``stream_options.include_usage`` 时去掉参数再试一次”的协议兼容逻辑。
+
+        Args:
+            messages: 已装配并过滤过的消息。
+            endpoint: 当前尝试的接口配置。
+
+        Returns:
+            该接口返回的完整结果。
+        """
+        client = _client_factory.get(endpoint)
         result = AgentResult()
         stream = None
         pending_tool_calls: dict[int, dict] = {}
-        want_usage = _client_factory.supports_usage(self.agent)
+        want_usage = _client_factory.supports_usage(endpoint)
 
         try:
             while True:
@@ -264,11 +321,11 @@ class AgentRunner:
                     if want_usage and "stream_options" in str(exc):
                         logger.warning(
                             "端点 %s 不支持 stream_options.include_usage，退回无 usage 流",
-                            self.agent.base_url,
+                            endpoint.base_url,
                         )
                         # **记住这件事**：降级不粘性的话，工具闭环的每一轮都会
                         # 重付一次必然被拒的请求（实测 3 次调用 = 6 个 HTTP 请求）。
-                        _client_factory.mark_no_usage(self.agent)
+                        _client_factory.mark_no_usage(endpoint)
                         want_usage = False
                         continue
                     raise
@@ -292,12 +349,14 @@ class AgentRunner:
                 content = getattr(delta, "content", None)
                 if content:
                     result.text += content
+                    self._attempt_emitted_output = True
                     await self._emit(EventType.TOKEN, content)
 
                 # DeepSeek / Qwen 等的思维链字段
                 reasoning = getattr(delta, "reasoning_content", None)
                 if reasoning:
                     result.reasoning += reasoning
+                    self._attempt_emitted_output = True
                     await self._emit(EventType.REASONING, reasoning)
 
                 for tc in getattr(delta, "tool_calls", None) or ():

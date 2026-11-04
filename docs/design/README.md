@@ -6,11 +6,12 @@
 
 | 项 | 当前版本 | 状态 |
 | --- | --- | --- |
-| web_agent 主服务 | V4 | 已实现 |
+| web_agent 主服务 | V4.1 | 已实现 |
 | MCP 工具 | V4 | 已实现 |
 | Skill 指令包与资源工具 | V4 | 已实现 |
 | studio fast 档 | V4 | 已实现并验证 |
 | studio isolated Docker 档 | V4 / Phase 1 | 已实现并在真 Docker 验证 |
+| LLM 接口配置与故障切换 | V4.1 | 已实现 |
 
 代码、proto 和自动化测试是最终事实来源；设计文档解释边界、取舍和演进原因。若文档与可执行契约冲突，以 `proto/` 与测试为准，并同步修正文档。
 
@@ -20,11 +21,12 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [主服务设计索引](../../app/design/README.md) | V1–V4 的阅读顺序与章节映射 |
+| [主服务设计索引](../../app/design/README.md) | V1–V4.1 的阅读顺序与章节映射 |
 | [V1：单实例基础版](../../app/design/v1-foundation.md) | 目标、架构、持久化、SSE、线性 Agent 流水线 |
 | [V2：多实例与 LangGraph](../../app/design/v2-multi-instance.md) | Redis Stream/Pub/Sub、租约、LangGraph 替换自研控制流 |
 | [V3：编排、审批、工具与安全](../../app/design/v3-orchestration.md) | DAG、条件边、人工审批、工具闭环、PostgreSQL、敏感内容过滤 |
 | [V4：MCP、Skill 与脚本执行](../../app/design/v4-tools-skills.md) | MCP、Skill、studio 调用侧、真实验收 |
+| [V4.1：数据库 LLM 接口与故障切换](../../app/design/v4.1-llm-endpoints.md) | 多接口优先级、加密 Key、失败切换 |
 
 ### studio 服务
 
@@ -62,6 +64,7 @@
 | V3.4 | 字符 n-gram 逻辑回归敏感内容过滤、API 与 LLM 双防线 | 不再依赖关键词表作为唯一拦截手段 | 已完成 |
 | V4 | MCP stdio/Streamable HTTP、MCP 工具目录、Skill 指令包、`skill_resource`、`skill_exec` | 工具来源不再局限于代码注册表；MCP 不再使用已废弃的 HTTP+SSE 双端点传输 | 已完成 |
 | V4 isolated | studio → dispatcher → 一次性 sandbox、档位能力协商、独立并发池、真 Docker 加固和五场景验证 | isolated 不再只是骨架；禁止静默降级到 fast | Docker 已完成 |
+| V4.1 | 独立 `llm_endpoint` 配置表、加密 Key、优先级排序、请求失败自动切换 | 模型接口地址与 Key 不再要求绑定在单个 Agent 上；新配置优先于兼容字段 | 已完成 |
 
 ## 已移除、已替换或明确不做
 
@@ -77,6 +80,7 @@
 | 任意镜像 ref、宿主挂载、sandbox 出网 | 镜像目录白名单、只读 payload、无网络 | 固定模板才能控制信任边界 |
 | MCP `resources` / `prompts` | 当前只接 tools | 尚未实现，已列入 TODO，不属于“已完成” |
 | MCP OAuth | 当前只用静态 header | 尚未实现，已列入 TODO |
+| 每个 Agent 只能使用一个模型接口 | 使用数据库 `llm_endpoint` 优先级链 | 主接口失败时自动切换，同时保留旧 Agent 字段兼容升级 |
 
 ## 阅读路径
 
