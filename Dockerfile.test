@@ -7,6 +7,8 @@
 # docker run --rm --memory=1200m --cpus=1 \
 #   -v /var/run/docker.sock:/var/run/docker.sock webagent/tests:local
 
+FROM node:20.18.1-bookworm-slim AS node
+
 FROM python:3.11.9-slim-bookworm
 
 ARG PIP_INDEX_URL=https://pypi.org/simple
@@ -17,6 +19,12 @@ ENV PYTHONUNBUFFERED=1 \
     TZ=UTC
 
 WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bash libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" -r requirements.txt "docker>=7"

@@ -98,10 +98,11 @@ def _kill(pids: list[int], grace: float = 2.0) -> int:
     Returns:
         实际杀掉的进程数。
     """
-    killed = 0
+    accepted: set[int] = set()
     for pid in pids:
         try:
             os.kill(pid, signal.SIGTERM)
+            accepted.add(pid)
         except (ProcessLookupError, PermissionError, OSError):
             continue
     deadline = time.monotonic() + grace
@@ -125,10 +126,12 @@ def _kill(pids: list[int], grace: float = 2.0) -> int:
             continue
         try:
             os.kill(pid, signal.SIGKILL)
-            killed += 1
+            accepted.add(pid)
         except (ProcessLookupError, PermissionError, OSError):
             continue
-    return killed
+    # SIGTERM 已让进程退出的也要计入。旧实现只在补发 SIGKILL 时累加，
+    # 会把“正常响应 SIGTERM”的成功清理误报成 0 个。
+    return len(accepted)
 
 
 def sweep_stale_processes(prefix: str = STALE_DIR_PREFIX) -> tuple[int, int]:
