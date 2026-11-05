@@ -182,7 +182,7 @@ def test_migration_scripts_generate_postgresql_sql():
 
 
 def test_pg_engine_pins_session_timezone_to_utc(monkeypatch):
-    """PG 连接必须把会话时区钉成 UTC。
+    """PG 连接必须把会话时区钉成 UTC，并兼容 PgBouncer 事务池。
 
     PG 的 ``now()`` 返回 ``timestamptz``，落进无时区的 ``TIMESTAMP`` 列时按
     **会话时区**折算。会话时区是本地时区的话，同一批数据换个实例写就差了
@@ -197,6 +197,9 @@ def test_pg_engine_pins_session_timezone_to_utc(monkeypatch):
     connect_args = kwargs.get("connect_args", {})
     assert connect_args.get("options") == "-c timezone=UTC", (
         "PG 连接没有下发时区启动参数，时间戳会随会话时区漂"
+    )
+    assert connect_args.get("prepare_threshold") is None, (
+        "PG 连接保留了自动 prepared statement，PgBouncer 事务池会复用同名语句"
     )
     # 连接池参数仍按生产配置走
     assert kwargs["pool_size"] == db_mod.settings.db_pool_size
@@ -213,7 +216,9 @@ def test_pg_url_with_own_options_is_not_duplicated(monkeypatch):
     url = _PG_URL + "?options=-c%20timezone%3DAsia%2FShanghai"
     monkeypatch.setattr(db_mod.settings, "database_url", url)
     kwargs = db_mod._engine_kwargs()
-    assert "connect_args" not in kwargs, "URL 已带 options，却又下发了一份"
+    connect_args = kwargs.get("connect_args", {})
+    assert "options" not in connect_args, "URL 已带 options，却又下发了一份"
+    assert connect_args.get("prepare_threshold") is None
 
 
 def test_other_dialects_are_untouched(monkeypatch):
@@ -249,7 +254,7 @@ def test_empty_pg_timezone_disables_the_option(monkeypatch):
     monkeypatch.setattr(db_mod.settings, "database_url", _PG_URL)
     monkeypatch.setattr(db_mod.settings, "db_pg_timezone", "")
     kwargs = db_mod._engine_kwargs()
-    assert "connect_args" not in kwargs
+    assert kwargs["connect_args"] == {"prepare_threshold": None}
 
 
 def test_pg_timezone_env_name_maps_to_the_setting(monkeypatch):

@@ -32,6 +32,13 @@ def _engine_kwargs() -> dict:
     连接后执行 ``SET``，是因为 PG 的裸 ``SET`` 是**事务性**的——连接池归还连接
     时的 ROLLBACK 会把它撤销，下次取用这条连接时区又变回本地时区了。
     启动参数在连接建立时由服务端生效，没有回滚这回事。
+
+    PostgreSQL 同时关闭 psycopg 的服务端 prepared statement 缓存。事务池
+    （PgBouncer ``pool_mode=transaction``）会在事务结束后把物理连接交给其他
+    客户端；psycopg 默认在第 5 次执行后给语句取名 ``_pg3_n``，两个客户端在
+    不同后端复用同名语句时会报 ``DuplicatePreparedStatement``。``None`` 表示
+    永不自动预编译，参数化查询仍走普通扩展查询协议。这个设置在直连 PostgreSQL
+    时也可用，代价是放弃 psycopg 的自动重编译缓存。
     """
     url = settings.database_url
     if url.startswith("sqlite"):
@@ -42,10 +49,15 @@ def _engine_kwargs() -> dict:
         "pool_pre_ping": True,
         "pool_recycle": settings.db_pool_recycle,
     }
-    if url.startswith("postgresql") and settings.db_pg_timezone:
-        # URL 里已经自带 options 时不重复下发——否则 psycopg 会收到两个同名参数。
-        if "options" not in make_url(url).query:
-            kwargs["connect_args"] = {"options": f"-c timezone={settings.db_pg_timezone}"}
+    if url.startswith("postgresql"):
+        connect_args: dict[str, object] = {"prepare_threshold": None}
+        if settings.db_pg_timezone:
+            # URL 里已经自带 options 时不重复下发——否则 psycopg 会收到两个同名参数。
+            if "options" not in make_url(url).query:
+                connect_args["options"] = (
+                    f"-c timezone={settings.db_pg_timezone}"
+                )
+        kwargs["connect_args"] = connect_args
     return kwargs
 
 
