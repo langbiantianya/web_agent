@@ -31,10 +31,25 @@ class PitrError(Exception):
     """Backup or restore precondition failed."""
 
 
-def basebackup(target: Path) -> None:
-    """Create a physical base backup in an empty target directory."""
+def _require_backup(path: Path) -> None:
+    """Validate a directory produced by this helper."""
+    if not path.is_dir():
+        raise PitrError(f"备份目录不存在：{path}")
+    if not (path / ".webagent-basebackup").is_file():
+        raise PitrError(
+            f"{path} 不是 scripts/pg_pitr.py 创建的备份：缺少 .webagent-basebackup"
+        )
+
+
+def basebackup(target: Path, *, reference: Path | None = None) -> None:
+    """Create a full or incremental physical backup in an empty target."""
     if target.exists() and any(target.iterdir()):
         raise PitrError(f"目标目录非空：{target}")
+    if reference is not None:
+        _require_backup(reference)
+        manifest = reference / "backup_manifest"
+        if not manifest.is_file():
+            raise PitrError(f"增量备份的参考目录缺少 backup_manifest：{reference}")
     target.mkdir(parents=True, exist_ok=True, mode=0o700)
     command = [
         "pg_basebackup",
@@ -45,9 +60,17 @@ def basebackup(target: Path) -> None:
         "--checkpoint=fast",
         "--progress",
     ]
+    if reference is not None:
+        command.append(f"--incremental={reference / 'backup_manifest'}")
     subprocess.run(command, check=True)
+    if not (target / "backup_manifest").is_file():
+        raise PitrError(f"pg_basebackup 没有生成 backup_manifest：{target}")
     marker = target / ".webagent-basebackup"
-    marker.write_text("created by scripts/pg_pitr.py\n", encoding="utf-8")
+    kind = "incremental" if reference is not None else "full"
+    marker.write_text(
+        f"format=1\nkind={kind}\ncreated-by=scripts/pg_pitr.py\n",
+        encoding="utf-8",
+    )
     os.chmod(marker, 0o600)
 
 
@@ -58,20 +81,32 @@ def prepare_restore(
     archive_dir: Path,
     target_time: str,
     target_action: str = "promote",
+    incrementals: tuple[Path, ...] | list[Path] = (),
 ) -> Path:
-    """Copy a base backup and write PostgreSQL recovery settings.
+    """Reconstruct a base backup and write PostgreSQL recovery settings.
 
     Returns:
         The recovery signal path.
     """
-    if not base.is_dir():
-        raise PitrError(f"基础备份不存在：{base}")
-    if not (base / "backup_label").exists() and not (base / "backup_label.old").exists():
-        raise PitrError(f"{base} 不像 pg_basebackup 产物：缺少 backup_label")
+    _require_backup(base)
+    for incremental in incrementals:
+        _require_backup(incremental)
     if target.exists() and any(target.iterdir()):
         raise PitrError(f"恢复目标目录非空：{target}")
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(base, target, dirs_exist_ok=True)
+    if incrementals:
+        subprocess.run(
+            [
+                "pg_combinebackup",
+                "--output",
+                str(target),
+                str(base),
+                *(str(path) for path in incrementals),
+            ],
+            check=True,
+        )
+    else:
+        shutil.copytree(base, target, dirs_exist_ok=True)
     marker = target / ".webagent-basebackup"
     if marker.exists():
         marker.unlink()
@@ -98,12 +133,24 @@ def _parser() -> argparse.ArgumentParser:
 
     backup = sub.add_parser("basebackup", help="create a physical base backup")
     backup.add_argument("--target", required=True, type=Path)
+    backup.add_argument(
+        "--reference",
+        type=Path,
+        help="previous backup directory; creates a PostgreSQL incremental backup",
+    )
 
     restore = sub.add_parser("restore", help="prepare a PITR recovery directory")
     restore.add_argument("--base", required=True, type=Path)
     restore.add_argument("--target", required=True, type=Path)
     restore.add_argument("--archive-dir", required=True, type=Path)
     restore.add_argument("--target-time", required=True)
+    restore.add_argument(
+        "--incremental",
+        action="append",
+        default=[],
+        type=Path,
+        help="incremental backup in chain order; may be repeated",
+    )
     restore.add_argument(
         "--target-action", choices=("promote", "shutdown", "pause"), default="promote"
     )
@@ -115,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "basebackup":
-            basebackup(args.target)
+            basebackup(args.target, reference=args.reference)
         else:
             prepare_restore(
                 base=args.base,
@@ -123,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
                 archive_dir=args.archive_dir,
                 target_time=args.target_time,
                 target_action=args.target_action,
+                incrementals=args.incremental,
             )
     except (PitrError, OSError, subprocess.CalledProcessError) as exc:
         print(f"pg_pitr: {exc}", file=sys.stderr)

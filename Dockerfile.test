@@ -37,6 +37,7 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY alembic.ini pytest.ini run.py ./
 COPY alembic/ ./alembic/
 COPY app/ ./app/
+COPY deploy/ ./deploy/
 COPY proto/ ./proto/
 COPY scripts/ ./scripts/
 COPY services/ ./services/

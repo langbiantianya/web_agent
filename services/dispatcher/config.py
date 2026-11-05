@@ -88,8 +88,7 @@ class DispatcherConfig:
         payload_dir: 写 payload 的目录。它必须**对 Docker daemon 可见**（lab 里
             从宿主机 bind mount 进来），沙箱以只读方式挂到 ``/run/sandbox``。
         seccomp_profile: 自定义 seccomp profile 在 dispatcher 容器内的路径。
-            启动时会被复制到 ``payload_dir``，因为 Docker daemon 读取的是宿主
-            可见路径，而不是 dispatcher 自己的文件系统。
+            启动时读取并内联为 Docker API 的 ``security_opt``。
         require_custom_seccomp: 是否强制加载 profile。生产默认开启；关掉只允许
             用于不支持自定义 profile 的本地调试环境。
         prewarm_images: 启动时检查并预热镜像目录，避免首个请求承担拉取成本。

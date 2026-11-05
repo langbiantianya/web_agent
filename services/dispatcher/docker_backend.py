@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -70,7 +69,7 @@ class DockerBackend:
         self._lock = threading.Lock()
         self._containers: dict[str, object] = {}
         self._cancelled: set[str] = set()
-        self._seccomp_path: str | None = None
+        self._seccomp_security_opt: str | None = None
 
     def _docker(self):  # noqa: ANN202 - 返回 docker.DockerClient
         """懒创建 Docker 客户端。
@@ -105,7 +104,7 @@ class DockerBackend:
             return False
 
     async def prepare(self) -> None:
-        """启动期预热镜像并准备 Docker daemon 可见的 seccomp profile。
+        """启动期预热镜像并加载自定义 seccomp profile。
 
         Raises:
             SandboxError: profile 非法，或镜像无法在启动预算内准备好。
@@ -114,7 +113,7 @@ class DockerBackend:
 
     def _prepare_sync(self) -> None:
         """同步准备动作，供启动期和首个请求兜底使用。"""
-        self._seccomp_path_sync()
+        self._seccomp_security_opt_sync()
         if not self.config.prewarm_images:
             return
         client = self._docker()
@@ -131,18 +130,18 @@ class DockerBackend:
                         code="sandbox_unavailable",
                     ) from exc
 
-    def _seccomp_path_sync(self) -> str | None:
-        """把容器内 profile 复制到 Docker daemon 可见目录。
+    def _seccomp_security_opt_sync(self) -> str | None:
+        """读取并编码 Docker API 接受的 seccomp 安全选项。
 
-        Docker Engine 用宿主文件系统解析 ``seccomp=<path>``。dispatcher 容器里的
-        ``/etc/webagent/...`` 对 daemon 不可见，而 payload 目录在两边的绝对路径
-        相同，因此把 profile 写到那里再把这个路径交给 daemon。
+        Docker SDK 的 ``security_opt`` 透传到 daemon。自定义策略必须以压缩 JSON
+        内联在 ``seccomp=`` 后；传 dispatcher 容器内路径时，daemon 会把它当作
+        JSON 解析并拒绝。
 
         Returns:
-            宿主机可见的 profile 路径；关闭自定义 profile 时返回 ``None``。
+            ``seccomp=<json>``；关闭自定义 profile 时返回 ``None``。
         """
-        if self._seccomp_path is not None:
-            return self._seccomp_path
+        if self._seccomp_security_opt is not None:
+            return self._seccomp_security_opt
         if not self.config.require_custom_seccomp:
             return None
         source = Path(self.config.seccomp_profile)
@@ -159,21 +158,9 @@ class DockerBackend:
                 f"seccomp profile 形状非法：{source}",
                 code="sandbox_unavailable",
             )
-        digest = hashlib.sha256(raw).hexdigest()[:16]
-        payload_dir = Path(self.config.payload_dir)
-        try:
-            payload_dir.mkdir(parents=True, exist_ok=True)
-            target = payload_dir / f".webagent-seccomp-{digest}.json"
-            if not target.exists() or target.read_bytes() != raw:
-                target.write_bytes(raw)
-                os.chmod(target, 0o644)
-            self._seccomp_path = str(target)
-            return self._seccomp_path
-        except OSError as exc:
-            raise SandboxError(
-                f"准备 seccomp profile 失败：{exc}",
-                code="sandbox_unavailable",
-            ) from exc
+        encoded = json.dumps(data, separators=(",", ":"), ensure_ascii=True)
+        self._seccomp_security_opt = f"seccomp={encoded}"
+        return self._seccomp_security_opt
 
     async def close(self) -> None:
         """关掉客户端。"""
@@ -253,10 +240,10 @@ class DockerBackend:
         image_startup_ms = 0
         timed_out = False
         try:
-            seccomp_path = self._seccomp_path_sync()
+            seccomp_security_opt = self._seccomp_security_opt_sync()
             security_opt = ["no-new-privileges"]
-            if seccomp_path:
-                security_opt.append(f"seccomp={seccomp_path}")
+            if seccomp_security_opt:
+                security_opt.append(seccomp_security_opt)
             # payload 写在 dispatcher 的目录里，再以**只读 bind mount** 挂进沙箱。
             # 这个目录必须对 Docker daemon 可见（lab 里从宿主机 bind mount 进来）；
             # 为什么不用 put_archive：read-only rootfs 下写容器文件系统会被 Docker 拒。

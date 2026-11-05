@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import signal
+import time
 from dataclasses import asdict
 from typing import Any
 
@@ -254,7 +255,7 @@ class DispatcherServer:
             return 200, {
                 "lease_id": lease.lease_id,
                 "expires_in_ms": max(
-                    0, int((lease.expires_at - asyncio.get_running_loop().time()) * 1000)
+                    0, int((lease.expires_at - time.monotonic()) * 1000)
                 ),
                 "cost": lease.cost,
             }

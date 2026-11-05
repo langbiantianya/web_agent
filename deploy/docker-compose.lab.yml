@@ -147,8 +147,8 @@ services:
       DISPATCHER_IMAGES: "default=webagent/studio-sandbox:1.0.0"
       # 本地刚构建的镜像通常只有 tag；生产必须改为 image@sha256:<digest> 并设 true。
       DISPATCHER_REQUIRE_DIGEST: "false"
-      # 自定义 seccomp 与镜像预热默认开启。profile 会由 dispatcher 复制到
-      # Docker daemon 可见的 payload 目录后传给容器。
+      # 自定义 seccomp 与镜像预热默认开启。dispatcher 读取 profile 后，
+      # 通过 Docker API 内联传给 daemon。
       DISPATCHER_REQUIRE_CUSTOM_SECCOMP: "true"
       DISPATCHER_PREWARM_IMAGES: "true"
       # 所有 studio 实例共享本 dispatcher 的准入控制：

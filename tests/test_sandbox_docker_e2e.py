@@ -14,6 +14,7 @@ import asyncio
 import json
 import time
 from contextlib import suppress
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -23,6 +24,12 @@ from services.dispatcher.docker_backend import DockerBackend
 from services.sandbox.protocol import SandboxSpec
 
 IMAGE = "webagent/studio-sandbox:1.0.0"
+SECCOMP_PROFILE = str(
+    Path(__file__).resolve().parents[1]
+    / "services"
+    / "sandbox"
+    / "seccomp-profile.json"
+)
 
 
 def _docker_ready() -> bool:
@@ -53,7 +60,7 @@ pytestmark = pytest.mark.skipif(
 async def test_sandbox_is_hardened_and_runs(tmp_path):
     """一次性容器真的跑起来；无网络、只读 rootfs、读不到宿主凭据。"""
     script = """
-import os, pathlib, socket
+import ctypes, errno, os, pathlib, socket
 print("SECRET=" + os.environ.get("SECRET_KEY", ""))
 try:
     pathlib.Path("/pwned").write_text("x")
@@ -65,11 +72,16 @@ try:
     print("NET=ok")
 except OSError:
     print("NET=blocked")
+libc = ctypes.CDLL(None, use_errno=True)
+ctypes.set_errno(0)
+result = libc.ptrace(0, 0, None, None)  # PTRACE_TRACEME
+print("PTRACE=" + ("blocked" if result == -1 and ctypes.get_errno() == errno.EPERM else "allowed"))
 """
     backend = DockerBackend(
         DispatcherConfig(
             images=(("default", IMAGE),),
             payload_dir=str(tmp_path),
+            seccomp_profile=SECCOMP_PROFILE,
             require_digest=False,
         )
     )
@@ -96,6 +108,7 @@ except OSError:
     assert lines["SECRET"] == ""
     assert lines["WRITE"] == "readonly"
     assert lines["NET"] == "blocked"
+    assert lines["PTRACE"] == "blocked"
     # 控制帧没有被用户输出污染
     assert json.dumps(result.stdout)
 
@@ -110,6 +123,7 @@ async def test_cancel_removes_sandbox_within_five_seconds(tmp_path):
         DispatcherConfig(
             images=(("default", IMAGE),),
             payload_dir=str(tmp_path),
+            seccomp_profile=SECCOMP_PROFILE,
             require_digest=False,
         )
     )

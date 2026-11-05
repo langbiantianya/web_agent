@@ -169,7 +169,12 @@ def test_container_template_is_fixed_and_hardened(tmp_path):
     assert kwargs["working_dir"] == "/app"
     assert kwargs["cap_drop"] == ["ALL"]
     assert "no-new-privileges" in kwargs["security_opt"]
-    assert any(item.startswith("seccomp=") for item in kwargs["security_opt"])
+    seccomp = next(
+        item for item in kwargs["security_opt"] if item.startswith("seccomp=")
+    )
+    policy = json.loads(seccomp.removeprefix("seccomp="))
+    assert policy["defaultAction"] == "SCMP_ACT_ALLOW"
+    assert policy["syscalls"][0]["names"] == ["ptrace"]
     assert kwargs["pids_limit"] == 256
     assert kwargs["mem_limit"] == "512m"
     assert "SECRET" not in json.dumps(kwargs["environment"])
@@ -180,16 +185,11 @@ def test_container_template_is_fixed_and_hardened(tmp_path):
     assert container.removed is True
 
 
-async def test_prepare_materializes_profile_and_prewarms_images(tmp_path):
-    """Docker daemon 可见目录里要有 profile，镜像目录要在启动期预热。"""
+async def test_prepare_validates_profile_and_prewarms_images(tmp_path):
+    """启动期校验内联 profile，并检查镜像目录中的镜像。"""
     container = _FakeContainer()
     backend, fake = _backend(container, tmp_path)
     await backend.prepare()
-    profiles = list(tmp_path.glob(".webagent-seccomp-*.json"))
-    assert len(profiles) == 1
-    assert json.loads(profiles[0].read_text(encoding="utf-8"))[
-        "defaultAction"
-    ] == "SCMP_ACT_ALLOW"
     assert fake.images.gets == ["registry/sandbox@sha256:" + "a" * 64]
     assert fake.images.pulls == []
 
