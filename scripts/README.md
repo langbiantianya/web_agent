@@ -2,6 +2,10 @@
 
 `scripts/` 存放演示数据、压测、敏感内容模型训练、proto 生成和文档一致性检查脚本。
 
+`smoke_runtime.py` 用于对已启动服务做低并发真实链路验收：数据库中的 LLM 接口
+优先级切换、已发布 Skill 与资源、真实 stdio MCP、以及 MiniMax OpenAI 兼容
+接口。凭据只从环境变量读取，不会打印到结果中。
+
 ## 数据与启动
 
 ```bash
