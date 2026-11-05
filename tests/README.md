@@ -41,6 +41,12 @@ ignore_startup_parameters = extra_float_digits,options
 2026-11-05 在 PostgreSQL 18.6 + PgBouncer 1.18 上运行全量测试，结果为
 `739 passed, 19 skipped`；19 个默认跳过项是需要显式 Redis 地址的真实 Redis 用例。
 
+2026-11-06 在 PostgreSQL 18.6、真实 Redis 与真实 Docker socket 上运行当前全量
+测试，结果为 `778 passed`，无跳过、无失败。低配测试机使用
+`DB_POOL_SIZE=5 DB_MAX_OVERFLOW=5`；未调大 PostgreSQL 默认连接上限。若保持默认
+较大连接池，32 并发用例可能耗尽 PostgreSQL 的 100 个连接槽并触发
+`remaining connection slots are reserved`。
+
 ## 测试层次
 
 | 层次 | 代表目录/文件 | 验证内容 |
