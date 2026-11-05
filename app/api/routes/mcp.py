@@ -68,8 +68,12 @@ def _to_out(server, tool_count: int = 0) -> McpServerOut:
         oauth_client_id=server.oauth_client_id,
         oauth_scopes=list(server.oauth_scopes or []) or None,
         oauth_resource=server.oauth_resource,
-        oauth_configured=bool(
-            server.oauth_client_secret_cipher or server.oauth_access_token_cipher
+        oauth_configured=(
+            server.auth_type == "oauth_client_credentials"
+            and bool(
+                server.oauth_client_secret_cipher
+                or server.oauth_access_token_cipher
+            )
         ),
         oauth_token_expires_at=server.oauth_expires_at,
         allow_tools=list(server.allow_tools or []) or None,
@@ -219,7 +223,12 @@ async def create_server(
         oauth_token_url=payload.oauth_token_url,
         oauth_revocation_url=payload.oauth_revocation_url,
         oauth_client_id=payload.oauth_client_id,
-        oauth_client_secret_cipher=encrypt(payload.oauth_client_secret or ""),
+        oauth_client_secret_cipher=(
+            encrypt(payload.oauth_client_secret)
+            if payload.auth_type == "oauth_client_credentials"
+            and payload.oauth_client_secret
+            else None
+        ),
         oauth_scopes=payload.oauth_scopes,
         oauth_resource=payload.oauth_resource,
         allow_tools=payload.allow_tools,
@@ -257,9 +266,9 @@ async def update_server(
     if "headers" in fields:
         fields["headers"] = _encrypt_map(fields["headers"])
     if "oauth_client_secret" in fields:
-        fields["oauth_client_secret_cipher"] = encrypt(
-            fields.pop("oauth_client_secret") or ""
-        )
+        changed_secret = fields.pop("oauth_client_secret")
+        if changed_secret:
+            fields["oauth_client_secret_cipher"] = encrypt(changed_secret)
     for oauth_url_key in ("oauth_token_url", "oauth_revocation_url"):
         if fields.get(oauth_url_key):
             try:

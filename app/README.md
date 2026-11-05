@@ -102,8 +102,14 @@ flowchart TB
 - 审批支持会签、同一审批人去重、截止时间和 `reject/approve` 超时策略，默认 fail-closed。
 - Agent 可配置工具级启用、并发和超时；禁用工具不会进入模型工具清单，伪造调用会被拦截。
 - MCP 同时支持 tools、resources、resource templates 和 prompts，并处理工具目录变更通知。
+- 远程 MCP 支持 OAuth client credentials、加密 token 缓存、自动刷新与撤销。
 - W3C `traceparent` 从 HTTP 入口贯通到工具、gRPC、dispatcher 和 sandbox。
 - dispatcher 可取消并强删运行中的一次性容器；生产默认要求镜像固定 digest。
+- dispatcher 默认加载自定义 seccomp；共享 dispatcher 对多个 studio 的租户/技能并发与
+  活动预算统一准入。
+- sandbox 从 cgroup 采集真实 CPU 秒与内存峰值，studio 可按部署费率导出估算成本。
+- PostgreSQL 支持全量/增量物理备份、独立 WAL 归档和隔离时间点恢复，演练步骤见
+  [`deploy/PITR.md`](../deploy/PITR.md)。
 
 ## 快速开始
 

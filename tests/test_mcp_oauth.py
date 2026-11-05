@@ -72,6 +72,7 @@ async def test_oauth_token_is_cached_encrypted_and_refreshable(client, monkeypat
     calls = 0
 
     async def fake_token_request(server):
+        """Return a deterministic token and count refresh requests."""
         nonlocal calls
         calls += 1
         return {"access_token": f"token-{calls}", "expires_in": 3600}
@@ -100,6 +101,7 @@ async def test_http_headers_inject_bearer_without_leaking_static_auth(client, mo
         server.headers = {"X-Tenant": encrypt("blue")}
 
     async def fake_access(_server):
+        """Return a deterministic bearer token."""
         return "access-xyz"
 
     monkeypatch.setattr(oauth, "access_token", fake_access)

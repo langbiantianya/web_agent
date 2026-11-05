@@ -15,12 +15,15 @@ class _Backend:
     """Minimal backend for HTTP quota tests."""
 
     async def run(self, spec: SandboxSpec) -> SandboxResult:
+        """Return a successful result without starting Docker."""
         return SandboxResult(status="completed", exit_code=0)
 
     async def health(self) -> bool:
+        """Report the fake backend as ready."""
         return True
 
     async def close(self) -> None:
+        """Release no resources."""
         return None
 
 

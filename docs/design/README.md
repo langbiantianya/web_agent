@@ -6,13 +6,16 @@
 
 | 项 | 当前版本 | 状态 |
 | --- | --- | --- |
-| web_agent 主服务 | V4.4 | 已实现 |
+| web_agent 主服务 | V4.5 | 已实现 |
+| 生产恢复与沙箱治理 | V4.5 | 已实现并完成真 PostgreSQL / Docker 验证 |
 | MCP 工具 | V4 | 已实现 |
 | Skill 指令包与资源工具 | V4 | 已实现 |
 | studio fast 档 | V4 | 已实现并验证 |
 | studio isolated Docker 档 | V4 / Phase 1 | 已实现并在真 Docker 验证 |
 | LLM 接口配置与故障切换 | V4.1 | 已实现 |
 | PostgreSQL 持久化后端 | V3 / V4.4 | 18.6 已部署；迁移、并发、崩溃恢复、逻辑备份恢复和 PgBouncer 事务池验证通过 |
+| PostgreSQL 物理备份与 PITR | V4.5 | 全量、增量、WAL 归档和隔离时间点恢复已验证 |
+| sandbox 安全与成本 | V4.5 | 自定义 seccomp、共享 dispatcher 配额、cgroup 资源指标已验证 |
 
 代码、proto 和自动化测试是最终事实来源；设计文档解释边界、取舍和演进原因。若文档与可执行契约冲突，以 `proto/` 与测试为准，并同步修正文档。
 
@@ -31,6 +34,7 @@
 | [V4.2：后台治理与运行期维护](../../app/design/v4.2-admin-maintenance.md) | Skill 后台、MCP 空闲回收、checkpoint 孤儿清理、测试隔离 |
 | [V4.3：工具审计与结果持久化](../../app/design/v4.3-tool-audit.md) | 独立工具审计账本、脱敏与限长结果、管理员查询、保留期清理 |
 | [V4.4：治理、审批与运行时收口](../../app/design/v4.4-governance-runtime.md) | 数据库管理员与租户、Skill 生命周期、会签超时、工具策略、MCP 动态资源、Trace、取消、配额与指标 |
+| [V4.5：备份恢复、沙箱准入与成本闭环](../../app/design/v4.5-recovery-governance.md) | PostgreSQL PITR、自定义 seccomp、跨 studio 准入、真实资源成本、MCP OAuth 机器身份 |
 
 ### studio 服务
 
@@ -72,6 +76,7 @@
 | V4.2 | Skill 管理后台、导入风险与运行档展示、`allowed-tools` 差异提示、MCP 空闲回收、checkpoint 孤儿清理 | 基础设施与 API 已有但缺少运营入口或周期治理；gRPC 测试污染固化在测试入口处理 | 已完成 |
 | V4.3 | `tool_call_audit` 独立审计账本、参数与结果脱敏、管理员查询、保留期清理 | 工具结果不再只能依赖事件摘要与节点调用清单回看；审计写入与业务事务解耦 | 已完成 |
 | V4.4 | 数据库管理员/角色/租户、Skill 草稿发布归档与二进制回滚、审批会签超时、工具级策略、MCP resources/prompts 与动态通知、W3C Trace、sandbox 取消/指标/技能配额/摘要校验 | 共享管理员 Key 替换为“环境引导 Key + 数据库用户”；Skill 硬删除改为软删除；二进制只存摘要改为可回滚快照；单审批人改为会签；MCP 只接 tools 扩展为 resources/prompts；取消从进程边界贯通到容器 | 已完成 |
+| V4.5 | PostgreSQL 全量/增量备份与 PITR、自定义 seccomp、共享 dispatcher 租约配额与预算、cgroup 真实 CPU/内存指标、MCP OAuth 机器身份 | `backup_label` 作为备份识别依据改为显式标记；seccomp 文件路径改为内联 JSON；实例内配额改为共享 dispatcher 准入；静态 MCP header 扩展为可刷新 OAuth | 已完成 |
 
 ## 已移除、已替换或明确不做
 
@@ -85,7 +90,11 @@
 | 只依赖容器 `State.OOMKilled` 判断沙箱 OOM | 子进程 OOM 结合 cgroup v1/v2 `oom_kill` 计数 | runner 存活时容器本身可能没有 OOMKilled |
 | 在 gRPC 进程中保留默认 fork 支持 | 启动前关闭 fork 支持，并使用 tini | 避免 atfork 状态污染与孤儿/僵尸 |
 | 任意镜像 ref、宿主挂载、sandbox 出网 | 镜像目录白名单、只读 payload、无网络 | 固定模板才能控制信任边界 |
-| MCP OAuth | 当前只用静态 header | 尚未实现，已列入 TODO |
+| 只用静态 MCP header | 支持 OAuth client credentials、refresh、撤销与密文缓存 | 机器身份可自动续期，短期明文令牌不再进入配置 |
+| 运行时默认 seccomp | dispatcher 加载项目自定义 profile | 固定 syscall 拒绝面，缺失时 fail-closed |
+| 各 studio 实例各自限流 | 共享 dispatcher 租约跨 studio 生效 | 多实例不能各自按上限计费后共同超额 |
+| 只记录 sandbox 耗时 | 采集 cgroup CPU、内存峰值并估算成本 | 成本需要真实资源来源，而不只是墙钟时间 |
+| `backup_label` 判断物理备份 | 使用 `.webagent-basebackup` 标记 | 现代 `pg_basebackup` 产物不保证保留该文件 |
 | 每个 Agent 只能使用一个模型接口 | 使用数据库 `llm_endpoint` 优先级链 | 主接口失败时自动切换，同时保留旧 Agent 字段兼容升级 |
 | Skill 只能通过 API 或脚本维护 | 后台覆盖 CRUD、ZIP、资源、修订和 Agent 绑定 | 配置即数据需要与可操作的管理界面配套 |
 | MCP 连接只靠进程退出释放 | 应用生命周期内周期回收空闲连接 | 避免 stdio 子进程和远端会话长期驻留 |
@@ -117,6 +126,7 @@
 | Skill 管理后台、运行期资源回收 | [V4.2](../../app/design/v4.2-admin-maintenance.md) |
 | 工具审计、结果回看、脱敏与保留期 | [V4.3](../../app/design/v4.3-tool-audit.md) |
 | 管理员、租户、会签、MCP 资源、运行期治理 | [V4.4](../../app/design/v4.4-governance-runtime.md) |
+| 备份恢复、seccomp、共享配额、成本与 MCP OAuth | [V4.5](../../app/design/v4.5-recovery-governance.md) |
 | studio 协议、隔离、资源限制 | [studio V4](../../services/studio/design/v4-current.md) |
 | 下一步开发 | [TODO](TODO.md) |
 

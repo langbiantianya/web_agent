@@ -416,7 +416,7 @@ code 分支，**不匹配整句人话**。
 | capabilities | 全部 drop（含 `CAP_NET_RAW`） | —— |
 | 用户 | 非 root（uid 1000 之类） | —— |
 | `no-new-privileges` | 开 | 阻止 setuid 提权 |
-| seccomp | 使用运行时默认 profile（可按部署策略收紧） | 挡 syscall 面 |
+| seccomp | 加载项目自定义 JSON profile，缺失时 fail-closed | 挡 ptrace、mount、内核模块等高危 syscall |
 | PID 限额 | `pidsLimit`（如 256） | fork 炸弹的容器级兜底 |
 | 出网 | **禁**（Docker `network_disabled=true`） | 见 §11 |
 | 宿主挂载 | **只有一个只读 payload**，不给 Docker socket 或业务目录 | 逃逸的最短路径 |
@@ -806,7 +806,7 @@ studio 启动时会探一次 dispatcher 的 `/health`：探不到就把 isolated
 | 路径穿越读到宿主机文件 | studio 无宿主挂载、看不到技能内容；调用方侧先校验（§11.2、主设计 §22.7） | 无 |
 | 数据外传 | 禁出网 | 需要外网的脚本做不了（**有意**） |
 | studio 被当成跳板访问内网 | 禁出网 + 独立节点标签 + 无凭据 | —— |
-| 供应链（镜像被投毒） | 生产默认要求 digest 固定 + 镜像目录白名单 + 最小基础镜像 | 自定义 seccomp 尚未实现 |
+| 供应链（镜像被投毒） | 生产默认要求 digest 固定 + 镜像目录白名单 + 最小基础镜像 + 自定义 seccomp | seccomp 不是镜像签名，仍需控制构建链 |
 
 **残余风险里最值得盯的一条**：同容器内多次执行之间的残留。`fast` 档做不到进程级之外的
 强隔离。`isolated` 档能解决，代价是秒级开销。
@@ -864,8 +864,9 @@ studio 启动时会探一次 dispatcher 的 `/health`：探不到就把 isolated
    独立服务实例并按 language 路由（§10.1、§10.3）。
 7. **多实例扩缩容需要服务发现配合**。gRPC 长连接会固定到单个实例；增删容器时必须同步
    更新解析结果，并让客户端连接均衡策略感知这些变化（§13.4）。
-8. **技能配额是单实例静态配置**。已有实例级、isolated 档级和技能级并发限制，但尚无跨
-   实例全局配额、预算与预热池。
+8. **共享配额依赖共享 dispatcher**。多个 studio 共用同一 dispatcher 时，租户/技能
+   并发和活动预算一致；多个独立 dispatcher 之间尚未共享状态。启动期只预热镜像，
+   不预启动 sandbox 容器。
 9. **日志里没有脚本输出**。为了不落敏感数据，stdout/stderr 只进执行结果不进日志
     （§12.2）。事后排查只能靠 `stdout_digest`。
 10. **`isolated` 只提供 Docker 后端**。实现位于 `services/sandbox/` +

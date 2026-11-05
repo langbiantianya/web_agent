@@ -2,9 +2,10 @@
 
 studio 的调用侧设计在主服务的 [V4 设计](../../../app/design/v4-tools-skills.md)，当前服务侧设计在 [v4-current.md](v4-current.md)。
 
-当前部署与隔离实现以 Docker Compose、dispatcher 和一次性 sandbox 为准。取消传播、指标、
-技能级配额和镜像 digest 校验已落地；自定义 seccomp 与跨实例配额仍未完成，
-统一维护在 [全局 TODO](../../../docs/design/TODO.md) 中。
+当前部署与隔离实现以 Docker Compose、dispatcher 和一次性 sandbox 为准。取消传播、
+真实 CPU/内存指标、自定义 seccomp、共享 dispatcher 配额和镜像 digest 校验已落地。
+预启动容器池与多 dispatcher 共享准入仍统一维护在
+[全局 TODO](../../../docs/design/TODO.md) 中。
 
 ## 文档边界
 

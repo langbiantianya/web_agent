@@ -88,6 +88,7 @@ class _FakeImages:
     """记录预热调用。"""
 
     def __init__(self) -> None:
+        """Initialize the recorded image lookups and pulls."""
         self.gets: list[str] = []
         self.pulls: list[str] = []
 

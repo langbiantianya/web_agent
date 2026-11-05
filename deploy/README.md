@@ -39,6 +39,9 @@ studio 自身也会在 isolated 启动预算内重试，覆盖慢启动竞态。
 - studio 不挂 Docker socket；isolated 调度只发生在 dispatcher。
 - 主服务镜像以非 root 运行，凭据只通过环境变量注入，不进入镜像层。
 - sandbox 使用一次性容器、只读 rootfs、非 root、无网络和固定资源上限。
+- dispatcher 启动时加载自定义 seccomp profile；缺失或非法时 fail-closed。
+- 多个 studio 共用 dispatcher 时，租户/技能并发与活动预算在同一准入面生效。
+- 生产 PostgreSQL 应按 [PITR 指南](PITR.md) 配置独立 WAL 归档、全量/增量备份和恢复演练。
 
 ## 相关文档
 

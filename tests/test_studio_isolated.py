@@ -102,21 +102,25 @@ class _FakeAdmission:
     """跨实例配额控制面的测试替身。"""
 
     def __init__(self, deny: bool = False) -> None:
+        """Record admission calls and optionally deny acquisition."""
         self.deny = deny
         self.acquired: list[dict] = []
         self.released: list[str] = []
 
     async def acquire_quota(self, **kwargs) -> str:
+        """Record one acquisition and return a fixed lease."""
         self.acquired.append(kwargs)
         if self.deny:
             raise RuntimeError("tenant_budget 已满")
         return "lease-1"
 
     async def release_quota(self, lease_id: str) -> bool:
+        """Record and acknowledge one lease release."""
         self.released.append(lease_id)
         return True
 
     async def close(self) -> None:
+        """Release no resources."""
         return None
 
 
