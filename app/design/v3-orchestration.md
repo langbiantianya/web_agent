@@ -561,11 +561,10 @@ schema。服务端从注册表（`app/core/tools.py`）里取 schema 展开给�
 让 PostgreSQL 成为与 MySQL **平级**的生产数据库：改一行 `DATABASE_URL` 就能切，
 业务代码一行不动。
 
-**边界先说清楚**：本机没有 PG 实例，所以这套适配**没有在真 PG 服务器上端到端
-跑过**。验证做到的是「方言编译 + 离线迁移 SQL + 引擎装配」这一层——它能盖住
-「写出来的 DDL 在 PG 上根本执行不了」这类致命问题，但盖不住「约束行为、
-JSON 往返、并发写」这些只有真库才暴露的差异。上线前必须在真实 PG 上跑一遍
-`alembic upgrade head` 与全套测试。
+**验证边界**：最初只有「方言编译 + 离线迁移 SQL + 引擎装配」测试。2026-11-05
+已在 PostgreSQL 18.6 测试机完成真实迁移、全量测试、并发审批、连接池饱和、
+应用启动恢复、数据库进程崩溃、逻辑备份恢复和 PgBouncer 事务池验证。物理热备、
+增量备份与 PITR 不在本适配范围内。
 
 ### 19.2 为什么几乎不用改代码
 
@@ -608,10 +607,12 @@ repo 层（`app/repo/`）**全是 ORM**，没有一句方言专属的 SQL；模�
 URL：
 
 ```python
-# config/db.py
-if url.startswith("postgresql") and settings.db_pg_timezone:
-    if "options" not in make_url(url).query:
-        kwargs["connect_args"] = {"options": f"-c timezone={settings.db_pg_timezone}"}
+# config/db.py（简化）
+if url.startswith("postgresql"):
+    connect_args = {"prepare_threshold": None}
+    if settings.db_pg_timezone and "options" not in make_url(url).query:
+        connect_args["options"] = f"-c timezone={settings.db_pg_timezone}"
+    kwargs["connect_args"] = connect_args
 ```
 
 **为什么还要检查 URL 里有没有 `options`**：用户可能自己带了
@@ -619,6 +620,11 @@ if url.startswith("postgresql") and settings.db_pg_timezone:
 `TypeError`，连接都建不起来——所以带了就不重复下发。
 
 `DB_PG_TIMEZONE` 置空则完全不下发（服务器时区本来就是 UTC 时的省事写法）。
+
+`prepare_threshold=None` 关闭 psycopg 的自动服务端预编译。事务池在事务结束后
+会把物理连接交给其他客户端；保留默认的 `_pg3_n` 命名缓存会让两个客户端在
+不同后端撞上同名 prepared statement，实测报
+`DuplicatePreparedStatement`。关闭自动预编译后，参数化查询仍走扩展查询协议。
 
 ### 19.4 驱动选型：psycopg3
 
@@ -630,9 +636,9 @@ if url.startswith("postgresql") and settings.db_pg_timezone:
 
 URL 形如 `postgresql+psycopg://user:pass@host:5432/agentdb`。
 
-### 19.5 验证方式（不需要 PG 服务器）
+### 19.5 自动化与真实数据库验证
 
-`tests/test_postgres_compat.py`（12 条）覆盖五层：
+`tests/test_postgres_compat.py`（12 条）先覆盖五层，真实数据库验收另行执行：
 
 1. **DDL 编译**：把同一套模型按三种方言各渲染一遍。PG 侧不得出现
    `AUTO_INCREMENT`、反引号、`DATETIME(` 等 MySQL 写法，且必须出现
@@ -643,19 +649,37 @@ URL 形如 `postgresql+psycopg://user:pass@host:5432/agentdb`。
 3. **离线迁移**：`alembic upgrade head --sql` 在 PG 方言下生成 DDL。不连库、
    不建表，却能把三个迁移脚本连同方言分支一起验一遍——迁移脚本里写了 MySQL
    专属类型这类问题当场就暴露。
-4. **引擎装配**：时区启动参数、连接池参数、URL 已带 `options` 时不重复下发、
-   MySQL 与 SQLite 的参数不被波及。
+4. **引擎装配**：时区启动参数、连接池参数、关闭自动 prepared statement、URL
+   已带 `options` 时不重复下发，MySQL 与 SQLite 的参数不被波及。
 5. **配置项映射**：`DB_PG_TIMEZONE` 这个环境变量名必须真的落到配置项上。
    名字写错的话配置项一直保持默认值，功能看着「正常」，用户怎么改环境变量
    都不起作用——这种坑要到部署到别的时区时才暴露。
 
-### 19.6 已知限制
+### 19.6 PgBouncer 事务池
 
-1. **未在真 PG 服务器上实测**（本机无 PG 实例）。上线前必须跑一遍真库的
-   迁移与测试。
-2. PG 的 `TIMESTAMP` 是微秒精度，MySQL 是毫秒（本项目不依赖时间排序）。
-3. 走 PgBouncer **事务池**模式时，`options` 启动参数可能被中间件忽略——那种
-   部署下需要 DBA 在库/角色层面设好 `timezone`。
+生产连接池使用 `pool_mode=transaction`，应用 URL 指到 PgBouncer 的库别名：
+
+```dotenv
+DATABASE_URL=postgresql+psycopg://webagent:...@pgbouncer:6432/agentdb
+```
+
+DBA 配置要点：
+
+- 在 PgBouncer 的 `[databases]` 中把客户端库名映射到真实 PostgreSQL 库；
+- 设置 `ignore_startup_parameters = extra_float_digits,options`。应用会下发时区
+  `options`，事务池不能保证它在服务端生效，因此必须在 PostgreSQL 的服务器、
+  数据库或角色层固定 `timezone=UTC`；
+- 不要重新开启 psycopg 自动 prepared statement；需要预编译时应升级到能安全
+  隔离命名空间的池化方案，并单独回归；
+- 应用不依赖跨事务的会话状态。连接归还与复用、长事务隔离和并发迁移已用
+  PgBouncer 1.18 + PostgreSQL 18.6 验证。
+
+### 19.7 已知限制
+
+1. PG 的 `TIMESTAMP` 是微秒精度，MySQL 是毫秒（本项目不依赖时间排序）。
+2. PgBouncer 事务池会忽略 `options` 启动参数；UTC 必须由 PostgreSQL 侧配置，
+   不能依赖应用 URL。
+3. 已验证逻辑备份恢复，但尚未部署物理热备、增量备份与 PITR。
 
 ---
 
