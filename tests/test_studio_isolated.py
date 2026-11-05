@@ -399,6 +399,9 @@ async def test_sandbox_resource_usage_and_estimated_cost_are_recorded():
             stub, skill="iso-skill", tenant_id="tenant-cost", request_id="cost-1"
         )
         assert response.status == studio_pb2.EXEC_STATUS_COMPLETED
+        assert response.cpu_seconds == pytest.approx(0.2)
+        assert response.peak_memory_bytes == 64 * 1024 * 1024
+        assert response.image_startup_ms == 500
         text = service.metrics.registry.render()
         assert 'sandbox_cpu_seconds_sum{profile="isolated"' in text
         assert 'sandbox_peak_memory_bytes_sum{profile="isolated"' in text

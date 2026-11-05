@@ -724,6 +724,9 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                 profile, studio_pb2.EXEC_PROFILE_UNSPECIFIED
             ),
             startup_ms=outcome.startup_ms,
+            image_startup_ms=outcome.image_startup_ms,
+            cpu_seconds=outcome.cpu_seconds,
+            peak_memory_bytes=outcome.peak_memory_bytes,
             error_code=outcome.error_code or _default_error_code(outcome.status),
         )
 
