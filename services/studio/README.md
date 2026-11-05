@@ -41,7 +41,9 @@ STUDIO_EXEC_REQUIRED=true
 - 超时后杀掉整个进程组，不只杀父进程。
 - stdout 和 stderr 有明确上限，达到上限后停止继续读取。
 - 可识别退出码 `-9` / `137`，并结合 cgroup 的 `oom_kill` 计数报告 `LIMITED`。
-- gRPC 取消不保证终止远端脚本，服务端执行时限是最终兜底。
+- gRPC 取消会传播到 dispatcher，并强删对应的 isolated 一次性容器。
+- `STUDIO_SKILL_QUOTAS=skill-a=1` 与 `STUDIO_SKILL_QUEUE` 限制单技能并发和等待队列。
+- `/metrics` 提供 sandbox 启动耗时、阶段计数和执行耗时。
 - 容器使用非 root、只读根文件系统、临时目录、无凭据和无特权模式。
 
 ## 接口

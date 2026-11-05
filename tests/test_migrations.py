@@ -47,12 +47,16 @@ EXPECTED_TABLES = {
     "run_step",
     "run_event",
     "run_approval",
+    "run_approval_vote",
     "skill",
     "skill_resource",
     "skill_revision",
+    "skill_revision_resource",
     "mcp_server",
     "mcp_tool",
     "llm_endpoint",
+    "tool_call_audit",
+    "admin_user",
 }
 
 
@@ -181,6 +185,14 @@ def test_primary_keys_are_rowid_aliases(migrated_db: Path):
         ("run", {"idx_conv_status", "idx_status"}),
         ("conversation", {"idx_user"}),
         ("llm_endpoint", {"idx_llm_endpoint_enabled_priority"}),
+        (
+            "tool_call_audit",
+            {
+                "idx_tool_audit_tenant_created",
+                "idx_tool_audit_run_created",
+                "idx_tool_audit_expires",
+            },
+        ),
     ],
 )
 def test_design_indexes_exist(migrated_db: Path, table: str, expected: set[str]):

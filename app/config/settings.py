@@ -71,6 +71,17 @@ class Settings(BaseSettings):
     tool_max_rounds: int = 5
     # 工具结果回灌给模型时的最大字符数：太长会挤爆下一轮的 prompt。
     tool_result_max_chars: int = 4000
+    # ---- 工具审计（V4.3）----
+    # 每次工具执行单独提交一条脱敏账本，不参与节点事务。关闭后不再产生新记录，
+    # 已有记录仍可由管理员查询到保留期结束。
+    tool_audit_enabled: bool = True
+    # 审计正文与模型回灌上限分开：模型仍只看到精简结果，管理员可回看更多原文。
+    tool_audit_max_result_chars: int = 65536
+    tool_audit_retention_days: int = 30
+    tool_audit_cleanup_enabled: bool = True
+    tool_audit_cleanup_interval_sec: float = 3600.0
+    # 单次最多删除多少条过期记录，限制小内存机器上的瞬时开销。
+    tool_audit_cleanup_scan_limit: int = 1000
 
     # ---- 管理员门禁（V4，§22.10）----
     # 写技能 / 注册 MCP 服务器这类「部署级」操作的凭证。**未配置 = 一律拒绝**
@@ -174,6 +185,8 @@ class Settings(BaseSettings):
     # 还是算驳回尚未定，语义没定就不能自动收尾——那等于替审批人做决定。
     # 保留这一项是为了把「将来启用时需要什么」写下来，不是说它现在生效。
     approval_timeout: int = 86400
+    # 超时巡检周期；多个实例同时扫描也安全，审批行使用条件更新竞争收口。
+    approval_timeout_scan_interval: float = 30.0
 
     # ---- Redis（V2 多实例）----
     # 关：走进程内总线 + MySQL 回放（V1 单实例行为，现有测试全部依赖它）。

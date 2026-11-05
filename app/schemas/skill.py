@@ -17,12 +17,14 @@ class SkillSummaryOut(BaseModel):
     """技能列表项。"""
 
     code: str
+    tenant_id: str = "default"
     name: str
     description: str
     origin: str
     version: int
     content_hash: str
     enabled: bool
+    status: str = "published"
     allowed_tools: str = ""
     runtime_profile: str = "fast"
     runtime_image: str = ""
@@ -43,6 +45,7 @@ class SkillOut(BaseModel):
 
     id: int
     code: str
+    tenant_id: str = "default"
     name: str
     description: str
     license: str
@@ -53,6 +56,8 @@ class SkillOut(BaseModel):
     origin: str
     content_hash: str
     enabled: bool
+    status: str = "published"
+    deleted_at: datetime | None = None
     version: int
     runtime_profile: str = "fast"
     runtime_image: str = ""
@@ -78,6 +83,7 @@ class SkillCreate(BaseModel):
     allowed_tools: str = Field(default="", max_length=512)
     body: str = Field(default="", max_length=MAX_BODY_CHARS)
     enabled: bool = True
+    status: str = Field(default="published", pattern=r"^(draft|published)$")
 
 
 class SkillUpdate(BaseModel):
@@ -91,6 +97,7 @@ class SkillUpdate(BaseModel):
     allowed_tools: str | None = Field(default=None, max_length=512)
     body: str | None = Field(default=None, max_length=MAX_BODY_CHARS)
     enabled: bool | None = None
+    status: str | None = Field(default=None, pattern=r"^(draft|published)$")
 
 
 class SkillResourceOut(BaseModel):
@@ -110,6 +117,7 @@ class SkillRevisionOut(BaseModel):
     author: str
     note: str
     resource_count: int = 0
+    binary_resource_count: int = 0
     created_at: datetime | None = None
 
 
@@ -132,6 +140,12 @@ class SkillRollbackIn(BaseModel):
     """回滚到指定版本。"""
 
     version: int = Field(ge=1)
+
+
+class SkillPublishIn(BaseModel):
+    """发布草稿；默认同时启用。"""
+
+    enabled: bool = True
 
 
 class SkillPromptPreviewOut(BaseModel):

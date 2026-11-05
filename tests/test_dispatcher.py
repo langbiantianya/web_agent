@@ -31,6 +31,7 @@ class _FakeBackend:
         self.delay = delay
         self._health = health
         self.specs: list[SandboxSpec] = []
+        self.cancelled: list[str] = []
         self.closed = False
 
     async def run(self, spec: SandboxSpec) -> SandboxResult:
@@ -50,6 +51,11 @@ class _FakeBackend:
         """假的收尾。"""
         self.closed = True
 
+    async def cancel(self, execution_id: str) -> bool:
+        """记录取消请求。"""
+        self.cancelled.append(execution_id)
+        return True
+
 
 def _config(**overrides) -> DispatcherConfig:
     """造一份测试配置。"""
@@ -59,6 +65,7 @@ def _config(**overrides) -> DispatcherConfig:
         "images": (("default", "img:1"),),
         "max_inflight": 2,
         "max_timeout_ms": 5000,
+        "require_digest": False,
     }
     params.update(overrides)
     return DispatcherConfig(**params)
@@ -213,3 +220,31 @@ async def test_close_closes_backend():
     await client.aclose()
     await server.close()
     assert backend.closed is True
+
+
+async def test_cancel_route_propagates_to_backend():
+    """取消路由把 request_id 传给后端并返回取消结果。"""
+    backend = _FakeBackend()
+    server, client = await _start(backend)
+    try:
+        response = await client.post("/v1/exec/req-1/cancel")
+        assert response.status_code == 200
+        assert response.json()["cancelled"] is True
+        assert backend.cancelled == ["req-1"]
+    finally:
+        await client.aclose()
+        await server.close()
+
+
+def test_image_digest_is_required_by_default():
+    """生产配置拒绝浮动 tag，固定 digest 才通过。"""
+    from services.dispatcher.config import DispatcherConfigError
+
+    with pytest.raises(DispatcherConfigError):
+        DispatcherConfig(images=(("default", "image:latest"),)).validate()
+    DispatcherConfig(
+        images=(("default", "image@sha256:" + "a" * 64),)
+    ).validate()
+    DispatcherConfig(
+        images=(("default", "image:latest"),), require_digest=False
+    ).validate()

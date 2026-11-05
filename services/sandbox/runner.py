@@ -389,6 +389,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"sandbox runner：读不到 payload：{exc}", file=sys.stderr)
         return 2
     nonce = str(payload["nonce"])
+    traceparent = str(payload.get("traceparent") or "")
+    if traceparent:
+        print(f"sandbox runner：traceparent={traceparent}", file=sys.stderr)
     try:
         result = run_script(payload)
     except Exception as exc:  # noqa: BLE001

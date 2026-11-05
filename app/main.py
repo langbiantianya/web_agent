@@ -23,6 +23,11 @@ from app.api.router import api_router
 from app.config.db import dispose_engine
 from app.config.settings import settings
 from app.core.body_limit import BodySizeLimitMiddleware, scope_header
+from app.core.approval_timeout import (
+    expire_due_approvals,
+    start_approval_timeout_monitor,
+    stop_approval_timeout_monitor,
+)
 from app.core.checkpoint import (
     cleanup_orphan_checkpoints,
     close_checkpointer,
@@ -36,6 +41,7 @@ from app.core.redis_client import (
     connect_redis,
     disconnect_redis,
     instance_id,
+    redis_search_available,
     redis_is_enabled,
     redact_url,
 )
@@ -44,6 +50,16 @@ from app.core.studio import (
     StudioStartupError,
     close_studio_client,
     init_studio,
+)
+from app.core.tool_audit import (
+    cleanup_expired_tool_audits,
+    start_tool_audit_cleanup,
+    stop_tool_audit_cleanup,
+)
+from app.core.trace import (
+    current_traceparent,
+    reset_traceparent,
+    set_traceparent,
 )
 from app.core.tools import set_optional_tools_enabled
 
@@ -54,15 +70,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _admin_elevated(scope) -> bool:
+async def _admin_elevated(scope) -> bool:
     """这个请求是否可以享受「按路径放宽」的请求体上限。
 
-    判据是**管理员密钥正确**——放宽后的上限只在调用方已经是管理员时生效，
-    未认证流量在同一条路径上仍然受全局上限约束。
+    判据是**管理员密钥正确**——同时接受环境引导 Key 和数据库管理员 Key。
+    认证失败或数据库暂时不可用时一律回退到全局上限，不把中间件变成新的
+    错误面。
     """
-    from app.core.admin import admin_key_matches
+    from app.config.db import SessionLocal
+    from app.core.admin import admin_key_matches, resolve_admin
 
-    return admin_key_matches(scope_header(scope, "x-admin-key"))
+    key = scope_header(scope, "x-admin-key")
+    if admin_key_matches(key):
+        return True
+    if not key:
+        return False
+    try:
+        async with SessionLocal() as db:
+            principal = await resolve_admin(db, key)
+        return principal.role in ("operator", "admin")
+    except Exception:  # noqa: BLE001 - 请求体限制必须 fail-closed
+        return False
 
 
 @asynccontextmanager
@@ -116,6 +144,13 @@ async def lifespan(app: FastAPI):
                 )
                 raise
             logger.info("已启用 Redis 后端，实例标识 %s", instance_id())
+            if settings.checkpoint_enabled and not await redis_search_available():
+                raise RuntimeError(
+                    "REDIS_ENABLED=true 且 CHECKPOINT_ENABLED=true，但当前 Redis "
+                    "不提供 RediSearch FT.* 命令。事件总线可使用普通 Redis；"
+                    "审批暂停点请改用 Redis Stack，或显式设 "
+                    "CHECKPOINT_ENABLED=false。"
+                )
 
         # 审批暂停点（V3.1）。连不上就**直接失败**：没有 checkpointer 就没有「暂停」，
         # 审批节点会卡住不动，用户看到的是「一直在等审批」却永远等不到结果——
@@ -140,7 +175,17 @@ async def lifespan(app: FastAPI):
         except Exception:  # pragma: no cover - 清理失败不阻塞启动
             logger.exception("启动时清理 checkpoint 孤儿失败")
         start_checkpoint_cleanup()
+        try:
+            await expire_due_approvals()
+        except Exception:  # pragma: no cover - 超时巡检不阻塞启动
+            logger.exception("启动时审批超时巡检失败")
+        start_approval_timeout_monitor()
         mcp_manager.start_idle_reaper()
+        try:
+            await cleanup_expired_tool_audits()
+        except Exception:  # pragma: no cover - 清理失败不阻塞启动
+            logger.exception("启动时清理过期工具审计失败")
+        start_tool_audit_cleanup()
 
         # studio 脚本执行（V4，§22.8.6）。配了地址但连不上 → **启动失败**：
         # studio 是部署的一个组成部分，它挂了说明部署不完整，让问题在部署时暴露，
@@ -217,6 +262,8 @@ async def _close_resources() -> None:
         ("studio 连接", close_studio_client),
         ("MCP 连接", mcp_manager.shutdown),
         ("审批暂停点", close_checkpointer),
+        ("审批超时巡检", stop_approval_timeout_monitor),
+        ("工具审计清理", stop_tool_audit_cleanup),
         ("Redis 连接", disconnect_redis),
         ("数据库连接池", dispose_engine),
     )
@@ -270,6 +317,18 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(api_router)
+
+    @app.middleware("http")
+    async def trace_context_middleware(request: Request, call_next):
+        """接收并回写 W3C traceparent，供工具执行链路继续传播。"""
+        incoming = request.headers.get("traceparent")
+        token = set_traceparent(incoming)
+        try:
+            response = await call_next(request)
+            response.headers["traceparent"] = current_traceparent() or ""
+            return response
+        finally:
+            reset_traceparent(token)
 
     # ------------------------------------------------- 静态页（验证台 / 后台）
     # 单文件、无构建步骤；同源提供，方便直接验证 SSE 续传等行为。

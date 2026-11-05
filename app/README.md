@@ -10,24 +10,29 @@ flowchart TB
 
     subgraph Access["接入层"]
         API["FastAPI REST API<br/>Agent · Workflow · Conversation · Run · Skill · MCP"]
-        AUTH["SSE Ticket<br/>短期鉴权"]
+        AUTH["Admin / Tenant / Role<br/>环境引导 Key + 数据库管理员"]
+        TICKET["SSE Ticket<br/>短期鉴权"]
     end
 
     subgraph Runtime["web_agent 运行时（可水平扩展）"]
         ORCH["Orchestrator<br/>run 生命周期 · 调度 · 重试 · 审批恢复"]
         GRAPH["LangGraph StateGraph<br/>DAG · 条件边 · interrupt"]
         RUNNER["AgentRunner<br/>模型流式调用 + 工具调用闭环"]
+        POLICY["Tool Policy<br/>启用 · 并发 · 超时"]
         TOOLS["工具分发<br/>内置工具 · Skill · MCP"]
+        AUDIT["Tool Audit Writer<br/>脱敏 · 限长 · 保留期"]
+        APPROVAL["Approval Monitor<br/>会签 · 去重投票 · 超时"]
         SKILL["Skill Runtime<br/>提示词注入 · 资源读取"]
-        MCP["MCP Client Manager<br/>stdio · Streamable HTTP"]
+        MCP["MCP Client Manager<br/>Tools · Resources · Prompts"]
         HUB["RunHub<br/>seq 分配 · 广播 · 取消"]
         EW["EventWriter<br/>批量写入事件"]
         SSE["SSE Writer<br/>订阅 + 回放合并去重"]
         CKPT["Checkpointer<br/>审批暂停点"]
+        TRACE["Trace Context<br/>W3C traceparent"]
     end
 
     subgraph Persistence["状态与持久化"]
-        DB[("业务数据库<br/>MySQL / PostgreSQL / SQLite<br/>Agent · Workflow · Skill · MCP · Run · Event")]
+        DB[("业务数据库<br/>MySQL / PostgreSQL / SQLite<br/>身份 · 配置 · Run · Event · Audit")]
         REDIS[("Redis（可选）<br/>Pub/Sub · Stream · Lease")]
         CP[("Checkpoint<br/>SQLite / Redis")]
     end
@@ -42,17 +47,27 @@ flowchart TB
     end
 
     Client -->|"REST"| API
-    Client -->|"SSE"| AUTH
-    AUTH --> SSE
+    Client -->|"SSE"| TICKET
+    TICKET --> SSE
+    Client -->|"X-Admin-Key"| AUTH
+    AUTH --> API
     API -->|"创建 run / 后台执行"| ORCH
+    Client -.->|"traceparent"| TRACE
+    TRACE -.-> RUNNER
+    TRACE -.-> STUDIO
 
     ORCH --> GRAPH
+    ORCH --> APPROVAL
+    APPROVAL --> CKPT
     GRAPH --> RUNNER
     RUNNER -->|"流式请求"| LLM
-    RUNNER --> TOOLS
+    RUNNER --> POLICY
+    POLICY --> TOOLS
+    RUNNER --> AUDIT
+    AUDIT --> DB
     TOOLS --> SKILL
     TOOLS --> MCP
-    MCP -->|"tools/call"| MCP_SERVER
+    MCP -->|"tools/resources/prompts"| MCP_SERVER
     TOOLS -->|"skill_exec · gRPC"| STUDIO
     STUDIO -->|"内部 HTTP"| DISPATCH
     DISPATCH -->|"创建一次性容器"| SANDBOX
@@ -72,10 +87,23 @@ flowchart TB
     API --> DB
     ORCH --> DB
     SKILL --> DB
+    AUTH --> DB
+    APPROVAL --> DB
     MCP --> DB
 ```
 
 业务数据默认落在数据库中；开启 Redis 后，多实例之间通过 Pub/Sub 分发实时事件、用 Stream 回放事件，并以租约协调 run 归属。模型生成的技能脚本只进入独立的 studio 执行边界，`web_agent` 主进程不直接执行脚本。
+
+## 治理与运行期
+
+- `ADMIN_KEY` 只负责环境引导；日常管理员使用数据库账号、`viewer/operator/admin`
+  角色和租户隔离，Key 只存 HMAC 摘要并支持一次性轮换。
+- Skill 使用草稿、发布、归档和恢复状态；修订资源保存原始字节，二进制也可逐字节回滚。
+- 审批支持会签、同一审批人去重、截止时间和 `reject/approve` 超时策略，默认 fail-closed。
+- Agent 可配置工具级启用、并发和超时；禁用工具不会进入模型工具清单，伪造调用会被拦截。
+- MCP 同时支持 tools、resources、resource templates 和 prompts，并处理工具目录变更通知。
+- W3C `traceparent` 从 HTTP 入口贯通到工具、gRPC、dispatcher 和 sandbox。
+- dispatcher 可取消并强删运行中的一次性容器；生产默认要求镜像固定 digest。
 
 ## 快速开始
 

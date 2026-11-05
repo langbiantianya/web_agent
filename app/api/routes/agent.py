@@ -8,6 +8,7 @@ from app.api.deps import DbSession
 from app.core.crypto import encrypt
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.skill_names import SkillConfigError, known_skill_codes, normalize_skill_codes
+from app.core.tool_policy import normalize_tool_policy
 from app.core.tools import known_tool_names, normalize_tool_names
 from app.repo.agent_repo import agent_repo
 from app.repo.skill_repo import skill_repo
@@ -79,6 +80,7 @@ def _to_out(
         temperature=float(agent.temperature or 0.7),
         max_tokens=agent.max_tokens or 2048,
         tools=known_tool_names(agent.tools, known_mcp),
+        tool_policy=agent.tool_policy,
         skills=known_skill_codes(agent.skills, known_skills),
         extra_params=agent.extra_params,
         enabled=bool(agent.enabled),
@@ -99,6 +101,7 @@ async def create_agent(payload: AgentCreate, db: DbSession) -> AgentOut:
         raise ConflictError(f"Agent code 已存在：{payload.code}")
     all_codes, enabled_codes = await _skill_code_sets(db)
     known_mcp = await _known_mcp_names(db)
+    tools = normalize_tool_names(payload.tools, known_mcp)
     try:
         skills = normalize_skill_codes(payload.skills, enabled_codes)
     except SkillConfigError as exc:
@@ -114,7 +117,10 @@ async def create_agent(payload: AgentCreate, db: DbSession) -> AgentOut:
         api_key_cipher=encrypt(payload.api_key),
         temperature=payload.temperature,
         max_tokens=payload.max_tokens,
-        tools=normalize_tool_names(payload.tools, known_mcp),
+        tools=tools,
+        tool_policy=normalize_tool_policy(
+            payload.tool_policy, known_tools=set(tools or [])
+        ),
         skills=skills,
         extra_params=payload.extra_params,
         enabled=1 if payload.enabled else 0,
@@ -167,6 +173,19 @@ async def update_agent(code: str, payload: AgentUpdate, db: DbSession) -> AgentO
     known_mcp = await _known_mcp_names(db)
     if "tools" in fields:
         fields["tools"] = normalize_tool_names(fields["tools"], known_mcp)
+    if "tool_policy" in fields:
+        existing = await agent_repo.get_by_code(db, code)
+        if existing is None:
+            raise NotFoundError(f"Agent 不存在：{code}")
+        effective_tools = (
+            fields["tools"]
+            if "tools" in fields
+            else known_tool_names(existing.tools, known_mcp)
+        )
+        fields["tool_policy"] = normalize_tool_policy(
+            fields["tool_policy"],
+            known_tools=set(effective_tools or []),
+        )
     if "skills" in fields:
         _, enabled_codes = await _skill_code_sets(db)
         try:

@@ -788,7 +788,7 @@ web_agent/
 │   │   ├── skill_reader.py         # 读技能资源（V4，§22）
 │   │   ├── skill_names.py          # Agent 的 skills 字段规整（V4，§22）
 │   │   ├── skill_import.py         # 技能包导入导出 + zip 防护（V4，§22）
-│   │   ├── admin.py                # 管理员门禁（共享密钥，V4，§22.10）
+│   │   ├── admin.py                # 管理员门禁（引导 Key + 数据库身份，V4/V4.4）
 │   │   ├── studio.py               # studio gRPC 客户端（V4，脚本执行，见 §22.8）
 │   │   ├── arith.py               # 算术求值（ast 白名单，不用 eval，V3.2）
 │   │   ├── checkpoint.py          # LangGraph checkpointer（审批暂停点，V3.1）

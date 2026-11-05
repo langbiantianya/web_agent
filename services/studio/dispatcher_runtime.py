@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 from typing import Any
+from urllib.parse import quote
 
 from services.studio.executor import (
     STATUS_FAILED,
@@ -71,6 +72,7 @@ class DispatcherRuntime:
             "timeout_ms": spec.timeout_ms,
             "image": spec.image,
             "request_id": spec.request_id,
+            "traceparent": spec.traceparent,
         }
         timeout = max(5.0, (spec.timeout_ms or 60_000) / 1000.0 + 30.0)
         try:
@@ -95,6 +97,22 @@ class DispatcherRuntime:
     async def close(self) -> None:
         """没有持久连接要关。"""
         return None
+
+    async def cancel(self, request_id: str) -> bool:
+        """通知 dispatcher 立即强删对应容器。"""
+        if not request_id:
+            return False
+        try:
+            status, data = await self._request(
+                "POST",
+                f"/v1/exec/{quote(request_id, safe='')}/cancel",
+                {},
+                5.0,
+            )
+        except Exception:
+            logger.warning("取消沙箱请求失败：%s", request_id, exc_info=True)
+            return False
+        return status == 200 and bool(data.get("cancelled"))
 
     async def health(self, timeout: float = 2.0) -> bool:
         """dispatcher 是否就绪（启动期用）。
@@ -134,6 +152,10 @@ class DispatcherRuntime:
                 b"Content-Type: application/json; charset=utf-8\r\n"
             )
         headers.extend(f"Content-Length: {len(body)}\r\n".encode("latin-1"))
+        if isinstance(payload, dict) and payload.get("traceparent"):
+            headers.extend(
+                f"traceparent: {payload['traceparent']}\r\n".encode("latin-1")
+            )
         headers.extend(b"Connection: close\r\n\r\n")
         request = bytes(headers) + body
 

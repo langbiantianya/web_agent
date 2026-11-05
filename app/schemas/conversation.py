@@ -125,6 +125,11 @@ class ApprovalOut(ORMBase):
     prompt: str = ""
     comment: str | None = None
     decided_by: str | None = None
+    required_approvals: int = 1
+    approved_count: int = 0
+    rejected_count: int = 0
+    timeout_action: str = "reject"
+    deadline_at: datetime | None = None
     requested_at: datetime | None = None
     decided_at: datetime | None = None
 
@@ -148,3 +153,17 @@ class ApprovalDecisionOut(BaseModel):
     status: str
     comment: str | None = None
     decided_by: str | None = None
+    pending: bool = False
+    approved_count: int = 0
+    required_approvals: int = 1
+
+
+class ApprovalVoteOut(BaseModel):
+    """会签中的一张审批票。"""
+
+    id: int
+    approval_id: int
+    decided_by: str
+    approved: bool
+    comment: str | None = None
+    created_at: datetime | None = None

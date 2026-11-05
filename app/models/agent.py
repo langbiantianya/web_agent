@@ -13,6 +13,9 @@ class Agent(Base):
 
     id: Mapped[int] = mapped_column(PK, primary_key=True, autoincrement=True)
     code: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
+    tenant_id: Mapped[str] = mapped_column(
+        sa.String(64), nullable=False, default="default"
+    )
     name: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     description: Mapped[str] = mapped_column(sa.String(512), default="")
     system_prompt: Mapped[str] = mapped_column(sa.Text, nullable=False)
@@ -22,6 +25,9 @@ class Agent(Base):
     temperature: Mapped[float] = mapped_column(sa.DECIMAL(3, 2), default=0.70)
     max_tokens: Mapped[int] = mapped_column(sa.Integer, default=2048)
     tools: Mapped[list | None] = mapped_column(JSON_COL, default=None)
+    # 工具级策略：{tool_name: {"enabled": bool, "max_concurrency": int,
+    # "timeout_sec": float}}。不在策略表里的工具沿用全局默认。
+    tool_policy: Mapped[dict | None] = mapped_column(JSON_COL, default=None)
     # 绑定的技能 code 列表（V4，§22.5）。**不是**工具白名单：技能只贡献指令
     # 正文，模型能不能调工具仍然只看 tools。
     skills: Mapped[list | None] = mapped_column(JSON_COL, default=None)
@@ -40,6 +46,7 @@ class Agent(Base):
 
     __table_args__ = (
         sa.Index("idx_agent_enabled", "enabled"),
+        sa.Index("idx_agent_tenant", "tenant_id"),
     )
 
     def __repr__(self) -> str:  # pragma: no cover

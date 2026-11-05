@@ -22,7 +22,12 @@ from app.core.mcp.transport import McpTransportError, check_command_allowed, che
 from app.models.mcp_server import TRANSPORT_HTTP, TRANSPORT_STDIO
 from app.repo.mcp_repo import mcp_server_repo, mcp_tool_repo
 from app.schemas.mcp import (
+    McpPromptGetOut,
+    McpPromptGetIn,
+    McpPromptOut,
     McpRefreshOut,
+    McpResourceContentOut,
+    McpResourceOut,
     McpServerCreate,
     McpServerOut,
     McpServerUpdate,
@@ -259,3 +264,139 @@ async def list_server_tools(code: str, db: DbSession, admin: AdminDep) -> list[M
         )
         for row in rows
     ]
+
+
+def _model_json(value) -> dict:
+    """把 MCP SDK 模型转成 JSON 字典，兼容字段别名。"""
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json", by_alias=True, exclude_none=True)
+    return dict(value or {})
+
+
+async def _server_or_404(db, code: str):
+    """读取启用的 MCP 服务器配置。"""
+    server = await mcp_server_repo.get_by_code(db, code)
+    if server is None:
+        raise NotFoundError(f"MCP 服务器不存在：{code}")
+    if not server.enabled:
+        raise BadRequestError(f"MCP 服务器「{code}」已停用")
+    return server
+
+
+@router.get("/{code}/resources", response_model=list[McpResourceOut])
+async def list_server_resources(
+    code: str, db: DbSession, admin: AdminDep
+) -> list[McpResourceOut]:
+    """实时列出 MCP 资源；该接口受管理员门禁保护。"""
+    server = await _server_or_404(db, code)
+    try:
+        rows = await mcp_manager.list_resources(server)
+    except Exception as exc:
+        raise BadRequestError(f"读取 MCP 资源列表失败：{exc}") from exc
+    return [
+        McpResourceOut(
+            uri=str(getattr(row, "uri", "")),
+            name=str(getattr(row, "name", "") or ""),
+            description=getattr(row, "description", None),
+            mime_type=getattr(row, "mime_type", None),
+            size=getattr(row, "size", None),
+        )
+        for row in rows
+    ]
+
+
+@router.get(
+    "/{code}/resource-templates", response_model=list[McpResourceOut]
+)
+async def list_server_resource_templates(
+    code: str, db: DbSession, admin: AdminDep
+) -> list[McpResourceOut]:
+    """实时列出 MCP 资源模板。"""
+    server = await _server_or_404(db, code)
+    try:
+        rows = await mcp_manager.list_resource_templates(server)
+    except Exception as exc:
+        raise BadRequestError(f"读取 MCP 资源模板失败：{exc}") from exc
+    return [
+        McpResourceOut(
+            uri=str(getattr(row, "uri_template", "")),
+            name=str(getattr(row, "name", "") or ""),
+            description=getattr(row, "description", None),
+            mime_type=getattr(row, "mime_type", None),
+        )
+        for row in rows
+    ]
+
+
+@router.get(
+    "/{code}/resources/read", response_model=list[McpResourceContentOut]
+)
+async def read_server_resource(
+    code: str,
+    db: DbSession,
+    admin: AdminDep,
+    uri: str,
+) -> list[McpResourceContentOut]:
+    """读取资源 URI；文本和 base64 二进制分别返回。"""
+    server = await _server_or_404(db, code)
+    try:
+        result = await mcp_manager.read_resource(server, uri)
+    except Exception as exc:
+        raise BadRequestError(f"读取 MCP 资源失败：{exc}") from exc
+    out: list[McpResourceContentOut] = []
+    for item in getattr(result, "contents", None) or []:
+        out.append(
+            McpResourceContentOut(
+                uri=str(getattr(item, "uri", uri)),
+                mime_type=getattr(item, "mime_type", None),
+                text=getattr(item, "text", None),
+                blob_base64=getattr(item, "blob", None),
+            )
+        )
+    return out
+
+
+@router.get("/{code}/prompts", response_model=list[McpPromptOut])
+async def list_server_prompts(
+    code: str, db: DbSession, admin: AdminDep
+) -> list[McpPromptOut]:
+    """实时列出 MCP prompts。"""
+    server = await _server_or_404(db, code)
+    try:
+        rows = await mcp_manager.list_prompts(server)
+    except Exception as exc:
+        raise BadRequestError(f"读取 MCP prompt 列表失败：{exc}") from exc
+    return [
+        McpPromptOut(
+            name=str(getattr(row, "name", "")),
+            description=getattr(row, "description", None),
+            arguments=[
+                _model_json(item)
+                for item in (getattr(row, "arguments", None) or [])
+            ],
+        )
+        for row in rows
+    ]
+
+
+@router.post("/{code}/prompts/{prompt}/get", response_model=McpPromptGetOut)
+async def get_server_prompt(
+    code: str,
+    prompt: str,
+    body: McpPromptGetIn,
+    db: DbSession,
+    admin: AdminDep,
+) -> McpPromptGetOut:
+    """获取 prompt；参数只传字符串，符合 MCP 规范。"""
+    server = await _server_or_404(db, code)
+    try:
+        result = await mcp_manager.get_prompt(server, prompt, body.arguments)
+    except Exception as exc:
+        raise BadRequestError(f"获取 MCP prompt 失败：{exc}") from exc
+    return McpPromptGetOut(
+        description=getattr(result, "description", None),
+        messages=[
+            _model_json(item)
+            for item in (getattr(result, "messages", None) or [])
+        ],
+    )

@@ -46,6 +46,10 @@ class SandboxBackend(Protocol):
         """后端是否就绪。"""
         ...
 
+    async def cancel(self, execution_id: str) -> bool:
+        """尽力终止正在运行的沙箱。"""
+        ...
+
     async def close(self) -> None:
         """释放后端资源。"""
         ...

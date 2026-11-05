@@ -31,6 +31,9 @@ class Skill(Base):
     __tablename__ = "skill"
 
     id: Mapped[int] = mapped_column(PK, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(
+        sa.String(64), nullable=False, default="default"
+    )
     # 技能的业务主键。与 frontmatter 的 name 必须一致（§22.5）。
     code: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     name: Mapped[str] = mapped_column(sa.String(64), nullable=False)
@@ -49,6 +52,11 @@ class Skill(Base):
     # sha256(body ‖ 各资源按 path 排序的摘要)——管变更检测与脚本执行的幂等键。
     content_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="")
     enabled: Mapped[bool] = mapped_column(sa.SmallInteger, default=1)
+    # draft | published | archived。archived 同时设置 deleted_at，API 默认不返回。
+    status: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="published"
+    )
+    deleted_at: Mapped[object | None] = mapped_column(DATETIME3, nullable=True)
     version: Mapped[int] = mapped_column(sa.Integer, default=1)
     created_at: Mapped[object] = mapped_column(
         DATETIME3, server_default=sa.func.now(), nullable=False
@@ -61,8 +69,9 @@ class Skill(Base):
     )
 
     __table_args__ = (
-        sa.UniqueConstraint("code", name="uq_skill_code"),
+        sa.UniqueConstraint("tenant_id", "code", name="uq_skill_tenant_code"),
         sa.Index("idx_skill_enabled", "enabled"),
+        sa.Index("idx_skill_tenant_status", "tenant_id", "status"),
     )
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -82,7 +91,7 @@ class SkillResource(Base):
     mime_type: Mapped[str] = mapped_column(
         sa.String(64), nullable=False, default="application/octet-stream"
     )
-    # 文本资源才进提示词、才参与回滚（§22.12 第 7 条）。
+    # 文本资源才进提示词；回滚由修订资源表保存完整内容。
     is_text: Mapped[bool] = mapped_column(sa.SmallInteger, default=1)
     content: Mapped[bytes] = mapped_column(LONGBLOB, nullable=False)
     size_bytes: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
@@ -112,8 +121,8 @@ class SkillRevision(Base):
     skill_id: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     version: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     body: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
-    # 资源清单：[{path, sha256, is_text, text?}]。**文本资源带内容，二进制只带摘要**
-    # ——所以文本资源能回滚、二进制不能（§22.12 第 7 条）。
+    # 资源清单：[{path, sha256, is_text, text?}]，用于快速展示。
+    # 完整字节另存 skill_revision_resource，文本与二进制都可回滚。
     resources: Mapped[list | None] = mapped_column(JSON_COL, default=None)
     author: Mapped[str] = mapped_column(sa.String(64), default="")
     note: Mapped[str] = mapped_column(sa.String(255), default="")
@@ -129,3 +138,30 @@ class SkillRevision(Base):
     def __repr__(self) -> str:  # pragma: no cover
         """调试用摘要。"""
         return f"<SkillRevision skill={self.skill_id} v{self.version}>"
+
+
+class SkillRevisionResource(Base):
+    """修订快照中的完整资源内容。
+
+    二进制不能塞进 JSON，因此每次写修订都把资源正文复制到本表；回滚可以从
+    revision 独立恢复，不再依赖当前资源是否还存在。
+    """
+
+    __tablename__ = "skill_revision_resource"
+
+    id: Mapped[int] = mapped_column(PK, primary_key=True, autoincrement=True)
+    revision_id: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    path: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    is_text: Mapped[int] = mapped_column(sa.SmallInteger, nullable=False)
+    content: Mapped[bytes] = mapped_column(LONGBLOB, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+
+    __table_args__ = (
+        sa.UniqueConstraint("revision_id", "path", name="uk_revision_path"),
+        sa.Index("idx_skill_revision_resource_revision", "revision_id"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        """调试摘要不输出二进制正文。"""
+        return f"<SkillRevisionResource revision={self.revision_id} path={self.path}>"

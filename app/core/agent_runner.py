@@ -31,7 +31,13 @@ from app.core.studio_context import (
     reset_exec_context,
     set_exec_context,
 )
+from app.core.tool_audit import (
+    failure_type_for_exception,
+    record_tool_audit,
+)
+from app.core.tool_policy import enabled_tool_names, policy_for
 from app.core.tools import build_openai_tools, execute_tool, known_tool_names
+from app.core.trace import child_traceparent
 from app.models.agent import Agent
 from app.models.enums import EventType
 
@@ -229,6 +235,13 @@ class AgentRunner:
         # 只在本次端点尝试中记录是否已经把内容发给客户端。已经吐字后重试另一
         # 端点会产生重复文本，因此只能失败，不能做无缝切换。
         self._attempt_emitted_output = False
+        names = known_tool_names(agent.tools) or []
+        self._tool_gates: dict[str, asyncio.Semaphore] = {
+            name: asyncio.Semaphore(
+                policy_for(agent.tool_policy, name).max_concurrency
+            )
+            for name in names
+        }
 
     async def run(self, messages: list[dict]) -> AgentResult:
         """流式跑完一次对话，把每个 delta 实时发出去。
@@ -465,51 +478,24 @@ class AgentRunner:
                 "tool_calls": result.tool_calls,
             })
 
-            for tc in result.tool_calls:
-                fn = tc.get("function") or {}
-                name = fn.get("name") or ""
-                started = time.monotonic()
-                # 执行上下文：studio 的 request_id 靠它算（§22.8.5、skill-service
-                # §5.2）。必须**每次调用都重设**——不复位的话下一个 tool_call 会
-                # 继承上一个的 tool_call_id，于是两次不同的调用算出同一个 id，
-                # studio 的去重窗口会把第二次静默吞掉。
-                exec_token = set_exec_context(
-                    StudioExecContext(
-                        run_id=str(self.run_id),
-                        node_id=str(self.node_id),
-                        tool_call_id=str(tc.get("id") or ""),
-                    )
-                )
-                try:
-                    ok, output = await execute_tool(
-                        name, fn.get("arguments") or "{}", allowed=self._allowed_tools()
-                    )
-                finally:
-                    reset_exec_context(exec_token)
-                duration_ms = int((time.monotonic() - started) * 1000)
-                output = _truncate(output)
-                server = _mcp_server_of(name)
-                await self._emit(
-                    EventType.TOOL_RESULT,
-                    {
-                        "tool": name,
-                        "ok": ok,
-                        "summary": output[:200],
-                        # §21.12：外部工具比内置工具慢得多，前端要给不同的
-                        # 超时观感，所以耗时与来源都要带出来。
-                        "source": "mcp" if server else "builtin",
-                        "server": server,
-                        "durationMs": duration_ms,
-                    },
-                )
-                if server and not ok:
-                    await self._maybe_emit_mcp_unavailable(server, name)
+            outcomes = await asyncio.gather(
+                *(self._execute_one_tool_call(tc) for tc in result.tool_calls),
+                return_exceptions=True,
+            )
+            first_error: BaseException | None = None
+            for outcome in outcomes:
+                if isinstance(outcome, BaseException):
+                    first_error = first_error or outcome
+                    continue
+                tc, name, ok, output = outcome
                 convo.append({
                     "role": "tool",
                     "tool_call_id": tc.get("id") or "",
                     "name": name,
                     "content": output,
                 })
+            if first_error is not None:
+                raise first_error
 
         raise ToolLoopExceeded(max_rounds)
 
@@ -603,10 +589,120 @@ class AgentRunner:
         ``tools`` 参数的那些工具，但「模型报出来的工具名」与「服务端执行的
         工具名」还要在这里对齐一次。
         """
-        names = known_tool_names(self.agent.tools)
-        if names is None:
-            return None
-        return names
+        return enabled_tool_names(
+            known_tool_names(self.agent.tools), self.agent.tool_policy
+        )
+
+    async def _execute_one_tool_call(
+        self, tc: dict
+    ) -> tuple[dict, str, bool, str]:
+        """执行一个 tool_call，并独立写审计与事件。
+
+        多个调用由 :func:`asyncio.gather` 并行调度；同名工具再经过各自的信号量
+        限制并发。返回值保持与原调用列表一一对应，调用方据此按协议顺序回灌。
+        """
+        fn = tc.get("function") or {}
+        name = fn.get("name") or ""
+        tool_call_id = str(tc.get("id") or "")
+        arguments = fn.get("arguments") or "{}"
+        policy = policy_for(self.agent.tool_policy, name)
+        started = time.monotonic()
+        exec_token = set_exec_context(
+            StudioExecContext(
+                run_id=str(self.run_id),
+                node_id=str(self.node_id),
+                tool_call_id=tool_call_id,
+                traceparent=child_traceparent(),
+            )
+        )
+        try:
+            gate = self._tool_gates.get(name)
+            if gate is None:
+                gate = asyncio.Semaphore(policy.max_concurrency)
+                self._tool_gates[name] = gate
+            async with gate:
+                try:
+                    ok, output = await asyncio.wait_for(
+                        execute_tool(
+                            name,
+                            arguments,
+                            allowed=self._allowed_tools(),
+                        ),
+                        timeout=policy.timeout_sec,
+                    )
+                except asyncio.TimeoutError:
+                    duration_ms = int((time.monotonic() - started) * 1000)
+                    message = (
+                        f"错误：工具「{name}」执行超过 "
+                        f"{policy.timeout_sec:g} 秒，已中止本次调用。"
+                    )
+                    await record_tool_audit(
+                        tenant_id=getattr(
+                            self.agent, "tenant_id", "default"
+                        ),
+                        run_id=self.run_id,
+                        node_id=self.node_id,
+                        tool_call_id=tool_call_id,
+                        tool_name=name,
+                        arguments=arguments,
+                        ok=False,
+                        output=message,
+                        duration_ms=duration_ms,
+                        failure_type="timeout",
+                    )
+                    return tc, name, False, message
+                except Exception as exc:
+                    duration_ms = int((time.monotonic() - started) * 1000)
+                    await record_tool_audit(
+                        tenant_id=getattr(
+                            self.agent, "tenant_id", "default"
+                        ),
+                        run_id=self.run_id,
+                        node_id=self.node_id,
+                        tool_call_id=tool_call_id,
+                        tool_name=name,
+                        arguments=arguments,
+                        ok=False,
+                        output=(
+                            None
+                            if isinstance(exc, SensitiveContentError)
+                            else str(exc)
+                        ),
+                        duration_ms=duration_ms,
+                        failure_type=failure_type_for_exception(exc),
+                    )
+                    raise
+        finally:
+            reset_exec_context(exec_token)
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        await record_tool_audit(
+            tenant_id=getattr(self.agent, "tenant_id", "default"),
+            run_id=self.run_id,
+            node_id=self.node_id,
+            tool_call_id=tool_call_id,
+            tool_name=name,
+            arguments=arguments,
+            ok=ok,
+            output=output,
+            duration_ms=duration_ms,
+        )
+        output = _truncate(output)
+        server = _mcp_server_of(name)
+        await self._emit(
+            EventType.TOOL_RESULT,
+            {
+                "tool": name,
+                "ok": ok,
+                "summary": output[:200],
+                "source": "mcp" if server else "builtin",
+                "server": server,
+                "durationMs": duration_ms,
+            },
+        )
+        if server and not ok:
+            await self._maybe_emit_mcp_unavailable(server, name)
+        return tc, name, ok, output
 
     @staticmethod
     def _split_turns(messages: list[dict]) -> list[list[dict]]:
@@ -709,7 +805,11 @@ class AgentRunner:
             "max_tokens": self.agent.max_tokens or 2048,
             "stream": True,
         }
-        tools = await build_openai_tools(self.agent.tools)
+        tools = await build_openai_tools(
+            enabled_tool_names(
+                known_tool_names(self.agent.tools), self.agent.tool_policy
+            )
+        )
         if tools:
             kwargs["tools"] = tools
             if extra.get("tool_choice") is not None:

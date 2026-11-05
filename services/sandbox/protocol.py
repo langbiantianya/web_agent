@@ -67,6 +67,7 @@ class SandboxSpec:
     timeout_ms: int = 0
     image: str = ""
     request_id: str = ""
+    traceparent: str = ""
 
     def payload(self, nonce: str) -> dict[str, Any]:
         """转成 runner 读的 payload。
@@ -86,6 +87,7 @@ class SandboxSpec:
             "argv": list(self.argv),
             "stdin": self.stdin,
             "timeout_ms": self.timeout_ms,
+            "traceparent": self.traceparent,
             "limits": {
                 "stdout_bytes": MAX_STDOUT_BYTES,
                 "stderr_bytes": MAX_STDERR_BYTES,

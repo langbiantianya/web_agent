@@ -64,6 +64,8 @@ class DockerBackend:
         self.config = config
         self._client = None
         self._lock = threading.Lock()
+        self._containers: dict[str, object] = {}
+        self._cancelled: set[str] = set()
 
     def _docker(self):  # noqa: ANN202 - 返回 docker.DockerClient
         """懒创建 Docker 客户端。
@@ -119,10 +121,41 @@ class DockerBackend:
         Raises:
             SandboxError: 镜像不在目录里 / Docker 不可用 / 起不来。
         """
-        return await asyncio.to_thread(self._run_sync, spec)
+        execution_id = self._execution_id(spec)
+        try:
+            return await asyncio.to_thread(
+                self._run_sync, spec, execution_id
+            )
+        except asyncio.CancelledError:
+            await self.cancel(execution_id)
+            raise
 
-    def _run_sync(self, spec: SandboxSpec) -> SandboxResult:
+    async def cancel(self, execution_id: str) -> bool:
+        """立即强制删除对应的一次性容器。"""
+        if not execution_id:
+            return False
+        with self._lock:
+            container = self._containers.get(execution_id)
+            self._cancelled.add(execution_id)
+        if container is None:
+            return False
+        try:
+            await asyncio.to_thread(container.remove, force=True)
+            return True
+        except Exception:
+            logger.debug("强制删除沙箱 %s 失败", execution_id, exc_info=True)
+            return False
+
+    @staticmethod
+    def _execution_id(spec: SandboxSpec) -> str:
+        """优先用调用方 request_id 作为容器索引。"""
+        return (spec.request_id or f"anon-{secrets.token_hex(8)}")[:128]
+
+    def _run_sync(
+        self, spec: SandboxSpec, execution_id: str = ""
+    ) -> SandboxResult:
         """同步实现（在线程里跑，避免堵事件循环）。"""
+        execution_id = execution_id or self._execution_id(spec)
         image_name = (spec.image or "default").strip()
         image_ref = self.config.image_ref(image_name)
         if image_ref is None:
@@ -179,12 +212,15 @@ class DockerBackend:
                     labels={
                         "studio.io/owner": "dispatcher",
                         "studio.io/request_id": (spec.request_id or "")[:64],
+                        "studio.io/traceparent": (spec.traceparent or "")[:96],
                     },
                 )
             except Exception as exc:  # noqa: BLE001
                 raise SandboxError(
                     f"创建沙箱失败：{exc}", code="sandbox_start_failed"
                 ) from exc
+            with self._lock:
+                self._containers[execution_id] = container
 
             try:
                 container.start()
@@ -199,6 +235,18 @@ class DockerBackend:
             try:
                 container.wait(timeout=remaining)
             except Exception as exc:  # noqa: BLE001 - 可能是超时，也可能是 API 错误
+                if execution_id in self._cancelled:
+                    return SandboxResult(
+                        status="cancelled",
+                        exit_code=-1,
+                        error="沙箱执行已取消",
+                        error_code="cancelled",
+                        duration_ms=int(
+                            (time.monotonic() - started_at) * 1000
+                        ),
+                        startup_ms=startup_ms,
+                        sandbox_id=(container.id or "")[:12],
+                    )
                 elapsed = time.monotonic() - started_at
                 if elapsed >= timeout_sec - 0.5:
                     timed_out = True
@@ -228,6 +276,16 @@ class DockerBackend:
                     exit_code=-1,
                     error=f"沙箱执行超时（{timeout_ms} 毫秒），已删除容器",
                     error_code="sandbox_timeout",
+                    duration_ms=elapsed_ms,
+                    startup_ms=startup_ms,
+                    sandbox_id=(container.id or "")[:12],
+                )
+            if execution_id in self._cancelled:
+                return SandboxResult(
+                    status="cancelled",
+                    exit_code=-1,
+                    error="沙箱执行已取消",
+                    error_code="cancelled",
                     duration_ms=elapsed_ms,
                     startup_ms=startup_ms,
                     sandbox_id=(container.id or "")[:12],
@@ -292,6 +350,9 @@ class DockerBackend:
                 sandbox_id=(container.id or "")[:12],
             )
         finally:
+            with self._lock:
+                self._containers.pop(execution_id, None)
+                self._cancelled.discard(execution_id)
             if container is not None:
                 try:
                     container.remove(force=True)

@@ -101,6 +101,7 @@ def _validate_spec(data: dict[str, Any], config: DispatcherConfig) -> SandboxSpe
         timeout_ms=timeout_ms,
         image=image,
         request_id=str(data.get("request_id") or ""),
+        traceparent=str(data.get("traceparent") or ""),
     )
 
 
@@ -219,6 +220,13 @@ class DispatcherServer:
                 "version": self.config.version,
                 "max_inflight": self.config.max_inflight,
             }
+        if method == "POST" and path.startswith("/v1/exec/") and path.endswith("/cancel"):
+            execution_id = path[len("/v1/exec/"):-len("/cancel")]
+            if not execution_id:
+                raise _HttpError(400, "invalid_request", "缺少执行 id")
+            cancel = getattr(self.backend, "cancel", None)
+            cancelled = bool(await cancel(execution_id)) if cancel else False
+            return 200, {"cancelled": cancelled, "execution_id": execution_id}
         if method != "POST" or path != "/v1/exec":
             raise _HttpError(404, "not_found", f"未知路径：{method} {path}")
 
@@ -239,6 +247,9 @@ class DispatcherServer:
             try:
                 result = await asyncio.wait_for(self.backend.run(spec), timeout=guard)
             except asyncio.TimeoutError as exc:
+                cancel = getattr(self.backend, "cancel", None)
+                if cancel and spec.request_id:
+                    await cancel(spec.request_id)
                 raise _HttpError(504, "sandbox_timeout", "沙箱执行超时") from exc
             except SandboxError as exc:
                 status = 400 if exc.code == "image_unknown" else 503

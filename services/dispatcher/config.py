@@ -7,6 +7,7 @@ dispatcher 是**只调度、不执行**的控制面：它持有 Docker socket，
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 
@@ -32,6 +33,14 @@ def _env_pairs(name: str) -> tuple[tuple[str, str], ...]:
         if sep and key.strip() and value.strip():
             out.append((key.strip(), value.strip()))
     return tuple(out)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """读取常见布尔环境变量。"""
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off"}
 
 
 class DispatcherConfigError(Exception):
@@ -66,6 +75,8 @@ class DispatcherConfig:
     payload_dir: str = "/var/lib/studio-payloads"
     version: str = "1.0.0"
     max_body_bytes: int = 2 * 1024 * 1024
+    # 生产默认要求镜像钉到 sha256 digest；本地刚 build 的 tag 可显式关闭。
+    require_digest: bool = True
 
     def image_ref(self, name: str) -> str | None:
         """按目录名取完整镜像地址。"""
@@ -88,9 +99,16 @@ class DispatcherConfig:
             raise DispatcherConfigError(
                 "DISPATCHER_IMAGES 不能为空——没有任何镜像目录，isolated 起不来"
             )
+        digest_re = re.compile(r"@sha256:[0-9a-f]{64}$")
         for name, ref in self.images:
             if not name or not ref:
                 raise DispatcherConfigError("DISPATCHER_IMAGES 里有空的目录名或镜像地址")
+            if self.require_digest and not digest_re.search(ref):
+                raise DispatcherConfigError(
+                    f"镜像「{name}」未固定 digest：{ref}。生产必须使用 "
+                    "image@sha256:<64 hex>；仅本地构建可显式设 "
+                    "DISPATCHER_REQUIRE_DIGEST=false。"
+                )
 
     @classmethod
     def from_env(cls) -> "DispatcherConfig":
@@ -116,4 +134,5 @@ class DispatcherConfig:
             ),
             version=os.environ.get("DISPATCHER_VERSION", "1.0.0").strip() or "1.0.0",
             max_body_bytes=_env_int("DISPATCHER_MAX_BODY_BYTES", 2 * 1024 * 1024),
+            require_digest=_env_bool("DISPATCHER_REQUIRE_DIGEST", True),
         )

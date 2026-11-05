@@ -74,6 +74,9 @@ services:
       STUDIO_ISOLATED_SKILL_CODES: ""
       STUDIO_ISOLATED_MAX_CONCURRENCY: "2"
       STUDIO_ISOLATED_MAX_QUEUE: "4"
+      # 可选技能级并发配额：格式 skill-a=1,skill-b=2。
+      STUDIO_SKILL_QUOTAS: ""
+      STUDIO_SKILL_QUEUE: "4"
       # 沙箱调度器的地址；空 = 本实例没有 isolated 运行时。Phase 1 起
       # `studio-dispatcher` 会作为独立容器提供它。
       STUDIO_ISOLATED_DISPATCHER_ADDR: "studio-dispatcher:9100"
@@ -137,6 +140,8 @@ services:
       # **要与 studio 的 STUDIO_ISOLATED_IMAGES 保持一致**：前者是 Health 上报，
       # 后者是实际执行用的 ref。
       DISPATCHER_IMAGES: "default=webagent/studio-sandbox:1.0.0"
+      # 本地刚构建的镜像通常只有 tag；生产必须改为 image@sha256:<digest> 并设 true。
+      DISPATCHER_REQUIRE_DIGEST: "false"
       # payload 目录：必须对 Docker daemon 可见（下面从宿主机同路径挂进来）。
       DISPATCHER_PAYLOAD_DIR: "/var/lib/studio-payloads"
     networks:

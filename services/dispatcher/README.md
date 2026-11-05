@@ -22,8 +22,10 @@ STUDIO_ISOLATED_DISPATCHER_ADDR=studio-dispatcher:9100
 | --- | --- | --- |
 | GET | `/health` | 检查 dispatcher 和容器运行时是否可用 |
 | POST | `/v1/exec` | 按固定模板创建一次性沙箱并等待结果 |
+| POST | `/v1/exec/{execution_id}/cancel` | 强制删除运行中的一次性容器 |
 
-dispatcher 只接受已约束的 `SandboxSpec`。镜像必须来自 `DISPATCHER_IMAGES` 白名单，请求超时不能超过 `DISPATCHER_MAX_TIMEOUT_MS`。
+dispatcher 只接受已约束的 `SandboxSpec`。镜像必须来自 `DISPATCHER_IMAGES` 白名单，请求
+超时不能超过 `DISPATCHER_MAX_TIMEOUT_MS`。生产默认要求镜像 ref 固定 sha256 digest。
 
 ## 主要配置
 
@@ -34,6 +36,7 @@ dispatcher 只接受已约束的 `SandboxSpec`。镜像必须来自 `DISPATCHER_
 | `DISPATCHER_MAX_TIMEOUT_MS` | `60000` | 单次执行上限 |
 | `DISPATCHER_STARTUP_BUDGET_MS` | `15000` | 沙箱启动预算 |
 | `DISPATCHER_IMAGES` | 空 | `目录名=镜像@digest` 白名单 |
+| `DISPATCHER_REQUIRE_DIGEST` | `true` | 拒绝可变 tag；仅刚构建本地镜像的实验栈显式关闭 |
 | `DISPATCHER_DOCKER_SOCKET` | `unix:///var/run/docker.sock` | Docker 运行时地址 |
 | `DISPATCHER_PAYLOAD_DIR` | `/var/lib/studio-payloads` | 请求载荷交换目录 |
 

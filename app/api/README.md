@@ -10,6 +10,11 @@
 | GET/PUT/DELETE | `/api/agents/{code}` | Agent 详情、更新或删除 |
 | GET | `/api/agents/{code}/prompt-preview` | 预览 Skill 注入后的提示词 |
 | GET | `/api/tools` | 当前部署可用的工具目录 |
+| GET | `/api/tool-audits` | 管理员分页查询工具审计摘要 |
+| GET | `/api/tool-audits/{id}` | 管理员查看脱敏参数与限长结果 |
+| GET/POST | `/api/admin-users` | 管理员列出或创建数据库管理员 |
+| GET/PUT/DELETE | `/api/admin-users/{username}` | 查询、更新或删除管理员 |
+| POST | `/api/admin-users/{username}/rotate-key` | 轮换管理员 Key，只返回一次明文 |
 | GET/POST | `/api/workflows` | 列出或创建 Workflow |
 | GET/PUT/DELETE | `/api/workflows/{code}` | Workflow 详情、更新或删除 |
 | GET/POST | `/api/conversations` | 列出或创建会话 |
@@ -19,14 +24,26 @@
 | GET | `/api/runs/{id}` | run 详情和节点执行记录 |
 | GET | `/api/runs/{id}/messages` | run 的最终消息 |
 | POST | `/api/runs/{id}/cancel` | 取消生成 |
-| GET/POST | `/api/runs/{id}/approval` | 查询或提交人工审批 |
+| GET/POST | `/api/runs/{id}/approval` | 查询或提交人工审批/会签投票 |
 | GET | `/api/runs/{id}/stream` | 订阅 SSE 事件流 |
 | POST | `/api/auth/sse-ticket` | 获取短期 SSE ticket |
 | GET | `/api/health` | 健康检查 |
 | GET/POST | `/api/llm-endpoints` | 列出或新增数据库 LLM 接口配置 |
 | GET/PUT/DELETE | `/api/llm-endpoints/{code}` | 查询、更新或删除接口配置 |
 
-Skill 与 MCP 管理接口分别位于 `/api/skills` 和 `/api/mcp/servers`。部署级写操作还要求管理员令牌，具体配置见 `.env.example`。
+Skill 与 MCP 管理接口分别位于 `/api/skills` 和 `/api/mcp/servers`。管理写操作要求
+`X-Admin-Key`；环境引导 Key 与数据库管理员 Key 均可使用，具体配置见 `.env.example`。
+
+Skill 生命周期接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/skills/{code}/publish` | 发布草稿 |
+| POST | `/api/skills/{code}/restore` | 恢复归档技能为草稿 |
+| POST | `/api/skills/{code}/rollback` | 回滚正文与全部资源到指定修订 |
+
+MCP 除工具目录外还提供 resources、resource templates 与 prompts 的实时查询。在线状态明确
+标记为实例级，不代表跨实例共识。
 
 LLM 接口配置要求 `X-Admin-Key`，API Key 不回显。多个启用项按 `priority` 数值
 从小到大尝试；同一优先级按创建顺序稳定排序。请求尚未输出内容时失败会切换下一项，
@@ -64,12 +81,17 @@ curl -N "$BASE/api/runs/$RUN/stream?ticket=$TICKET&last_seq=0"
 | `tool_result` | 工具执行结果 | 是 |
 | `node_end` | 节点结束 | 是 |
 | `approval_required` | 流程停在审批节点 | 是 |
+| `approval_vote` | 一张会签票被接受 | 是 |
+| `approval_timeout` | 审批按截止时间策略收口 | 是 |
 | `approved` / `rejected` | 审批结果 | 是 |
 | `error` | run 出错 | 是 |
 | `done` | run 正常结束 | 是 |
 | `: ping` | SSE 注释行心跳 | 否 |
 
 `id:` 字段就是 `seq`。客户端重连时传 `last_seq` 或 `Last-Event-ID`，服务端会从下一条事件继续发送。只有 `done` 是终止事件；审批挂起时连接保持打开。
+
+请求可携带 W3C `traceparent`。服务会校验格式、生成必要子上下文，并在响应头返回当前
+`traceparent`；该上下文继续传给工具、studio、dispatcher 和 sandbox。
 
 ## 恢复与错误
 

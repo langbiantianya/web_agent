@@ -296,7 +296,15 @@ class NodeRunner:
         Raises:
             RunRejected: 审批被驳回——本次 run 就此终止。
         """
-        decision = interrupt({"node": node.id, "prompt": node.prompt})
+        decision = interrupt(
+            {
+                "node": node.id,
+                "prompt": node.prompt,
+                "requiredApprovals": node.requiredApprovals,
+                "approvalTimeoutSec": node.approvalTimeoutSec,
+                "approvalTimeoutAction": node.approvalTimeoutAction,
+            }
+        )
 
         approved = bool((decision or {}).get("approved"))
         comment = str((decision or {}).get("comment") or "")

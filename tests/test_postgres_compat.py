@@ -53,6 +53,7 @@ _EXPECTED_TABLES = {
     "message",
     "run",
     "run_approval",
+    "run_approval_vote",
     "run_event",
     "run_step",
     "workflow",
@@ -60,11 +61,16 @@ _EXPECTED_TABLES = {
     "skill",
     "skill_resource",
     "skill_revision",
+    "skill_revision_resource",
     # V4：MCP（§21.6）
     "mcp_server",
     "mcp_tool",
     # 数据库管理的 LLM 接口与故障切换
     "llm_endpoint",
+    # V4.3：独立工具审计账本
+    "tool_call_audit",
+    # V4.4：管理员身份与租户
+    "admin_user",
 }
 
 

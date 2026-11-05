@@ -24,17 +24,21 @@ def test_skill_table_columns():
         "origin",
         "content_hash",
         "enabled",
+        "tenant_id",
+        "status",
+        "deleted_at",
         "version",
         "created_at",
         "updated_at",
     } <= cols
 
 
-def test_skill_code_is_unique():
-    """code 是业务主键——重复的 code 会让「按 code 取技能」变得不确定。"""
+def test_skill_code_is_unique_per_tenant():
+    """同一租户内 code 唯一，不同租户可以使用相同 code。"""
     tbl = Base.metadata.tables["skill"]
     assert any(
-        {c.name for c in u.columns} == {"code"} for u in tbl.constraints
+        {c.name for c in u.columns} == {"tenant_id", "code"}
+        for u in tbl.constraints
         if isinstance(u, sa.UniqueConstraint)
     )
 

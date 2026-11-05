@@ -53,6 +53,7 @@ async def _start(backend: _FakeBackend):
             host="127.0.0.1",
             port=0,
             images=(("default", "img:1"),),
+            require_digest=False,
         ),
         backend,
     )

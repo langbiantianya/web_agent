@@ -9,14 +9,14 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 from sse_starlette.sse import EventSourceResponse
 
-from app.api.deps import DbSession, ResumeFrom
+from app.api.deps import DbSession, OptionalAdminDep, ResumeFrom
 from app.config.settings import settings
-from app.core.errors import ConflictError, GoneError, NotFoundError
+from app.core.errors import BadRequestError, ConflictError, GoneError, NotFoundError
 from app.core.orchestrator import get_orchestrator
 from app.core.run_hub import RunEventDTO, get_hub
 from app.core.sse_writer import get_sse_stream
 from app.core.ticket import verify_ticket
-from app.models.enums import RunStatus
+from app.models.enums import EventType, RunStatus
 from app.repo.message_repo import message_repo
 from app.repo.run_approval_repo import run_approval_repo
 from app.repo.run_event_repo import run_event_repo
@@ -25,6 +25,7 @@ from app.schemas.conversation import (
     ApprovalDecisionIn,
     ApprovalDecisionOut,
     ApprovalOut,
+    ApprovalVoteOut,
     CancelOut,
     MessageOut,
     RunDetailOut,
@@ -114,7 +115,10 @@ async def get_pending_approval(run_id: int, db: DbSession) -> ApprovalOut | None
 
 @router.post("/{run_id}/approval", response_model=ApprovalDecisionOut)
 async def submit_approval(
-    run_id: int, body: ApprovalDecisionIn, db: DbSession
+    run_id: int,
+    body: ApprovalDecisionIn,
+    db: DbSession,
+    admin: OptionalAdminDep,
 ) -> ApprovalDecisionOut:
     """提交审批决策：批准则继续跑，驳回则终止本次 run。
 
@@ -141,8 +145,11 @@ async def submit_approval(
     if approval is None:
         raise ConflictError("该 run 没有待审批项（可能已被决策过）")
 
+    decided_by = admin.username if admin is not None else body.decidedBy.strip()
+    if not decided_by:
+        raise BadRequestError("审批决策必须提供 decidedBy")
     decided = await run_approval_repo.decide(
-        db, approval.id, body.approved, body.comment, body.decidedBy
+        db, approval.id, body.approved, body.comment, decided_by
     )
     if decided is None:
         # 并发提交：条件更新没命中，说明另一个请求已经决策过了。
@@ -150,11 +157,37 @@ async def submit_approval(
         # LangGraph thread，审批后的节点会跑两遍。
         raise ConflictError("该审批已被决策过")
 
-    # 后台恢复执行：批准 → 接着往下跑；驳回 → 图节点抛 RunRejected，run 终止
+    await get_hub().emit(
+        run_id,
+        EventType.APPROVAL_VOTE,
+        {
+            "node": approval.node_id,
+            "approved": body.approved,
+            "decidedBy": decided_by,
+            "approvedCount": decided.approved_count,
+            "requiredApprovals": decided.required_approvals,
+            "status": decided.status,
+        },
+    )
+
+    # 只有会签收口后才恢复图。未达到人数的票只更新审批卡片。
+    if decided.status == "pending":
+        return ApprovalDecisionOut(
+            run_id=run_id,
+            approval_id=approval.id,
+            approved=False,
+            status="pending",
+            comment=decided.comment,
+            decided_by=decided.decided_by,
+            pending=True,
+            approved_count=decided.approved_count,
+            required_approvals=decided.required_approvals,
+        )
+
     decision = {
         "approved": body.approved,
         "comment": body.comment,
-        "decidedBy": body.decidedBy,
+        "decidedBy": decided_by,
     }
     get_orchestrator().spawn_resume(run_id, decision)
 
@@ -165,7 +198,34 @@ async def submit_approval(
         status=decided.status,
         comment=decided.comment,
         decided_by=decided.decided_by,
+        approved_count=decided.approved_count,
+        required_approvals=decided.required_approvals,
     )
+
+
+@router.get(
+    "/{run_id}/approval/{approval_id}/votes",
+    response_model=list[ApprovalVoteOut],
+)
+async def list_approval_votes(
+    run_id: int, approval_id: int, db: DbSession
+) -> list[ApprovalVoteOut]:
+    """列出一张会签单的投票记录。"""
+    approval = await run_approval_repo.get_by_id(db, approval_id)
+    if approval is None or approval.run_id != run_id:
+        raise NotFoundError(f"审批不存在：{approval_id}")
+    rows = await run_approval_repo.list_votes(db, approval_id)
+    return [
+        ApprovalVoteOut(
+            id=row.id,
+            approval_id=row.approval_id,
+            decided_by=row.decided_by,
+            approved=bool(row.approved),
+            comment=row.comment,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
 
 
 @router.get("/{run_id}/stream")

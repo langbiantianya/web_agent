@@ -35,6 +35,20 @@ class RunApproval(Base):
     comment: Mapped[str | None] = mapped_column(sa.Text, default=None)
     # 谁做的决策（前端传的 user_id / 姓名）
     decided_by: Mapped[str | None] = mapped_column(sa.String(64), default=None)
+    # 会签参数。单审批人配置保持 required_approvals=1 的旧语义。
+    required_approvals: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=1
+    )
+    approved_count: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0
+    )
+    rejected_count: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0
+    )
+    timeout_action: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="reject"
+    )
+    deadline_at: Mapped[object | None] = mapped_column(DATETIME3, nullable=True)
     requested_at: Mapped[object] = mapped_column(
         DATETIME3, server_default=sa.func.now(), nullable=False
     )
@@ -56,3 +70,32 @@ class RunApproval(Base):
     def __repr__(self) -> str:  # pragma: no cover
         """调试用摘要。带上 node_id 与 status，便于定位卡在哪个审批节点。"""
         return f"<RunApproval run={self.run_id} node={self.node_id} {self.status}>"
+
+
+class RunApprovalVote(Base):
+    """会签中一张不可重复的审批票。"""
+
+    __tablename__ = "run_approval_vote"
+
+    id: Mapped[int] = mapped_column(PK, primary_key=True, autoincrement=True)
+    approval_id: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    decided_by: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    approved: Mapped[int] = mapped_column(sa.SmallInteger, nullable=False)
+    comment: Mapped[str | None] = mapped_column(sa.Text, default=None)
+    created_at: Mapped[object] = mapped_column(
+        DATETIME3, server_default=sa.func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "approval_id", "decided_by", name="uk_approval_voter"
+        ),
+        sa.Index("idx_approval_vote_approval", "approval_id", "created_at"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        """调试摘要不输出审批意见正文。"""
+        return (
+            f"<RunApprovalVote approval={self.approval_id} "
+            f"by={self.decided_by} approved={self.approved}>"
+        )

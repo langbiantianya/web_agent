@@ -199,6 +199,10 @@ class StudioService(studio_pb2_grpc.StudioServicer):
         self._isolated_pool = _ExecutionPool(
             config.isolated_max_concurrency, config.isolated_max_queue
         )
+        self._skill_pools = {
+            code: _ExecutionPool(limit, config.skill_queue)
+            for code, limit in config.skill_quotas
+        }
         # request_id → (落库时刻, 响应)（§5.2 的去重窗口）。
         self._dedup: dict[str, tuple[float, studio_pb2.ExecResponse]] = {}
         self._ready = True
@@ -325,7 +329,40 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                 self._store_dedup(request.request_id, response)
             return response
 
+        skill_pool = self._skill_pools.get(request.skill)
+        if skill_pool is not None:
+            skill_wait_budget = deadline - time.monotonic()
+            if skill_wait_budget <= 0:
+                outcome = _timeout_outcome("技能配额等待耗尽执行时限")
+            else:
+                try:
+                    await asyncio.wait_for(
+                        skill_pool.acquire(), timeout=skill_wait_budget
+                    )
+                except asyncio.TimeoutError:
+                    outcome = _timeout_outcome("技能配额等待超过执行时限")
+                except QueueFullError:
+                    pool.release()
+                    await context.abort(
+                        grpc.StatusCode.RESOURCE_EXHAUSTED,
+                        f"skill_quota: 技能「{request.skill}」等待队列已满"
+                        f"（{skill_pool.max_queue}），请退避重试",
+                    )
+            if outcome is not None:
+                pool.release()
+                self._record_metrics(
+                    request,
+                    outcome,
+                    time.monotonic() - queue_started,
+                    profile,
+                )
+                return self._to_response(outcome, profile)
+
         self.metrics.exec_active.inc()
+        if profile == PROFILE_ISOLATED:
+            self.metrics.sandbox_total.inc(
+                phase="started", profile=profile
+            )
         started = time.monotonic()
         try:
             remaining_ms = int(max(0.0, deadline - time.monotonic()) * 1000)
@@ -343,6 +380,7 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                         timeout_ms=remaining_ms,
                         image=request.image,
                         request_id=request.request_id,
+                        traceparent=request.traceparent,
                     )
                 )
         except LauncherUnavailableError as exc:
@@ -353,10 +391,21 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                 f"capability_missing: {exc}",
             )
         except asyncio.CancelledError:
-            # 调用方取消（§8.3）。gRPC 的取消不传播到对端的进程组，所以 studio
-            # 侧的自设时限是**兜底**，不是可选项。
+            # gRPC 取消必须显式传播到 isolated dispatcher；容器不会被 Python
+            # 协程取消自动回收。等待取消回执有界，避免停机时再次挂住。
+            try:
+                await asyncio.wait_for(
+                    launcher.cancel(request.request_id), timeout=5.0
+                )
+            except Exception:
+                logger.warning(
+                    "取消沙箱失败：request_id=%s", request.request_id,
+                    exc_info=True,
+                )
             raise
         finally:
+            if skill_pool is not None:
+                skill_pool.release()
             pool.release()
             self.metrics.exec_active.dec()
 
@@ -498,6 +547,20 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             self.metrics.output_truncated_total.inc(language=language)
         if outcome.failure_reason:
             self.metrics.failed_total.inc(reason=outcome.failure_reason)
+        if profile == PROFILE_ISOLATED:
+            self.metrics.sandbox_total.inc(
+                phase=outcome.status, profile=profile
+            )
+            self.metrics.sandbox_start.observe(
+                max(0.0, outcome.startup_ms / 1000.0),
+                profile=profile,
+                image=request.image or "default",
+            )
+            self.metrics.sandbox_duration.observe(
+                max(0.0, outcome.duration_ms / 1000.0),
+                image=request.image or "default",
+                status=outcome.status,
+            )
         emit_exec_log(
             request_id=request.request_id,
             run_id=request.run_id,

@@ -32,6 +32,34 @@ from mcp.types import ImageContent  # noqa: E402
 server = MCPServer("fixture-tools", version="1.0.0")
 
 
+@server.resource(
+    "fixture://guide",
+    name="guide",
+    description="测试资源",
+    mime_type="text/markdown",
+)
+def guide() -> str:
+    """返回一段可读取的资源文本。"""
+    return "# Fixture\n资源读取正常。"
+
+
+@server.resource(
+    "fixture://items/{item}",
+    name="item",
+    description="测试资源模板",
+    mime_type="text/plain",
+)
+def item(item: str) -> str:
+    """按路径参数返回资源。"""
+    return f"item: {item}"
+
+
+@server.prompt(description="测试 prompt")
+def summarize(topic: str) -> list[dict]:
+    """返回一条用户消息模板。"""
+    return [{"role": "user", "content": f"请总结：{topic}"}]
+
+
 @server.tool(description="回显传入的文本。")
 def echo(text: str) -> str:
     """回显。

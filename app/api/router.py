@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     agent,
+    admin_user,
     auth,
     conversation,
     health,
@@ -12,15 +13,18 @@ from app.api.routes import (
     run,
     skill,
     tool,
+    tool_audit,
     workflow,
 )
 
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
+api_router.include_router(admin_user.router)
 api_router.include_router(agent.router)
 api_router.include_router(llm_endpoint.router)
 api_router.include_router(tool.router)
+api_router.include_router(tool_audit.router)
 api_router.include_router(workflow.router)
 api_router.include_router(conversation.router)
 api_router.include_router(run.router)

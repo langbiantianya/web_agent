@@ -13,6 +13,14 @@ from app.schemas.common import ORMBase, check_json_shape
 MAX_SYSTEM_PROMPT = 32_000
 
 
+class ToolPolicyIn(BaseModel):
+    """工具级权限、并发和超时。"""
+
+    enabled: bool = True
+    max_concurrency: int = Field(default=4, ge=1, le=16)
+    timeout_sec: float = Field(default=60.0, ge=0.1, le=600.0)
+
+
 class AgentBase(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     description: str = Field(default="", max_length=512)
@@ -31,6 +39,8 @@ class AgentBase(BaseModel):
     # 工具名列表（V3.2）。**不是** OpenAI 的 function schema——填的是注册表里
     # 的工具名，schema 与执行器都由服务端从同一张表取。
     tools: list[str] | None = None
+    # 工具级执行策略；未出现的工具沿用系统默认。
+    tool_policy: dict[str, ToolPolicyIn] | None = None
     # 绑定的技能 code 列表（V4，§22.5）。技能只贡献**指令正文**，不授予任何
     # 工具权限——能不能调工具仍然只看 tools。
     skills: list[str] | None = None
@@ -65,6 +75,7 @@ class AgentUpdate(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
     tools: list[str] | None = None
+    tool_policy: dict[str, ToolPolicyIn] | None = None
     skills: list[str] | None = None
     extra_params: dict | None = None
     enabled: bool | None = None
@@ -87,6 +98,7 @@ class AgentOut(ORMBase):
     temperature: float
     max_tokens: int
     tools: list[str] | None = None
+    tool_policy: dict[str, dict] | None = None
     skills: list[str] | None = None
     extra_params: dict | None = None
     enabled: bool

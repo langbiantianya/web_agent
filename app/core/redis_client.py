@@ -129,6 +129,25 @@ async def get_redis() -> Redis:
     return _client
 
 
+async def redis_search_available(client: Redis | None = None) -> bool:
+    """探测 Redis 是否提供 RediSearch 的 ``FT.CREATE`` 命令。
+
+    事件总线只需要普通 Redis；审批 checkpointer 还需要 Redis Stack / RediSearch。
+    提前探测能把“普通 redis:alpine 不支持 FT.*”变成启动期的明确错误，而不是在
+    第一次审批时抛出底层命令错误。
+    """
+    target = client or await get_redis()
+    try:
+        result = await target.execute_command(
+            "COMMAND", "INFO", "FT.CREATE"
+        )
+    except (RedisError, OSError, ValueError):
+        return False
+    if not result or result[0] is None:
+        return False
+    return isinstance(result[0], dict) or bool(result[0])
+
+
 async def connect_redis(attempts: int = 3, backoff: float = 0.5) -> Redis:
     """建立连接池并做一次 PING 探活，失败时按 ``backoff`` 退避重试。
 

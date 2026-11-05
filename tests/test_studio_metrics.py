@@ -145,7 +145,7 @@ def test_label_values_are_escaped():
 
 
 def test_build_metrics_registers_the_whole_table():
-    """§12.1 的八个指标一个都不能少。"""
+    """执行、队列与沙箱阶段指标一个都不能少。"""
     metrics = build_metrics()
     text = metrics.registry.render()
     for name in (
@@ -157,6 +157,9 @@ def test_build_metrics_registers_the_whole_table():
         "studio_exec_output_truncated_total",
         "studio_exec_failed_total",
         "studio_orphan_process_total",
+        "sandbox_start_seconds",
+        "sandbox_total",
+        "sandbox_duration_seconds",
     ):
         assert f"# TYPE {name} " in text, name
 

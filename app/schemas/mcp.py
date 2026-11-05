@@ -80,6 +80,8 @@ class McpServerOut(BaseModel):
     version: int = 1
     # 运行期状态。
     online: bool = False
+    # online / unavailable_reason 的观察范围。当前为进程实例级，不是集群共识。
+    online_scope: str = "instance"
     unavailable_reason: str | None = None
     tool_count: int = 0
     created_at: datetime | None = None
@@ -106,8 +108,53 @@ class McpRefreshOut(BaseModel):
     skipped: list[dict] = Field(default_factory=list)
 
 
+class McpResourceOut(BaseModel):
+    """MCP 资源或资源模板描述。"""
+
+    uri: str
+    name: str = ""
+    description: str | None = None
+    mime_type: str | None = None
+    size: int | None = None
+
+
+class McpResourceContentOut(BaseModel):
+    """一次资源读取返回的内容；二进制以 base64 表示。"""
+
+    uri: str
+    mime_type: str | None = None
+    text: str | None = None
+    blob_base64: str | None = None
+
+
+class McpPromptOut(BaseModel):
+    """MCP prompt 描述。"""
+
+    name: str
+    description: str | None = None
+    arguments: list[dict] = Field(default_factory=list)
+
+
+class McpPromptGetOut(BaseModel):
+    """获取 prompt 后的消息列表。"""
+
+    description: str | None = None
+    messages: list[dict] = Field(default_factory=list)
+
+
+class McpPromptGetIn(BaseModel):
+    """获取 prompt 的可选字符串参数。"""
+
+    arguments: dict[str, str] | None = None
+
+
 __all__ = [
+    "McpPromptGetIn",
+    "McpPromptGetOut",
+    "McpPromptOut",
     "McpRefreshOut",
+    "McpResourceContentOut",
+    "McpResourceOut",
     "McpServerCreate",
     "McpServerOut",
     "McpServerUpdate",

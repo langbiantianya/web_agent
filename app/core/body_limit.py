@@ -19,7 +19,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from inspect import isawaitable
 from typing import Any
 
 from starlette.responses import JSONResponse
@@ -46,7 +47,9 @@ class BodySizeLimitMiddleware:
         app: ASGIApp,
         max_bytes: int,
         path_limits: Mapping[str, int] | None = None,
-        elevated_allowed: Callable[[Scope], bool] | None = None,
+        elevated_allowed: (
+            Callable[[Scope], bool | Awaitable[bool]] | None
+        ) = None,
     ) -> None:
         """绑定应用与上限。
 
@@ -63,7 +66,7 @@ class BodySizeLimitMiddleware:
         self.path_limits = dict(path_limits or {})
         self.elevated_allowed = elevated_allowed
 
-    def _limit_for(self, scope: Scope) -> int:
+    async def _limit_for(self, scope: Scope) -> int:
         """算这个请求实际适用的上限。
 
         Args:
@@ -75,9 +78,14 @@ class BodySizeLimitMiddleware:
         path = scope.get("path") or ""
         for prefix, limit in self.path_limits.items():
             if path.startswith(prefix):
-                if self.elevated_allowed is None or not self.elevated_allowed(scope):
+                if self.elevated_allowed is None:
                     # 没带对密钥就别想用放宽的上限——防护面不能因为加了个功能
                     # 就变大。
+                    return self.max_bytes
+                allowed = self.elevated_allowed(scope)
+                if isawaitable(allowed):
+                    allowed = await allowed
+                if not allowed:
                     return self.max_bytes
                 return limit
         return self.max_bytes
@@ -87,7 +95,7 @@ class BodySizeLimitMiddleware:
         if scope["type"] != "http" or scope.get("method") not in _BODY_METHODS:
             await self.app(scope, receive, send)
             return
-        max_bytes = self._limit_for(scope)
+        max_bytes = await self._limit_for(scope)
         if max_bytes <= 0:
             await self.app(scope, receive, send)
             return

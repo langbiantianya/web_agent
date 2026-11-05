@@ -14,7 +14,11 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?i)\b(authorization)(\"?\s*[:=]\s*\"?)[^\s\"',]{6,}"), r"\1\2***"),
     # api_key / token / secret 之类的赋值
     (
-        re.compile(r"(?i)\b(api[_-]?key|access[_-]?token|secret|password)(\"?\s*[:=]\s*\"?)[^\s\"',]{4,}"),
+        re.compile(
+            r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|"
+            r"client[_-]?secret|private[_-]?key|secret|password|cookie)"
+            r"(\"?\s*[:=]\s*\"?)[^\s\"',]{4,}"
+        ),
         r"\1\2***",
     ),
     # URL 里带的用户名密码
@@ -94,6 +98,13 @@ class UnauthorizedError(AppError):
 
     status_code = 401
     code = "unauthorized"
+
+
+class ForbiddenError(AppError):
+    """身份有效，但角色不足。"""
+
+    status_code = 403
+    code = "forbidden"
 
 
 class GoneError(AppError):

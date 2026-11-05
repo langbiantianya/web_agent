@@ -89,7 +89,12 @@ def _backend(
     """造一个后端，把 Docker 客户端换成假的。"""
     backend = DockerBackend(
         DispatcherConfig(
-            images=(("default", "registry/sandbox@sha256:abc"),),
+            images=(
+                (
+                    "default",
+                    "registry/sandbox@sha256:" + "a" * 64,
+                ),
+            ),
             payload_dir=str(payload_dir),
         )
     )
@@ -119,7 +124,7 @@ def test_container_template_is_fixed_and_hardened(tmp_path):
     backend, fake = _backend(container, tmp_path)
     backend._run_sync(_spec())  # noqa: SLF001
     kwargs = fake.containers.create_kwargs
-    assert kwargs["image"] == "registry/sandbox@sha256:abc"
+    assert kwargs["image"] == "registry/sandbox@sha256:" + "a" * 64
     assert kwargs["network_disabled"] is True
     assert kwargs["read_only"] is True
     assert kwargs["user"] == "1000:1000"

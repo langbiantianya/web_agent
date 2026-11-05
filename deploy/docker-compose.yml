@@ -7,7 +7,8 @@
 #   #   STUDIO_EXEC_ADDR=127.0.0.1:9000
 #   #   STUDIO_EXEC_REQUIRED=true
 #
-# **本环境没有 Docker，这份文件没有实测过。**
+# Docker 可用时从部署目录启动；国内网络可先配置镜像加速源，或分别拉取固定版本
+# 的 studio 基础镜像后再构建。
 #
 # 注意这里是**开发配置**：为了便于本地调试，没有启用完整的只读 rootfs 和
 # 网络隔离。需要验证隔离执行时使用 `docker-compose.lab.yml`。

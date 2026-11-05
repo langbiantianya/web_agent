@@ -43,6 +43,7 @@ message ExecRequest {
   string request_id = 10;     // 追踪键；同键在去重窗口内不重复执行
   ExecProfile profile = 11;   // 调用方请求的档位；服务端只能升、不能降
   string image = 12;          // 镜像目录名（不是完整 ref）；空 = default
+  string traceparent = 13;    // W3C Trace Context；贯穿 studio / dispatcher / sandbox
 }
 
 message ExecResponse {

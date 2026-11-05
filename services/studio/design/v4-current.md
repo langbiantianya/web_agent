@@ -260,6 +260,7 @@ message ExecRequest {
   string request_id = 10;     // 追踪键；同键在去重窗口内不重复执行
   ExecProfile profile = 11;   // 调用方请求的档位；服务端只能升、不能降
   string image = 12;          // 镜像目录名（不是完整 ref）；空 = default
+  string traceparent = 13;    // W3C Trace Context；贯穿 studio / dispatcher / sandbox
 }
 
 message ExecResponse {
@@ -338,8 +339,8 @@ code 分支，**不匹配整句人话**。
 `request_id` 由调用方生成，服务端在**去重窗口**（默认 60 秒）内看到同一个 `request_id`，
 直接返回上次的结果，**不重复执行**。
 
-用途：调用方超时重试时（主设计 §22.8.5 提到 gRPC 取消不保证杀掉脚本），重发同一个
-`request_id` 就不会把脚本跑第二遍。这比 MCP 那边强——MCP 协议没提供幂等键，主设计
+用途：调用方超时重试时，重发同一个 `request_id` 就不会把脚本跑第二遍。取消已有独立传播
+路径，但重试去重仍需幂等键。这比 MCP 那边强——MCP 协议没提供幂等键，主设计
 §21.14 第 6 条只能列为已知限制。
 
 **注意**：去重是**尽力而为**，不是事务保证。窗口过期、或 studio 重启后，重复执行仍可能发生。
@@ -445,10 +446,12 @@ gRPC 的取消会传播到服务端的 handler，studio 应当：
 
 1. 停止等待输出；
 2. 杀进程组；
-3. 返回 `CANCELLED`（或直接让 RPC 以 `CANCELLED` 结束）。
+3. isolated 档调用 dispatcher 的 `/v1/exec/{execution_id}/cancel`；
+4. dispatcher 对运行中的容器执行强制删除；
+5. 返回 `CANCELLED`（或直接让 RPC 以 `CANCELLED` 结束）。
 
-**但取消不保证被对端进程组感知**——主设计 §22.8.5 已经写明：gRPC 的取消不传播到对端的
-进程组，所以 studio 侧的自设时限是**兜底**，不是可选项。
+取消信号本身不会跨网络自动传到 Docker 容器，所以 studio 必须显式调用 dispatcher；服务端
+自设时限仍是清理失效时的兜底。真实 Docker 用例要求取消后 5 秒内容器消失。
 
 ### 8.4 隔离档的资源差异
 
@@ -456,7 +459,9 @@ gRPC 的取消会传播到服务端的 handler，studio 应当：
 不能和 `fast` 档抢同一个并发池——否则几个慢脚本能把快脚本全堵死。
 
 **已实现**：两个档位各有自己的并发池与等待队列（`STUDIO_ISOLATED_MAX_CONCURRENCY` /
-`STUDIO_ISOLATED_MAX_QUEUE`）。这条是**可执行验证**的：`tests/test_studio_isolated.py`
+`STUDIO_ISOLATED_MAX_QUEUE`），并支持静态技能级配额
+（`STUDIO_SKILL_QUOTAS` / `STUDIO_SKILL_QUEUE`）。这条是**可执行验证**的：
+`tests/test_studio_isolated.py`
 用假 runtime 占住 `isolated` 档的并发位，`fast` 档照常立刻返回（§19 的测试条目）。
 Phase 1 之后，dispatcher 的 `DISPATCHER_MAX_INFLIGHT` 是第二层并发上限——studio 的
 池按实例算，dispatcher 的池按它自己算，两层都要撑住。
@@ -797,7 +802,7 @@ studio 启动时会探一次 dispatcher 的 `/health`：探不到就把 isolated
 | 路径穿越读到宿主机文件 | studio 无宿主挂载、看不到技能内容；调用方侧先校验（§11.2、主设计 §22.7） | 无 |
 | 数据外传 | 禁出网 | 需要外网的脚本做不了（**有意**） |
 | studio 被当成跳板访问内网 | 禁出网 + 独立节点标签 + 无凭据 | —— |
-| 供应链（镜像被投毒） | 镜像版本固定 + 摘要校验 + 最小基础镜像 | —— |
+| 供应链（镜像被投毒） | 生产默认要求 digest 固定 + 镜像目录白名单 + 最小基础镜像 | 镜像签名与自定义 seccomp 尚未实现 |
 
 **残余风险里最值得盯的一条**：同容器内多次执行之间的残留。`fast` 档做不到进程级之外的
 强隔离。`isolated` 档能解决，代价是秒级开销。
@@ -814,7 +819,7 @@ studio 启动时会探一次 dispatcher 的 `/health`：探不到就把 isolated
 | Docker 后端 | 固定模板/加固参数、OOM、结果丢失、未知镜像 | `tests/test_docker_backend.py`（假 Docker 客户端） |
 | 契约 | proto 与生成代码一致；两边文档里的片段与 proto 文件一致 | CI 里跑一个比较脚本 |
 | 集成 | 真起容器、真脚本、真实 gRPC | Docker Compose 起一套 studio |
-| 真 Docker | 无网络、只读 rootfs、非 root、读不到宿主凭据 | `tests/test_sandbox_docker_e2e.py`（没有 Docker 时 skip） |
+| 真 Docker | 无网络、只读 rootfs、非 root、读不到宿主凭据、取消后容器删除 | `tests/test_sandbox_docker_e2e.py`（没有 Docker 时 skip） |
 | 跨语言 | python / bash / node 各跑通一遍 | 三个各一个最小脚本 |
 | 故障注入 | studio 被 kill / 超时 / OOM / 队列满 / dispatcher 挂 | 集成测试里人为构造 |
 | 端到端 | 从 web_agent 发起 `skill_exec` 到模型收到结果 | 起真实 uvicorn + 真实 studio（主设计 §22.13 的验收项） |
@@ -850,17 +855,16 @@ studio 启动时会探一次 dispatcher 的 `/health`：探不到就把 isolated
 2. **禁出网**。需要外网的脚本做不了——这是有意的（§11.1），但会让一部分技能写不出来。
 3. **无凭据**。需要 API key / 数据库口令的脚本做不了。这类需求应该走 MCP 工具。
 4. **输入只支持文本**。二进制输入、二进制输出都不支持（§9.1、§9.3）。
-5. **取消不保证杀掉脚本**。gRPC 取消不传播到对端的进程组（§8.3）。
-6. **去重是尽力而为**。`request_id` 的窗口过期或 studio 重启后，重复执行仍可能发生（§5.2）。
-7. **单镜像多运行时**。镜像体积随运行时数量线性增长；某语言用得少时应该拆成多个
+5. **去重是尽力而为**。`request_id` 的窗口过期或 studio 重启后，重复执行仍可能发生（§5.2）。
+6. **单镜像多运行时**。镜像体积随运行时数量线性增长；某语言用得少时应该拆成多个
    独立服务实例并按 language 路由（§10.1、§10.3）。
-8. **多实例扩缩容需要服务发现配合**。gRPC 长连接会固定到单个实例；增删容器时必须同步
+7. **多实例扩缩容需要服务发现配合**。gRPC 长连接会固定到单个实例；增删容器时必须同步
    更新解析结果，并让客户端连接均衡策略感知这些变化（§13.4）。
-9. **没有脚本级别的配额**。配额是**实例级**的（并发数、队列深度、时限）；单个技能跑满整
-   个实例是可能的。
-10. **日志里没有脚本输出**。为了不落敏感数据，stdout/stderr 只进执行结果不进日志
+8. **技能配额是单实例静态配置**。已有实例级、isolated 档级和技能级并发限制，但尚无跨
+   实例全局配额、预算与预热池。
+9. **日志里没有脚本输出**。为了不落敏感数据，stdout/stderr 只进执行结果不进日志
     （§12.2）。事后排查只能靠 `stdout_digest`。
-11. **`isolated` 只提供 Docker 后端**。实现位于 `services/sandbox/` +
+10. **`isolated` 只提供 Docker 后端**。实现位于 `services/sandbox/` +
     `services/dispatcher/` + `DispatcherRuntime`，studio 自己不挂 socket；控制帧、超时、
     OOM、取消由 dispatcher/runner 处理。真 Docker 下的加固和五类真实故障已跑通（§20）。
 

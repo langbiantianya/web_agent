@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
-from app.models.run_approval import RunApproval
+from app.models.run_approval import RunApproval, RunApprovalVote
 
 
 class RunApprovalRepo:
     """审批记录的读写。"""
 
     async def create(
-        self, db: AsyncSession, run_id: int, node_id: str, prompt: str
+        self,
+        db: AsyncSession,
+        run_id: int,
+        node_id: str,
+        prompt: str,
+        *,
+        required_approvals: int = 1,
+        timeout_action: str = "reject",
+        deadline_at: datetime | None = None,
     ) -> RunApproval:
         """开一条待审批记录。
 
@@ -21,7 +32,15 @@ class RunApprovalRepo:
         一次，所以这里天然是幂等的——重复调用会撞唯一索引而不是产生第二条。
         """
         row = RunApproval(
-            run_id=run_id, node_id=node_id, status="pending", prompt=prompt
+            run_id=run_id,
+            node_id=node_id,
+            status="pending",
+            prompt=prompt,
+            required_approvals=max(1, required_approvals),
+            approved_count=0,
+            rejected_count=0,
+            timeout_action=timeout_action,
+            deadline_at=deadline_at,
         )
         db.add(row)
         await db.commit()
@@ -61,46 +80,131 @@ class RunApprovalRepo:
         comment: str | None,
         decided_by: str | None,
     ) -> RunApproval | None:
-        """记录决策。
+        """记录一张审批票并返回审批请求的最新状态。
 
-        条件更新 ``status == 'pending'``：并发两次提交时只有一次会成功，第二次
-        拿到 0 行受影响——这样「重复点批准」不会产生两条互相矛盾的决策记录。
-
-        **必须检查 rowcount**：条件更新不命中时数据库不报错，只是影响 0 行。
-        曾经这里丢弃了 rowcount、只按 id 回读，于是「已被别人决策过」这件事
-        完全看不出来——两个并发请求会各自判定"我成功了"，双双拉起恢复任务，
-        同一条 LangGraph thread 被两个任务驱动，审批后的节点跑两遍（重复的
-        LLM 花费、重复的 assistant 消息），而审计表里只剩最后写入的那条。
-
-        Args:
-            db: 会话。
-            approval_id: 审批记录 id。
-            approved: 是否批准。
-            comment: 审批意见。
-            decided_by: 决策人。
+        同一审批人只能投一票；会签达到 ``required_approvals`` 才通过，任一反对票
+        立即驳回。未达到终态时返回 status=pending，调用方不得恢复图执行。
 
         Returns:
-            落库后的审批记录；条件更新未命中（已被决策过）时返回 ``None``。
+            最新审批记录；审批已结束或同一人重复投票时返回 ``None``。
         """
+        row = await self.get_by_id(db, approval_id)
+        if row is None or row.status != "pending":
+            return None
+        voter = (decided_by or "").strip()[:64]
+        if not voter:
+            voter = "anonymous"
+        db.add(
+            RunApprovalVote(
+                approval_id=approval_id,
+                decided_by=voter,
+                approved=1 if approved else 0,
+                comment=comment,
+            )
+        )
+        try:
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            return None
+
+        now = utcnow()
+        values: dict[str, object]
+        if approved:
+            # 计数必须在 SQL 里自增，不能先读后写。两位审批人并发投票时，
+            # 两个事务都会读到旧计数 0，后提交者会把先提交者的票覆盖掉，
+            # 最终误以为仍未达到会签人数。
+            reached_quorum = (
+                RunApproval.approved_count + 1
+                >= RunApproval.required_approvals
+            )
+            values = {
+                "approved_count": RunApproval.approved_count + 1,
+                "status": sa.case(
+                    (reached_quorum, "approved"),
+                    else_="pending",
+                ),
+                "comment": comment,
+                "decided_by": voter,
+                "decided_at": sa.case(
+                    (reached_quorum, now),
+                    else_=None,
+                ),
+            }
+        else:
+            values = {
+                "rejected_count": RunApproval.rejected_count + 1,
+                "status": "rejected",
+                "comment": comment,
+                "decided_by": voter,
+                "decided_at": now,
+            }
         result = await db.execute(
             sa.update(RunApproval)
-            .where(RunApproval.id == approval_id, RunApproval.status == "pending")
+            .where(
+                RunApproval.id == approval_id,
+                RunApproval.status == "pending",
+            )
+            .values(**values)
+        )
+        if not result.rowcount:
+            # 另一个事务已先收口审批。回滚本次新插入的票，避免留下未计入
+            # 终态的“幽灵投票”。
+            await db.rollback()
+            return None
+        await db.commit()
+        await db.refresh(row)
+        return row
+
+    async def list_expired(
+        self, db: AsyncSession, now: datetime, *, limit: int = 100
+    ) -> list[RunApproval]:
+        """列出已过截止时间但仍 pending 的审批。"""
+        stmt = (
+            sa.select(RunApproval)
+            .where(
+                RunApproval.status == "pending",
+                RunApproval.deadline_at.is_not(None),
+                RunApproval.deadline_at <= now,
+            )
+            .order_by(RunApproval.deadline_at.asc())
+            .limit(limit)
+        )
+        return list(await db.scalars(stmt))
+
+    async def finalize_timeout(
+        self, db: AsyncSession, approval_id: int, approved: bool
+    ) -> RunApproval | None:
+        """按超时策略原子收口审批；已被人工决策时返回 None。"""
+        result = await db.execute(
+            sa.update(RunApproval)
+            .where(
+                RunApproval.id == approval_id,
+                RunApproval.status == "pending",
+            )
             .values(
                 status="approved" if approved else "rejected",
-                comment=comment,
-                decided_by=decided_by,
+                comment="审批超时自动" + ("通过" if approved else "驳回"),
+                decided_by="system:timeout",
                 decided_at=utcnow(),
             )
         )
         await db.commit()
         if not result.rowcount:
             return None
-        row = await self.get_by_id(db, approval_id)
-        if row is not None:
-            # 回读要刷新：会话的 identity map 里可能还留着决策前的旧对象
-            # （status 还是 pending），拿它当结果会让上层的「已被决策过」判定失效。
-            await db.refresh(row)
-        return row
+        return await self.get_by_id(db, approval_id)
+
+    async def list_votes(
+        self, db: AsyncSession, approval_id: int
+    ) -> list[RunApprovalVote]:
+        """按发生顺序列出审批票。"""
+        return list(
+            await db.scalars(
+                sa.select(RunApprovalVote)
+                .where(RunApprovalVote.approval_id == approval_id)
+                .order_by(RunApprovalVote.id)
+            )
+        )
 
 
 run_approval_repo = RunApprovalRepo()

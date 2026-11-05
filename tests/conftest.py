@@ -88,6 +88,28 @@ def _db_schema():
     asyncio.run(_create())
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _isolate_module_db(_db_schema):
+    """每个测试模块开始时清空业务表。
+
+    单进程跑全量测试时，前一个模块留下的 Skill / Agent 会被下一模块真实应用
+    启动审计当成生产配置。按模块隔离与 pytest 文件级进程隔离语义最接近，同时
+    保留模块内用例显式共享 fixture 的能力。
+    """
+    import asyncio
+
+    from app.config.db import engine
+
+    async def _clear():
+        """按外键逆序清空全部业务表，建立模块级隔离。"""
+        async with engine.begin() as conn:
+            for table in reversed(Base.metadata.sorted_tables):
+                await conn.execute(table.delete())
+
+    asyncio.run(_clear())
+    yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _cleanup_db_file():
     """会话结束后删掉本进程的测试库，不在系统临时目录留垃圾。"""

@@ -118,6 +118,34 @@ def test_skill_upload_path_with_wrong_key_keeps_global_limit(client: TestClient)
     assert r.status_code == 413, f"应 413，实际 {r.status_code}：{r.text[:200]}"
 
 
+def test_skill_upload_path_allows_database_admin_bigger_body(client: TestClient):
+    """数据库管理员也应获得技能路径的放宽上限，而不只认环境引导 Key。"""
+    username = f"uploader-{uuid4().hex[:8]}"
+    created = client.post(
+        "/api/admin-users",
+        headers={"X-Admin-Key": settings.admin_key},
+        json={
+            "username": username,
+            "display_name": "上传管理员",
+            "tenant_id": "default",
+            "role": "operator",
+        },
+    )
+    assert created.status_code == 201, created.text
+    api_key = created.json()["api_key"]
+    payload = {
+        "code": "database-admin-big",
+        "description": "太大",
+        "body": "A" * (settings.max_request_bytes + 1024),
+    }
+    r = client.post(
+        "/api/skills",
+        json=payload,
+        headers={"X-Admin-Key": api_key},
+    )
+    assert r.status_code == 400, f"应 400，实际 {r.status_code}：{r.text[:200]}"
+
+
 # --------------------------------------------------------------- 字段长度
 
 

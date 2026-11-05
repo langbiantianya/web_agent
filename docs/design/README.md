@@ -6,7 +6,7 @@
 
 | 项 | 当前版本 | 状态 |
 | --- | --- | --- |
-| web_agent 主服务 | V4.2 | 已实现 |
+| web_agent 主服务 | V4.4 | 已实现 |
 | MCP 工具 | V4 | 已实现 |
 | Skill 指令包与资源工具 | V4 | 已实现 |
 | studio fast 档 | V4 | 已实现并验证 |
@@ -28,6 +28,8 @@
 | [V4：MCP、Skill 与脚本执行](../../app/design/v4-tools-skills.md) | MCP、Skill、studio 调用侧、真实验收 |
 | [V4.1：数据库 LLM 接口与故障切换](../../app/design/v4.1-llm-endpoints.md) | 多接口优先级、加密 Key、失败切换 |
 | [V4.2：后台治理与运行期维护](../../app/design/v4.2-admin-maintenance.md) | Skill 后台、MCP 空闲回收、checkpoint 孤儿清理、测试隔离 |
+| [V4.3：工具审计与结果持久化](../../app/design/v4.3-tool-audit.md) | 独立工具审计账本、脱敏与限长结果、管理员查询、保留期清理 |
+| [V4.4：治理、审批与运行时收口](../../app/design/v4.4-governance-runtime.md) | 数据库管理员与租户、Skill 生命周期、会签超时、工具策略、MCP 动态资源、Trace、取消、配额与指标 |
 
 ### studio 服务
 
@@ -67,6 +69,8 @@
 | V4 isolated | studio → dispatcher → 一次性 sandbox、档位能力协商、独立并发池、真 Docker 加固和五场景验证 | isolated 不再只是骨架；禁止静默降级到 fast | Docker 已完成 |
 | V4.1 | 独立 `llm_endpoint` 配置表、加密 Key、优先级排序、请求失败自动切换 | 模型接口地址与 Key 不再要求绑定在单个 Agent 上；新配置优先于兼容字段 | 已完成 |
 | V4.2 | Skill 管理后台、导入风险与运行档展示、`allowed-tools` 差异提示、MCP 空闲回收、checkpoint 孤儿清理 | 基础设施与 API 已有但缺少运营入口或周期治理；gRPC 测试污染固化在测试入口处理 | 已完成 |
+| V4.3 | `tool_call_audit` 独立审计账本、参数与结果脱敏、管理员查询、保留期清理 | 工具结果不再只能依赖事件摘要与节点调用清单回看；审计写入与业务事务解耦 | 已完成 |
+| V4.4 | 数据库管理员/角色/租户、Skill 草稿发布归档与二进制回滚、审批会签超时、工具级策略、MCP resources/prompts 与动态通知、W3C Trace、sandbox 取消/指标/技能配额/摘要校验 | 共享管理员 Key 替换为“环境引导 Key + 数据库用户”；Skill 硬删除改为软删除；二进制只存摘要改为可回滚快照；单审批人改为会签；MCP 只接 tools 扩展为 resources/prompts；取消从进程边界贯通到容器 | 已完成 |
 
 ## 已移除、已替换或明确不做
 
@@ -80,12 +84,18 @@
 | 只依赖容器 `State.OOMKilled` 判断沙箱 OOM | 子进程 OOM 结合 cgroup v1/v2 `oom_kill` 计数 | runner 存活时容器本身可能没有 OOMKilled |
 | 在 gRPC 进程中保留默认 fork 支持 | 启动前关闭 fork 支持，并使用 tini | 避免 atfork 状态污染与孤儿/僵尸 |
 | 任意镜像 ref、宿主挂载、sandbox 出网 | 镜像目录白名单、只读 payload、无网络 | 固定模板才能控制信任边界 |
-| MCP `resources` / `prompts` | 当前只接 tools | 尚未实现，已列入 TODO，不属于“已完成” |
 | MCP OAuth | 当前只用静态 header | 尚未实现，已列入 TODO |
 | 每个 Agent 只能使用一个模型接口 | 使用数据库 `llm_endpoint` 优先级链 | 主接口失败时自动切换，同时保留旧 Agent 字段兼容升级 |
 | Skill 只能通过 API 或脚本维护 | 后台覆盖 CRUD、ZIP、资源、修订和 Agent 绑定 | 配置即数据需要与可操作的管理界面配套 |
 | MCP 连接只靠进程退出释放 | 应用生命周期内周期回收空闲连接 | 避免 stdio 子进程和远端会话长期驻留 |
 | checkpoint 只依赖 run 正常收尾删除 | 启动与周期巡检清理终态、过期无主 thread | 进程崩溃和删除失败需要兜底 |
+| 工具参数和结果只保存在事件摘要与 `run_step.output_json` | 每次执行独立写入 `tool_call_audit` | 事件与节点输出都不是工具级审计账本，缺少稳定关联、脱敏结果和保留策略 |
+| 所有管理操作共用一个环境管理员 Key | 环境 Key 负责引导，日常使用数据库管理员、角色和租户 | 需要可撤销、可轮换、可归属到具体操作人的身份 |
+| Skill 删除即抹掉内容 | 归档并保留资源与修订，恢复后先进入草稿 | 线上行为不能因历史清理静默改变，误删也必须可恢复 |
+| Skill 二进制资源只能记录摘要 | 修订资源独立保存原始字节，可逐字节回滚 | “可回滚”必须覆盖真实内容，而不只是证明内容曾存在 |
+| 单审批人一次点击决定流程 | 会签、去重投票、截止时间和 fail-closed 超时策略 | 多人审批需要原子计数，超时必须可预测 |
+| gRPC 取消只停在 studio | 取消传播到 dispatcher，并强删一次性容器 | 调用方放弃后不能继续占用宿主资源 |
+| MCP 只发现 tools | 支持 resources、resource templates、资源读取、prompts 与目录变更通知 | MCP 服务的能力不应被客户端截断 |
 
 ## 阅读路径
 
@@ -103,6 +113,8 @@
 | DAG、审批、工具、敏感过滤 | [V3](../../app/design/v3-orchestration.md) |
 | MCP、Skill、脚本执行调用侧 | [V4](../../app/design/v4-tools-skills.md) |
 | Skill 管理后台、运行期资源回收 | [V4.2](../../app/design/v4.2-admin-maintenance.md) |
+| 工具审计、结果回看、脱敏与保留期 | [V4.3](../../app/design/v4.3-tool-audit.md) |
+| 管理员、租户、会签、MCP 资源、运行期治理 | [V4.4](../../app/design/v4.4-governance-runtime.md) |
 | studio 协议、隔离、资源限制 | [studio V4](../../services/studio/design/v4-current.md) |
 | 下一步开发 | [TODO](TODO.md) |
 

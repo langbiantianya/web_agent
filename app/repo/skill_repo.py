@@ -6,7 +6,8 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
-from app.models.skill import Skill, SkillResource, SkillRevision
+from app.models.base import utcnow
+from app.models.skill import Skill, SkillResource, SkillRevision, SkillRevisionResource
 
 
 class SkillRepo:
@@ -32,21 +33,43 @@ class SkillRepo:
         await db.refresh(skill)
         return skill
 
-    async def get_by_code(self, db: AsyncSession, code: str) -> Skill | None:
+    async def get_by_code(
+        self,
+        db: AsyncSession,
+        code: str,
+        tenant_id: str = "default",
+        *,
+        include_deleted: bool = False,
+    ) -> Skill | None:
         """按业务唯一 code 取技能。"""
-        return await db.scalar(sa.select(Skill).where(Skill.code == code))
+        stmt = sa.select(Skill).where(
+            Skill.code == code, Skill.tenant_id == tenant_id
+        )
+        if not include_deleted:
+            stmt = stmt.where(Skill.status != "archived")
+        return await db.scalar(stmt)
 
     async def list(
-        self, db: AsyncSession, only_enabled: bool = False, limit: int = 200, offset: int = 0
+        self,
+        db: AsyncSession,
+        only_enabled: bool = False,
+        limit: int = 200,
+        offset: int = 0,
+        tenant_id: str = "default",
+        include_deleted: bool = False,
     ) -> list[Skill]:
         """分页列出技能，按 id 倒序。"""
-        stmt = sa.select(Skill)
+        stmt = sa.select(Skill).where(Skill.tenant_id == tenant_id)
+        if not include_deleted:
+            stmt = stmt.where(Skill.status != "archived")
         if only_enabled:
-            stmt = stmt.where(Skill.enabled == 1)
+            stmt = stmt.where(Skill.enabled == 1, Skill.status == "published")
         stmt = stmt.order_by(Skill.id.desc()).limit(limit).offset(offset)
         return list(await db.scalars(stmt))
 
-    async def list_by_codes(self, db: AsyncSession, codes: list[str]) -> list[Skill]:
+    async def list_by_codes(
+        self, db: AsyncSession, codes: list[str], tenant_id: str = "default"
+    ) -> list[Skill]:
         """按 code 集合取技能，**按传入顺序返回**。
 
         顺序很重要：技能正文进提示词时的先后 = 运营在后台排的优先级。
@@ -62,16 +85,27 @@ class SkillRepo:
         if not codes:
             return []
         rows = list(
-            await db.scalars(sa.select(Skill).where(Skill.code.in_(codes)))
+            await db.scalars(
+                sa.select(Skill).where(
+                    Skill.code.in_(codes),
+                    Skill.tenant_id == tenant_id,
+                    Skill.status != "archived",
+                )
+            )
         )
         by_code = {row.code: row for row in rows}
         return [by_code[c] for c in codes if c in by_code]
 
     async def update(
-        self, db: AsyncSession, code: str, fields: dict, bump_version: bool = True
+        self,
+        db: AsyncSession,
+        code: str,
+        fields: dict,
+        bump_version: bool = True,
+        tenant_id: str = "default",
     ) -> Skill | None:
         """按 code 局部更新字段（值为 None 的键跳过）；不存在时返回 None。"""
-        skill = await self.get_by_code(db, code)
+        skill = await self.get_by_code(db, code, tenant_id)
         if skill is None:
             return None
         for key, value in fields.items():
@@ -81,7 +115,7 @@ class SkillRepo:
             # 原子自增：读出来 +1 再写回在并发更新下会丢版本。
             await db.execute(
                 sa.update(Skill)
-                .where(Skill.code == code)
+                .where(Skill.code == code, Skill.tenant_id == tenant_id)
                 .values(version=Skill.version + 1)
             )
         await db.commit()
@@ -107,12 +141,62 @@ class SkillRepo:
         await db.execute(
             sa.delete(SkillResource).where(SkillResource.skill_id == skill.id)
         )
+        revision_ids = list(
+            await db.scalars(
+                sa.select(SkillRevision.id).where(
+                    SkillRevision.skill_id == skill.id
+                )
+            )
+        )
+        if revision_ids:
+            await db.execute(
+                sa.delete(SkillRevisionResource).where(
+                    SkillRevisionResource.revision_id.in_(revision_ids)
+                )
+            )
         await db.execute(
             sa.delete(SkillRevision).where(SkillRevision.skill_id == skill.id)
         )
         await db.delete(skill)
         await db.commit()
         return True
+
+    async def soft_delete(
+        self,
+        db: AsyncSession,
+        code: str,
+        tenant_id: str = "default",
+    ) -> bool:
+        """把技能标记为归档并停用，保留资源与修订。"""
+        skill = await self.get_by_code(db, code, tenant_id)
+        if skill is None:
+            return False
+        skill.enabled = 0
+        skill.status = "archived"
+        skill.deleted_at = utcnow()
+        skill.version = (skill.version or 1) + 1
+        await db.commit()
+        return True
+
+    async def restore(
+        self,
+        db: AsyncSession,
+        code: str,
+        tenant_id: str = "default",
+    ) -> Skill | None:
+        """恢复归档技能为草稿，必须再次发布才会注入提示词。"""
+        skill = await self.get_by_code(
+            db, code, tenant_id, include_deleted=True
+        )
+        if skill is None or skill.status != "archived":
+            return None
+        skill.status = "draft"
+        skill.enabled = 0
+        skill.deleted_at = None
+        skill.version = (skill.version or 1) + 1
+        await db.commit()
+        await db.refresh(skill)
+        return skill
 
     # ------------------------------------------------------------- 资源
 
@@ -216,6 +300,7 @@ class SkillRepo:
         resources: list | None,
         author: str,
         note: str,
+        resource_blobs: list[dict] | None = None,
     ) -> SkillRevision:
         """记一条变更快照。"""
         revision = SkillRevision(
@@ -227,6 +312,18 @@ class SkillRepo:
             note=note,
         )
         db.add(revision)
+        await db.flush()
+        for item in resource_blobs or []:
+            db.add(
+                SkillRevisionResource(
+                    revision_id=revision.id,
+                    path=str(item["path"]),
+                    mime_type=str(item.get("mime_type") or "application/octet-stream"),
+                    is_text=1 if item.get("is_text") else 0,
+                    content=bytes(item["content"]),
+                    size_bytes=len(bytes(item["content"])),
+                )
+            )
         await db.commit()
         await db.refresh(revision)
         return revision
@@ -251,9 +348,23 @@ class SkillRepo:
             )
         )
 
+    async def get_revision_resources(
+        self, db: AsyncSession, revision_id: int
+    ) -> list[SkillRevisionResource]:
+        """读取一个修订版本的完整资源正文。"""
+        return list(
+            await db.scalars(
+                sa.select(SkillRevisionResource)
+                .where(SkillRevisionResource.revision_id == revision_id)
+                .order_by(SkillRevisionResource.path)
+            )
+        )
+
     # ------------------------------------------------------------- 引用
 
-    async def count_agents_using(self, db: AsyncSession, code: str) -> int:
+    async def count_agents_using(
+        self, db: AsyncSession, code: str, tenant_id: str | None = None
+    ) -> int:
         """有几个 Agent 绑着这个技能。
 
         在 Python 侧数：``agent.skills`` 是 JSON 列，三种方言的 JSON 表达式语法
@@ -268,7 +379,10 @@ class SkillRepo:
         Returns:
             绑着它的 Agent 数量。
         """
-        rows = await db.scalars(sa.select(Agent.skills))
+        stmt = sa.select(Agent.skills)
+        if tenant_id is not None:
+            stmt = stmt.where(Agent.tenant_id == tenant_id)
+        rows = await db.scalars(stmt)
         count = 0
         for raw in rows:
             if isinstance(raw, list) and code in raw:

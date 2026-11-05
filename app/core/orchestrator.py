@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 from typing import Any
 
 import sqlalchemy as sa
@@ -64,6 +65,7 @@ from app.models.enums import (
     StepStatus,
 )
 from app.models.message import Message
+from app.models.base import utcnow
 from app.repo.agent_repo import agent_repo
 from app.repo.conversation_repo import conversation_repo
 from app.repo.message_repo import message_repo
@@ -340,9 +342,33 @@ class Orchestrator:
         """
         node_id = str(payload.get("node") or "")
         prompt = str(payload.get("prompt") or "")
+        required_approvals = max(
+            1, int(payload.get("requiredApprovals") or 1)
+        )
+        timeout_sec = int(
+            payload.get("approvalTimeoutSec")
+            if payload.get("approvalTimeoutSec") is not None
+            else settings.approval_timeout
+        )
+        timeout_action = str(
+            payload.get("approvalTimeoutAction") or "reject"
+        )
+        deadline = (
+            utcnow() + timedelta(seconds=max(0, timeout_sec))
+            if timeout_sec > 0
+            else None
+        )
 
         async with SessionLocal() as db:
-            await run_approval_repo.create(db, run_id, node_id, prompt)
+            await run_approval_repo.create(
+                db,
+                run_id,
+                node_id,
+                prompt,
+                required_approvals=required_approvals,
+                timeout_action=timeout_action,
+                deadline_at=deadline,
+            )
             await run_repo.start_step(
                 db, run_id, node_id, node_id, {"type": "approval", "prompt": prompt}
             )
@@ -351,7 +377,13 @@ class Orchestrator:
         await self.hub.emit(
             run_id,
             EventType.APPROVAL_REQUIRED,
-            {"node": node_id, "prompt": prompt},
+            {
+                "node": node_id,
+                "prompt": prompt,
+                "requiredApprovals": required_approvals,
+                "deadlineAt": deadline.isoformat() if deadline else None,
+                "timeoutAction": timeout_action,
+            },
         )
 
         # 冲刷最后一批事件并释放租约：暂停期间本实例不再「持有」这个 run。

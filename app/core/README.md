@@ -45,12 +45,20 @@ Workflow 的 `definition` 包含 `entry`、`nodes`、`edges` 和可选 `inputTem
 
 - `type: "approval"` 的节点通过 LangGraph `interrupt()` 暂停。
 - 暂停点由 `checkpoint.py` 保存；批准后从暂停节点继续，前面的节点不会重跑。
+- 审批可配置会签人数、截止时间和 `reject/approve` 超时策略；投票按人唯一，计数在数据库
+  中原子累加，后台巡检原子收口。
 - `llm_endpoints.py` 每个节点从数据库按优先级加载启用的 OpenAI 兼容接口；
   `AgentRunner` 在尚未输出内容时自动切换到下一接口。
 - 模型请求的内置工具、Skill 资源和 MCP 工具都先经过 `agent.tools` 白名单。
+- `agent.tool_policy` 可进一步控制单个工具是否启用、同名工具并发和超时；禁用工具不会
+  出现在模型工具清单中。
 - `skill_resource` 从数据库读取技能资源；`skill_exec` 通过 gRPC 调用独立 studio，主进程不执行技能脚本。
-- MCP 支持 stdio 与 Streamable HTTP，工具名格式为 `mcp__<server>__<tool>`。
+- MCP 支持 stdio 与 Streamable HTTP，工具名格式为 `mcp__<server>__<tool>`；同时支持
+  resources、resource templates、prompts 和工具目录变更通知。
 - 工具失败会作为 `tool_result` 回灌给模型，通常不会直接失败整个 run。
+- 每次工具执行都会经 `tool_audit.py` 独立写入脱敏审计账本；审计失败只记日志，
+  不改变工具结果。管理员通过 `/api/tool-audits` 按租户查询，结果默认保留 30 天。
+- `trace.py` 校验并传播 W3C `traceparent`；每次工具调用创建 child span。
 
 ## 事件与多实例
 
@@ -77,8 +85,10 @@ Workflow 的 `definition` 包含 `entry`、`nodes`、`edges` 和可选 `inputTem
 | `orchestrator.py` | run 生命周期、节点调度、审批恢复 |
 | `run_graph.py` | LangGraph 图构建、节点执行和审批节点 |
 | `agent_runner.py` | OpenAI 兼容流式调用与工具闭环 |
+| `tool_policy.py` | 工具启用、并发和超时策略 |
 | `llm_endpoints.py` | 数据库 LLM 接口优先级与兼容回退 |
 | `tools.py` | 内置工具注册表和动态工具分发 |
+| `tool_audit.py` | 工具参数/结果脱敏、审计落库与保留期清理 |
 | `run_hub.py` | seq 分配、广播和取消 |
 | `event_writer.py` | 事件批量落库 |
 | `event_log.py` | 数据库与 Redis Stream 回放抽象 |
@@ -86,6 +96,9 @@ Workflow 的 `definition` 包含 `entry`、`nodes`、`edges` 和可选 `inputTem
 | `bus.py` | 进程内与 Redis Pub/Sub 总线 |
 | `lease.py` | Redis 归属租约与控制频道 |
 | `checkpoint.py` | SQLite / Redis 审批暂停点 |
+| `approval_timeout.py` | 会签超时巡检与原子收口 |
+| `admin.py` | 环境引导 Key、数据库管理员认证和角色校验 |
+| `trace.py` | W3C traceparent 校验、生成与上下文传播 |
 | `skill_*.py` | Skill 解析、导入、提示词注入和资源读取 |
 | `mcp/` | MCP 传输、连接管理和命名映射 |
 | `studio.py`、`skill_exec.py` | studio gRPC 客户端及执行前校验 |

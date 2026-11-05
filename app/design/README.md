@@ -1,6 +1,6 @@
 # web_agent 主服务设计索引
 
-主设计按版本拆分。当前系统由 V1–V4.2 累积组成；版本页不重复粘贴早期章节，因此排障或修改基础协议时要回到对应版本。
+主设计按版本拆分。当前系统由 V1–V4.4 累积组成；版本页不重复粘贴早期章节，因此排障或修改基础协议时要回到对应版本。
 
 | 版本 | 文档 | 主要内容 |
 | --- | --- | --- |
@@ -10,6 +10,8 @@
 | V4 | [MCP、Skill 与脚本执行](v4-tools-skills.md) | MCP、Skill、studio 调用侧 |
 | V4.1 | [数据库 LLM 接口与故障切换](v4.1-llm-endpoints.md) | 多接口优先级、加密 Key、请求失败自动切换 |
 | V4.2 | [后台治理与运行期维护](v4.2-admin-maintenance.md) | Skill 后台、MCP 空闲回收、checkpoint 孤儿清理、测试隔离 |
+| V4.3 | [工具审计与结果持久化](v4.3-tool-audit.md) | 独立审计账本、脱敏参数与结果、管理员查询、保留期清理 |
+| V4.4 | [治理、审批与运行时收口](v4.4-governance-runtime.md) | 管理员与租户、Skill 生命周期、会签超时、工具策略、MCP 资源、Trace、取消、配额与指标 |
 
 跨项目版本历史、已移除方案和任务导航见 [设计总目录](../../docs/design/README.md)。未完成事项只在 [TODO](../../docs/design/TODO.md) 中维护。
 
@@ -21,4 +23,6 @@
 - 接入 MCP 或 Skill：读 V3.2、V4。
 - 配置模型地址、Key 或故障切换：读 V4.1。
 - 管理 Skill、排查运行期资源残留：读 V4.2。
+- 排查工具参数、结果、耗时或敏感输出：读 V4.3。
+- 管理用户、租户、Skill 发布、审批会签或 sandbox 生命周期：读 V4.4。
 - 修改 studio 契约：同时读 [V4 调用侧](v4-tools-skills.md) 和 [studio 服务侧](../../services/studio/design/v4-current.md)。

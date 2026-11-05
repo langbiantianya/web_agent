@@ -90,6 +90,19 @@ def _env_pairs(name: str) -> tuple[tuple[str, str], ...]:
     return tuple(out)
 
 
+def _env_quota_pairs(name: str) -> tuple[tuple[str, int], ...]:
+    """读取 ``skill=concurrency`` 形式。"""
+    out: list[tuple[str, int]] = []
+    for key, value in _env_pairs(name):
+        try:
+            limit = int(value)
+        except ValueError:
+            continue
+        if limit > 0:
+            out.append((key, limit))
+    return tuple(out)
+
+
 def detect_languages() -> tuple[str, ...]:
     """探测本实例**真的**能跑哪些运行时（skill-service §10.1、§10.2）。
 
@@ -146,6 +159,8 @@ class StudioConfig:
             按目录名请求，不能自己指定完整 ref。
         isolated_startup_budget_ms: 沙箱启动预算（毫秒）。启动慢于这个值就报
             ``sandbox_start_timeout``，不要让它把脚本时限耗光。
+        skill_quotas: 技能级并发配额 ``((skill_code, max_concurrency), ...)``。
+        skill_queue: 每个技能独立等待队列深度。
         version: 服务版本，报在 ``HealthResponse`` 里。请求带档位、响应回显档位
             是 2.0.0 起的语义，``STUDIO_EXEC_MIN_VERSION`` 据此卡。
         languages: 本实例支持的运行时。
@@ -173,6 +188,8 @@ class StudioConfig:
     isolated_dispatcher_addr: str = ""
     isolated_images: tuple[tuple[str, str], ...] = ()
     isolated_startup_budget_ms: int = 15000
+    skill_quotas: tuple[tuple[str, int], ...] = ()
+    skill_queue: int = 4
     version: str = "2.0.0"
     languages: tuple[str, ...] = field(default_factory=detect_languages)
 
@@ -188,6 +205,13 @@ class StudioConfig:
         for key, ref in self.isolated_images:
             if key == name:
                 return ref
+        return None
+
+    def skill_quota(self, skill: str) -> int | None:
+        """取技能并发上限；未配置返回 None。"""
+        for code, limit in self.skill_quotas:
+            if code == skill:
+                return limit
         return None
 
     def validate(self) -> None:
@@ -214,6 +238,8 @@ class StudioConfig:
         for name, ref in self.isolated_images:
             if not name or not ref:
                 raise StudioConfigError("STUDIO_ISOLATED_IMAGES 里有空的目录名或镜像地址")
+        if self.skill_queue < 0:
+            raise StudioConfigError("STUDIO_SKILL_QUEUE 不能小于 0")
 
     @classmethod
     def from_env(cls) -> "StudioConfig":
@@ -249,5 +275,7 @@ class StudioConfig:
             isolated_startup_budget_ms=_env_int(
                 "STUDIO_ISOLATED_STARTUP_BUDGET_MS", 15000
             ),
+            skill_quotas=_env_quota_pairs("STUDIO_SKILL_QUOTAS"),
+            skill_queue=_env_int("STUDIO_SKILL_QUEUE", 4),
             version=os.environ.get("STUDIO_VERSION", "2.0.0").strip() or "2.0.0",
         )

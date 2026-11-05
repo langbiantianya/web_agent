@@ -3,7 +3,7 @@
 分两套：
 
 - **只读**（``GET``）——普通运营可用：看技能、看资源、导出、查变更历史；
-- **写入**——**管理员专属**（:data:`app.api.deps.AdminDep`）。技能正文会进
+- **写入**——**operator / admin 专属**（:data:`app.api.deps.OperatorDep`）。技能正文会进
   prompt，而 prompt 就是模型的行为，所以「谁能写技能」≈「谁能改模型的行为」。
 
 ## 为什么资源路径这么难搞
@@ -21,7 +21,8 @@ import hashlib
 
 from fastapi import APIRouter, Body, File, Header, Query, Response, UploadFile
 
-from app.api.deps import AdminDep, DbSession
+from app.api.deps import DbSession, OperatorDep, OptionalAdminDep
+from app.core.admin import AdminPrincipal
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.skill_import import (
     SKILL_MD_NAME,
@@ -52,6 +53,7 @@ from app.schemas.skill import (
     SkillCreate,
     SkillImportIn,
     SkillOut,
+    SkillPublishIn,
     SkillResourceOut,
     SkillRevisionOut,
     SkillRollbackIn,
@@ -146,6 +148,7 @@ def _to_out(
     return SkillOut(
         id=skill.id,
         code=skill.code,
+        tenant_id=skill.tenant_id or "default",
         name=skill.name or skill.code,
         description=skill.description or "",
         license=skill.license or "",
@@ -156,6 +159,8 @@ def _to_out(
         origin=skill.origin or "manual",
         content_hash=skill.content_hash or "",
         enabled=bool(skill.enabled),
+        status=skill.status or "published",
+        deleted_at=skill.deleted_at,
         version=skill.version or 1,
         runtime_profile=profile,
         runtime_image=image,
@@ -168,7 +173,7 @@ def _to_out(
     )
 
 
-async def _used_by_map(db) -> dict[str, list[str]]:
+async def _used_by_map(db, tenant_id: str = "default") -> dict[str, list[str]]:
     """每个技能被哪些 Agent 绑着。
 
     在 Python 侧统计：``agent.skills`` 是 JSON 列，三种方言的 JSON 表达式语法
@@ -176,7 +181,11 @@ async def _used_by_map(db) -> dict[str, list[str]]:
     """
     from app.repo.agent_repo import agent_repo
 
-    agents = await agent_repo.list(db, limit=1000)
+    agents = [
+        row
+        for row in await agent_repo.list(db, limit=1000)
+        if (row.tenant_id or "default") == tenant_id
+    ]
     out: dict[str, list[str]] = {}
     for agent in agents:
         raw = agent.skills
@@ -186,6 +195,16 @@ async def _used_by_map(db) -> dict[str, list[str]]:
             if isinstance(code, str) and code:
                 out.setdefault(code, []).append(agent.code)
     return out
+
+
+def _tenant_of(admin: AdminPrincipal | None) -> str:
+    """公开读使用默认租户，管理员读使用其绑定租户。"""
+    return admin.tenant_id if admin is not None else "default"
+
+
+def _operator_name(admin: AdminPrincipal) -> str:
+    """审计作者统一记录认证主体的用户名。"""
+    return admin.username
 
 
 async def _hash_for(db, skill, body: str | None = None) -> str:
@@ -210,11 +229,12 @@ async def _hash_for(db, skill, body: str | None = None) -> str:
 async def _write_revision(db, skill, author: str, note: str) -> None:
     """记一条变更快照。
 
-    快照里**文本资源带内容，二进制资源只带摘要**——所以文本资源能回滚、
-    二进制不能（§22.12 第 7 条）。技能进了 DB 就没有 git 了，改错了要能退回去。
+    摘要信息保留在审计 JSON 中，同时把全部资源正文复制到独立修订资源表；文本
+    与二进制都能从快照恢复。技能进了 DB 就没有 git 了，改错了要能退回去。
     """
     rows = await skill_repo.list_resources(db, skill.id)
     resources: list[dict] = []
+    resource_blobs: list[dict] = []
     for row in rows:
         item = {
             "path": row.path,
@@ -225,8 +245,23 @@ async def _write_revision(db, skill, author: str, note: str) -> None:
         if row.is_text:
             item["text"] = row.content.decode("utf-8", errors="replace")
         resources.append(item)
+        resource_blobs.append(
+            {
+                "path": row.path,
+                "mime_type": row.mime_type,
+                "is_text": bool(row.is_text),
+                "content": row.content,
+            }
+        )
     await skill_repo.add_revision(
-        db, skill.id, skill.version, skill.body or "", resources, author, note
+        db,
+        skill.id,
+        skill.version,
+        skill.body or "",
+        resources,
+        author,
+        note,
+        resource_blobs=resource_blobs,
     )
 
 
@@ -248,25 +283,35 @@ def _frontmatter_of(skill) -> SkillFrontmatter:
 @router.get("", response_model=list[SkillSummaryOut])
 async def list_skills(
     db: DbSession,
+    admin: OptionalAdminDep,
     only_enabled: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> list[SkillSummaryOut]:
     """技能列表。带上被哪些 Agent 绑定——删技能前得先看一眼这个。"""
-    rows = await skill_repo.list(db, only_enabled=only_enabled, limit=limit, offset=offset)
-    used_by = await _used_by_map(db)
+    tenant_id = _tenant_of(admin)
+    rows = await skill_repo.list(
+        db,
+        only_enabled=only_enabled,
+        limit=limit,
+        offset=offset,
+        tenant_id=tenant_id,
+    )
+    used_by = await _used_by_map(db, tenant_id)
     out: list[SkillSummaryOut] = []
     for skill in rows:
         profile, image, available, detail = _runtime_status(skill)
         out.append(
             SkillSummaryOut(
                 code=skill.code,
+                tenant_id=skill.tenant_id,
                 name=skill.name or skill.code,
                 description=skill.description or "",
                 origin=skill.origin or "manual",
                 version=skill.version or 1,
                 content_hash=skill.content_hash or "",
                 enabled=bool(skill.enabled),
+                status=skill.status,
                 allowed_tools=skill.allowed_tools or "",
                 runtime_profile=profile,
                 runtime_image=image,
@@ -279,19 +324,24 @@ async def list_skills(
 
 
 @router.get("/{code}", response_model=SkillOut)
-async def get_skill(code: str, db: DbSession) -> SkillOut:
+async def get_skill(
+    code: str, db: DbSession, admin: OptionalAdminDep
+) -> SkillOut:
     """技能详情（含正文与 frontmatter 字段）。不存在返回 404。"""
-    skill = await skill_repo.get_by_code(db, code)
+    tenant_id = _tenant_of(admin)
+    skill = await skill_repo.get_by_code(db, code, tenant_id)
     if skill is None:
         raise NotFoundError(f"技能不存在：{code}")
-    used_by = await _used_by_map(db)
+    used_by = await _used_by_map(db, tenant_id)
     return _to_out(skill, used_by.get(code, []))
 
 
 @router.get("/{code}/resources", response_model=list[SkillResourceOut])
-async def list_skill_resources(code: str, db: DbSession) -> list[SkillResourceOut]:
+async def list_skill_resources(
+    code: str, db: DbSession, admin: OptionalAdminDep
+) -> list[SkillResourceOut]:
     """资源清单（path / 大小 / mime / sha256）。"""
-    skill = await skill_repo.get_by_code(db, code)
+    skill = await skill_repo.get_by_code(db, code, _tenant_of(admin))
     if skill is None:
         raise NotFoundError(f"技能不存在：{code}")
     rows = await skill_repo.list_resources(db, skill.id)
@@ -308,13 +358,15 @@ async def list_skill_resources(code: str, db: DbSession) -> list[SkillResourceOu
 
 
 @router.get("/{code}/resources/{path:path}")
-async def get_skill_resource(code: str, path: str, db: DbSession) -> Response:
+async def get_skill_resource(
+    code: str, path: str, db: DbSession, admin: OptionalAdminDep
+) -> Response:
     """单个资源的内容。
 
     文本直接返回；二进制走 ``Content-Disposition: attachment``（浏览器会下载
     而不是试图渲染）。
     """
-    skill = await skill_repo.get_by_code(db, code)
+    skill = await skill_repo.get_by_code(db, code, _tenant_of(admin))
     if skill is None:
         raise NotFoundError(f"技能不存在：{code}")
     try:
@@ -342,6 +394,7 @@ async def get_skill_resource(code: str, path: str, db: DbSession) -> Response:
 async def export_skill(
     code: str,
     db: DbSession,
+    admin: OptionalAdminDep,
     format: str = Query("zip", pattern="^(zip|md)$"),
 ) -> Response:
     """导出标准技能包。
@@ -353,7 +406,7 @@ async def export_skill(
     ``SKILL.md`` 是**拼出来的**：frontmatter 来自库的各列，正文来自 ``body``。
     技能不存文件，所以导出物是唯一的存在形式。
     """
-    skill = await skill_repo.get_by_code(db, code)
+    skill = await skill_repo.get_by_code(db, code, _tenant_of(admin))
     if skill is None:
         raise NotFoundError(f"技能不存在：{code}")
     skill_md = render_skill_md(_frontmatter_of(skill), skill.body or "")
@@ -369,9 +422,11 @@ async def export_skill(
 
 
 @router.get("/{code}/revisions", response_model=list[SkillRevisionOut])
-async def list_skill_revisions(code: str, db: DbSession) -> list[SkillRevisionOut]:
+async def list_skill_revisions(
+    code: str, db: DbSession, admin: OptionalAdminDep
+) -> list[SkillRevisionOut]:
     """变更历史（版本 / 作者 / 说明 / 时间），最近的在前。"""
-    skill = await skill_repo.get_by_code(db, code)
+    skill = await skill_repo.get_by_code(db, code, _tenant_of(admin))
     if skill is None:
         raise NotFoundError(f"技能不存在：{code}")
     rows = await skill_repo.list_revisions(db, skill.id)
@@ -381,6 +436,11 @@ async def list_skill_revisions(code: str, db: DbSession) -> list[SkillRevisionOu
             author=r.author or "",
             note=r.note or "",
             resource_count=len(r.resources or []),
+            binary_resource_count=sum(
+                1
+                for item in (r.resources or [])
+                if isinstance(item, dict) and item.get("text") is None
+            ),
             created_at=r.created_at,
         )
         for r in rows
@@ -391,9 +451,14 @@ async def list_skill_revisions(code: str, db: DbSession) -> list[SkillRevisionOu
 
 
 @router.post("", response_model=SkillOut, status_code=201)
-async def create_skill(payload: SkillCreate, db: DbSession, author: AdminDep) -> SkillOut:
+async def create_skill(
+    payload: SkillCreate, db: DbSession, author: OperatorDep
+) -> SkillOut:
     """创建技能。``origin='manual'``，并写一条审计快照。"""
-    if await skill_repo.get_by_code(db, payload.code):
+    tenant_id = author.tenant_id
+    if await skill_repo.get_by_code(
+        db, payload.code, tenant_id, include_deleted=True
+    ):
         raise ConflictError(f"技能 code 已存在：{payload.code}")
     if payload.name and payload.name != payload.code:
         # 规范要求 frontmatter 的 name 等于目录名，而目录名在这里就是 code。
@@ -406,6 +471,7 @@ async def create_skill(payload: SkillCreate, db: DbSession, author: AdminDep) ->
     skill = await skill_repo.create(
         db,
         code=payload.code,
+        tenant_id=tenant_id,
         name=payload.code,
         description=payload.description,
         license=payload.license,
@@ -415,19 +481,21 @@ async def create_skill(payload: SkillCreate, db: DbSession, author: AdminDep) ->
         body=payload.body,
         origin="manual",
         content_hash=compute_content_hash(payload.body, []),
-        enabled=1 if payload.enabled else 0,
+        status=payload.status,
+        enabled=1 if payload.enabled and payload.status == "published" else 0,
     )
-    await _write_revision(db, skill, author, "创建")
-    used_by = await _used_by_map(db)
+    await _write_revision(db, skill, _operator_name(author), "创建")
+    used_by = await _used_by_map(db, tenant_id)
     return _to_out(skill, used_by.get(skill.code, []))
 
 
 @router.put("/{code}", response_model=SkillOut)
 async def update_skill(
-    code: str, payload: SkillUpdate, db: DbSession, author: AdminDep
+    code: str, payload: SkillUpdate, db: DbSession, author: OperatorDep
 ) -> SkillOut:
     """更新技能：``version+1``，重算指纹，写审计。"""
-    skill = await skill_repo.get_by_code(db, code)
+    tenant_id = author.tenant_id
+    skill = await skill_repo.get_by_code(db, code, tenant_id)
     if skill is None:
         raise NotFoundError(f"技能不存在：{code}")
     fields = payload.model_dump(exclude_unset=True)
@@ -439,36 +507,82 @@ async def update_skill(
         _validate_runtime_metadata(fields["metadata"])
     if "enabled" in fields and fields["enabled"] is not None:
         fields["enabled"] = 1 if fields["enabled"] else 0
+    target_status = fields.get("status", skill.status)
+    if target_status == "draft":
+        fields["enabled"] = 0
     if "body" in fields:
         # 正文变了 → 指纹要一起改。指纹与版本号在**同一次更新**里落库，
         # 这样任何一个版本号都唯一对应一份内容（修订快照按版本号唯一）。
         fields["content_hash"] = await _hash_for(db, skill, fields["body"])
-    skill = await skill_repo.update(db, code, fields, bump_version=True)
+    skill = await skill_repo.update(
+        db, code, fields, bump_version=True, tenant_id=tenant_id
+    )
     if skill is None:
         raise NotFoundError(f"技能不存在：{code}")
-    await _write_revision(db, skill, author, "更新")
-    used_by = await _used_by_map(db)
+    await _write_revision(db, skill, _operator_name(author), "更新")
+    used_by = await _used_by_map(db, tenant_id)
     return _to_out(skill, used_by.get(code, []))
 
 
 @router.delete("/{code}", status_code=204)
-async def delete_skill(code: str, db: DbSession, author: AdminDep) -> None:
-    """删除技能（含资源与修订历史）。
+async def delete_skill(code: str, db: DbSession, author: OperatorDep) -> None:
+    """归档技能并保留资源与修订历史。
 
-    删之前先看一眼 ``used_by``——绑着它的 Agent 会静默失去那段指令，而
-    模型的行为变化不会在界面上显式提示。
+    删除是软删除。绑着它的 Agent 仍视为冲突，避免模型行为静默变化；解绑后可
+    归档，之后通过恢复接口把它置为草稿。
     """
-    skill = await skill_repo.get_by_code(db, code)
+    tenant_id = author.tenant_id
+    skill = await skill_repo.get_by_code(db, code, tenant_id)
     if skill is None:
         raise NotFoundError(f"技能不存在：{code}")
-    used_by = await _used_by_map(db)
+    used_by = await _used_by_map(db, tenant_id)
     bound = used_by.get(code, [])
     if bound:
         raise ConflictError(
             f"技能「{code}」还被这些 Agent 绑着：{'、'.join(bound)}。"
             "先解绑或停用，再删。"
         )
-    await skill_repo.delete(db, code)
+    if not await skill_repo.soft_delete(db, code, tenant_id):
+        raise NotFoundError(f"技能不存在：{code}")
+
+
+@router.post("/{code}/restore", response_model=SkillOut)
+async def restore_skill(
+    code: str, db: DbSession, author: OperatorDep
+) -> SkillOut:
+    """恢复归档技能为草稿；再次发布前不会注入任何 Agent。"""
+    skill = await skill_repo.restore(db, code, author.tenant_id)
+    if skill is None:
+        raise NotFoundError(f"已归档技能不存在：{code}")
+    await _write_revision(db, skill, _operator_name(author), "恢复为草稿")
+    return _to_out(skill, [])
+
+
+@router.post("/{code}/publish", response_model=SkillOut)
+async def publish_skill(
+    code: str,
+    payload: SkillPublishIn,
+    db: DbSession,
+    author: OperatorDep,
+) -> SkillOut:
+    """把草稿发布为可注入版本；可显式发布但不启用。"""
+    skill = await skill_repo.update(
+        db,
+        code,
+        {
+            "status": "published",
+            "enabled": 1 if payload.enabled else 0,
+        },
+        bump_version=True,
+        tenant_id=author.tenant_id,
+    )
+    if skill is None:
+        raise NotFoundError(f"技能不存在：{code}")
+    await _write_revision(
+        db, skill, _operator_name(author), "发布草稿"
+    )
+    used_by = await _used_by_map(db, author.tenant_id)
+    return _to_out(skill, used_by.get(code, []))
 
 
 @router.post("/{code}/resources", response_model=SkillResourceOut, status_code=201)
@@ -476,7 +590,7 @@ async def delete_skill(code: str, db: DbSession, author: AdminDep) -> None:
 async def put_skill_resource(
     code: str,
     db: DbSession,
-    author: AdminDep,
+    author: OperatorDep,
     body: bytes = Body(
         ...,
         media_type="application/octet-stream",
@@ -496,7 +610,8 @@ async def put_skill_resource(
     路径放 query 参数或 ``X-Resource-Path`` 头里都行，query 优先。
     ``POST`` 保留给旧客户端；管理页使用幂等语义更明确的 ``PUT``。
     """
-    skill = await skill_repo.get_by_code(db, code)
+    tenant_id = author.tenant_id
+    skill = await skill_repo.get_by_code(db, code, tenant_id)
     if skill is None:
         raise NotFoundError(f"技能不存在：{code}")
     raw_path = path or x_resource_path or ""
@@ -527,8 +642,11 @@ async def put_skill_resource(
         code,
         {"content_hash": await _hash_for(db, skill)},
         bump_version=True,
+        tenant_id=tenant_id,
     )
-    await _write_revision(db, skill, author, f"写入资源 {cleaned}")
+    await _write_revision(
+        db, skill, _operator_name(author), f"写入资源 {cleaned}"
+    )
     return SkillResourceOut(
         path=row.path,
         size_bytes=row.size_bytes,
@@ -540,10 +658,11 @@ async def put_skill_resource(
 
 @router.delete("/{code}/resources/{path:path}", status_code=204)
 async def delete_skill_resource(
-    code: str, path: str, db: DbSession, author: AdminDep
+    code: str, path: str, db: DbSession, author: OperatorDep
 ) -> None:
     """删除一个资源文件。"""
-    skill = await skill_repo.get_by_code(db, code)
+    tenant_id = author.tenant_id
+    skill = await skill_repo.get_by_code(db, code, tenant_id)
     if skill is None:
         raise NotFoundError(f"技能不存在：{code}")
     try:
@@ -557,14 +676,17 @@ async def delete_skill_resource(
         code,
         {"content_hash": await _hash_for(db, skill)},
         bump_version=True,
+        tenant_id=tenant_id,
     )
-    await _write_revision(db, skill, author, f"删除资源 {cleaned}")
+    await _write_revision(
+        db, skill, _operator_name(author), f"删除资源 {cleaned}"
+    )
 
 
 @router.post("/import", response_model=SkillOut, status_code=201)
 async def import_skill(
     db: DbSession,
-    author: AdminDep,
+    author: OperatorDep,
     file: UploadFile = File(..., description="技能包 zip"),
 ) -> SkillOut:
     """从 zip 导入一个技能。
@@ -584,7 +706,8 @@ async def import_skill(
         raise BadRequestError(str(exc)) from exc
 
     code = package.frontmatter.name
-    if await skill_repo.get_by_code(db, code):
+    tenant_id = author.tenant_id
+    if await skill_repo.get_by_code(db, code, tenant_id):
         raise ConflictError(f"技能 code 已存在：{code}")
 
     total = sum(len(c) for _, c in package.resources)
@@ -597,6 +720,7 @@ async def import_skill(
     skill = await skill_repo.create(
         db,
         code=code,
+        tenant_id=tenant_id,
         name=code,
         description=package.frontmatter.description,
         license=package.frontmatter.license,
@@ -606,6 +730,7 @@ async def import_skill(
         body=package.body,
         origin="import",
         content_hash="",
+        status="draft",
         enabled=0,
     )
     for path, content in package.resources:
@@ -620,15 +745,19 @@ async def import_skill(
     # 技能是刚建的（version=1），所以这里**不再自增**——修订快照按版本号唯一，
     # 再加一版就会撞 (skill_id, version)。
     skill = await skill_repo.update(
-        db, code, {"content_hash": await _hash_for(db, skill)}, bump_version=False
+        db,
+        code,
+        {"content_hash": await _hash_for(db, skill)},
+        bump_version=False,
+        tenant_id=tenant_id,
     )
-    await _write_revision(db, skill, author, "导入")
+    await _write_revision(db, skill, _operator_name(author), "导入")
     return _to_out(skill, [], import_warnings=warnings)
 
 
 @router.post("/import/entries", response_model=SkillOut, status_code=201)
 async def import_skill_entries(
-    payload: SkillImportIn, db: DbSession, author: AdminDep
+    payload: SkillImportIn, db: DbSession, author: OperatorDep
 ) -> SkillOut:
     """从**目录结构**（JSON）导入一个技能。
 
@@ -671,7 +800,8 @@ async def import_skill_entries(
         raise BadRequestError(f"{SKILL_MD_NAME} 解析失败：{exc}") from exc
 
     code = parsed.frontmatter.name
-    if await skill_repo.get_by_code(db, code):
+    tenant_id = author.tenant_id
+    if await skill_repo.get_by_code(db, code, tenant_id):
         raise ConflictError(f"技能 code 已存在：{code}")
     total = sum(len(c) for _, c in resources)
     if total > MAX_SKILL_RESOURCE_BYTES:
@@ -683,6 +813,7 @@ async def import_skill_entries(
     skill = await skill_repo.create(
         db,
         code=code,
+        tenant_id=tenant_id,
         name=code,
         description=parsed.frontmatter.description,
         license=parsed.frontmatter.license,
@@ -692,6 +823,7 @@ async def import_skill_entries(
         body=parsed.body,
         origin="import",
         content_hash="",
+        status="published" if payload.enabled else "draft",
         enabled=1 if payload.enabled else 0,
     )
     for path, content in resources:
@@ -704,57 +836,85 @@ async def import_skill_entries(
             1 if is_text_path(path) else 0,
         )
     skill = await skill_repo.update(
-        db, code, {"content_hash": await _hash_for(db, skill)}, bump_version=False
+        db,
+        code,
+        {"content_hash": await _hash_for(db, skill)},
+        bump_version=False,
+        tenant_id=tenant_id,
     )
-    await _write_revision(db, skill, author, "导入（目录结构）")
+    await _write_revision(
+        db, skill, _operator_name(author), "导入（目录结构）"
+    )
     return _to_out(skill, [], import_warnings=warnings)
 
 
 @router.post("/{code}/rollback", response_model=SkillOut)
 async def rollback_skill(
-    code: str, payload: SkillRollbackIn, db: DbSession, author: AdminDep
+    code: str, payload: SkillRollbackIn, db: DbSession, author: OperatorDep
 ) -> SkillOut:
     """回滚到指定历史版本。
 
-    正文与**文本资源**一起回滚；**二进制资源不回滚**——修订快照里只存了它的
-    sha256，没有内容（§22.12 第 7 条）。所以二进制资源在回滚后会留下一条
-    「内容与快照不符」的提示，而不是假装回滚成功了。
+    正文与全部资源（包括二进制）一起恢复。恢复后的技能进入草稿态，避免历史
+    内容未经重新发布就直接影响线上模型。
     """
-    skill = await skill_repo.get_by_code(db, code)
+    tenant_id = author.tenant_id
+    skill = await skill_repo.get_by_code(db, code, tenant_id)
     if skill is None:
         raise NotFoundError(f"技能不存在：{code}")
     revision = await skill_repo.get_revision(db, skill.id, payload.version)
     if revision is None:
         raise NotFoundError(f"技能「{code}」没有版本 {payload.version} 的快照")
 
-    skill.body = revision.body or ""
-    await db.commit()
-    await db.refresh(skill)
+    blobs = await skill_repo.get_revision_resources(db, revision.id)
+    if not blobs:
+        # 兼容升级前产生的修订：旧快照仍可从 JSON 恢复文本资源。
+        blobs = []
+        for item in revision.resources or []:
+            text = item.get("text") if isinstance(item, dict) else None
+            if isinstance(text, str):
+                blobs.append(
+                    type(
+                        "_LegacyRevisionResource",
+                        (),
+                        {
+                            "path": item.get("path"),
+                            "content": text.encode("utf-8"),
+                            "mime_type": guess_mime_type(str(item.get("path"))),
+                            "is_text": 1,
+                        },
+                    )()
+                )
 
-    for item in revision.resources or []:
-        path = item.get("path")
-        if not isinstance(path, str) or not path:
-            continue
-        text = item.get("text")
-        if text is None:
-            # 二进制资源：快照里只有摘要，内容回滚不了。留着现状，
-            # 但要让 hash 对得上——否则「回滚后内容变了」这件事会被藏起来。
-            continue
+    current = await skill_repo.list_resources(db, skill.id)
+    for row in current:
+        await skill_repo.delete_resource(db, skill.id, row.path)
+    for item in blobs:
         await skill_repo.put_resource(
             db,
             skill.id,
-            path,
-            text.encode("utf-8"),
-            guess_mime_type(path),
-            1,
+            item.path,
+            item.content,
+            item.mime_type or guess_mime_type(item.path),
+            int(item.is_text),
         )
     # 回滚本身也是一次写入：版本号继续往前走，内容回到旧样子。
     skill = await skill_repo.update(
         db,
         code,
-        {"content_hash": await _hash_for(db, skill)},
+        {
+            "body": revision.body or "",
+            "content_hash": await _hash_for(db, skill, revision.body or ""),
+            "status": "draft",
+            "enabled": 0,
+        },
         bump_version=True,
+        tenant_id=tenant_id,
     )
-    await _write_revision(db, skill, author, f"回滚到 v{payload.version}")
-    used_by = await _used_by_map(db)
+    await _write_revision(
+        db,
+        skill,
+        _operator_name(author),
+        f"回滚到 v{payload.version}（草稿）",
+    )
+    used_by = await _used_by_map(db, tenant_id)
     return _to_out(skill, used_by.get(code, []))

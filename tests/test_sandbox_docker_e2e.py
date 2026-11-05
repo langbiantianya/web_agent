@@ -10,7 +10,11 @@ pytest tests/test_sandbox_docker_e2e.py -q
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
+from contextlib import suppress
+from uuid import uuid4
 
 import pytest
 
@@ -66,6 +70,7 @@ except OSError:
         DispatcherConfig(
             images=(("default", IMAGE),),
             payload_dir=str(tmp_path),
+            require_digest=False,
         )
     )
     try:
@@ -93,3 +98,75 @@ except OSError:
     assert lines["NET"] == "blocked"
     # 控制帧没有被用户输出污染
     assert json.dumps(result.stdout)
+
+
+async def test_cancel_removes_sandbox_within_five_seconds(tmp_path):
+    """取消执行后，dispatcher 必须强制删除仍在运行的一次性容器。"""
+    import docker
+
+    client = docker.from_env()
+    request_id = f"cancel-{uuid4().hex[:12]}"
+    backend = DockerBackend(
+        DispatcherConfig(
+            images=(("default", IMAGE),),
+            payload_dir=str(tmp_path),
+            require_digest=False,
+        )
+    )
+    task = asyncio.create_task(
+        backend.run(
+            SandboxSpec(
+                skill="e2e",
+                script="scripts/sleep.py",
+                language="python",
+                content="import time\ntime.sleep(60)\n",
+                timeout_ms=120000,
+                image="default",
+                request_id=request_id,
+            )
+        )
+    )
+
+    async def _matching_containers():
+        """按 request_id 查询仍在 Docker 中保留的沙箱容器。"""
+        return await asyncio.to_thread(
+            client.containers.list,
+            all=True,
+            filters={"label": f"studio.io/request_id={request_id}"},
+        )
+
+    try:
+        deadline = time.monotonic() + 10
+        containers = []
+        while time.monotonic() < deadline:
+            containers = await _matching_containers()
+            if containers:
+                break
+            if task.done():
+                pytest.fail(f"沙箱在创建后提前结束：{task.exception()}")
+            await asyncio.sleep(0.1)
+        assert containers, "10 秒内没有观察到运行中的 sandbox 容器"
+
+        cancelled_at = time.monotonic()
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+        while time.monotonic() - cancelled_at < 5:
+            if not await _matching_containers():
+                break
+            await asyncio.sleep(0.1)
+        elapsed = time.monotonic() - cancelled_at
+        assert not await _matching_containers(), (
+            f"取消 {elapsed:.2f} 秒后 sandbox 容器仍然存在"
+        )
+        assert elapsed < 5, f"sandbox 容器删除耗时 {elapsed:.2f} 秒"
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await task
+        for container in await _matching_containers():
+            with suppress(Exception):
+                await asyncio.to_thread(container.remove, force=True)
+        await backend.close()
+        client.close()

@@ -59,6 +59,11 @@ class WorkflowNode(BaseModel):
     outputKey: str = Field(default="", max_length=64)
     # 审批节点上给审批人看的话；只有 type=approval 时才有意义
     prompt: str = Field(default="", max_length=2000)
+    # 会签人数；同一审批人只能投一票。
+    requiredApprovals: int = Field(default=1, ge=1, le=20)
+    # 0 表示不超时。超时动作默认驳回归属于 fail-closed。
+    approvalTimeoutSec: int = Field(default=0, ge=0, le=30 * 24 * 3600)
+    approvalTimeoutAction: str = Field(default="reject", max_length=16)
 
     @model_validator(mode="after")
     def _validate_node_shape(self) -> WorkflowNode:
@@ -79,12 +84,24 @@ class WorkflowNode(BaseModel):
         if self.type == NodeType.AGENT.value:
             if not self.agentCode:
                 raise ValueError(f"节点 {self.id} 是 agent 类型，必须指定 agentCode")
+            if (
+                self.requiredApprovals != 1
+                or self.approvalTimeoutSec != 0
+                or self.approvalTimeoutAction != "reject"
+            ):
+                raise ValueError(
+                    f"节点 {self.id} 不是 approval 类型，不能配置审批会签或超时"
+                )
             return self
         if not self.prompt:
             raise ValueError(f"节点 {self.id} 是 approval 类型，必须写 prompt")
         if self.agentCode:
             raise ValueError(
                 f"节点 {self.id} 是 approval 类型，不能同时指定 agentCode"
+            )
+        if self.approvalTimeoutAction not in {"reject", "approve"}:
+            raise ValueError(
+                f"节点 {self.id} 的 approvalTimeoutAction 只支持 reject / approve"
             )
         return self
 

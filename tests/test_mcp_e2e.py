@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -44,6 +46,10 @@ ADMIN_HEADERS = {"X-Admin-Key": ADMIN_KEY}
 
 # 真实 MCP 服务器脚本（用官方 SDK 起的 stdio 服务器）。
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mcp_server_stdio.py"
+POLLUTED_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "mcp_server_polluted.py"
+)
+HTTP_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mcp_server_http.py"
 
 # 这批用例共用的服务器 code。测试库是 session 级建表且**用例之间不清理**，
 # 所以 code 必须与其他测试文件互不相同。
@@ -146,6 +152,11 @@ async def mcp_stdio(client: httpx.AsyncClient, monkeypatch):
             "transport": "stdio",
             "command": sys.executable,
             "args": [str(FIXTURE)],
+            "env": (
+                {"PYTHONPATH": os.environ["PYTHONPATH"]}
+                if os.environ.get("PYTHONPATH")
+                else None
+            ),
         },
         headers=ADMIN_HEADERS,
     )
@@ -295,6 +306,153 @@ async def test_refresh_discovers_tools_into_snapshot(mcp_stdio: str, db):
     assert echo.input_schema["type"] == "object"
 
 
+@pytest.mark.asyncio
+async def test_mcp_resources_and_prompts_are_read_live(
+    client: httpx.AsyncClient, mcp_stdio: str
+):
+    """资源、模板和 prompt 走真实 MCP 会话，而不是伪造返回。"""
+    resources = await client.get(
+        f"/api/mcp/servers/{mcp_stdio}/resources", headers=ADMIN_HEADERS
+    )
+    assert resources.status_code == 200, resources.text
+    assert any(item["uri"] == "fixture://guide" for item in resources.json())
+
+    read = await client.get(
+        f"/api/mcp/servers/{mcp_stdio}/resources/read",
+        params={"uri": "fixture://guide"},
+        headers=ADMIN_HEADERS,
+    )
+    assert read.status_code == 200, read.text
+    assert "资源读取正常" in read.json()[0]["text"]
+
+    templates = await client.get(
+        f"/api/mcp/servers/{mcp_stdio}/resource-templates",
+        headers=ADMIN_HEADERS,
+    )
+    assert templates.status_code == 200, templates.text
+    assert any("items" in item["uri"] for item in templates.json()), templates.json()
+
+    prompts = await client.get(
+        f"/api/mcp/servers/{mcp_stdio}/prompts", headers=ADMIN_HEADERS
+    )
+    assert prompts.status_code == 200, prompts.text
+    assert any(item["name"] == "summarize" for item in prompts.json())
+
+    prompt = await client.post(
+        f"/api/mcp/servers/{mcp_stdio}/prompts/summarize/get",
+        json={"arguments": {"topic": "季度指标"}},
+        headers=ADMIN_HEADERS,
+    )
+    assert prompt.status_code == 200, prompt.text
+    assert "季度指标" in str(prompt.json()["messages"])
+
+
+@pytest.mark.asyncio
+async def test_stdio_stdout_pollution_is_reported_as_unavailable(
+    client: httpx.AsyncClient, monkeypatch
+):
+    """stdout 普通日志破坏协议时明确判定连接不可用，不挂死。"""
+    monkeypatch.setattr(
+        settings, "mcp_allowed_command_prefixes", [str(Path(sys.executable).parent)]
+    )
+    code = "polluted-stdio"
+    stale = await client.delete(
+        f"/api/mcp/servers/{code}", headers=ADMIN_HEADERS
+    )
+    assert stale.status_code in (204, 404)
+    created = await client.post(
+        "/api/mcp/servers",
+        json={
+            "code": code,
+            "transport": "stdio",
+            "command": sys.executable,
+            "args": [str(POLLUTED_FIXTURE)],
+            "env": (
+                {"PYTHONPATH": os.environ["PYTHONPATH"]}
+                if os.environ.get("PYTHONPATH")
+                else None
+            ),
+        },
+        headers=ADMIN_HEADERS,
+    )
+    assert created.status_code == 201, created.text
+    refreshed = await client.post(
+        f"/api/mcp/servers/{code}/refresh", headers=ADMIN_HEADERS
+    )
+    assert refreshed.status_code == 200, refreshed.text
+    detail = await client.get(
+        f"/api/mcp/servers/{code}", headers=ADMIN_HEADERS
+    )
+    assert detail.status_code == 200
+    assert detail.json()["online"] is True
+    ok, text = await execute_tool(f"mcp__{code}__echo", {"text": "still works"})
+    assert ok is True
+    assert text == "still works"
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_real_discovery_call_and_error(
+    client: httpx.AsyncClient, monkeypatch
+):
+    """真实 Streamable HTTP 完成发现、成功调用与 isError 回灌。"""
+    code = "httpe2e"
+    port = _free_port()
+    env = dict(os.environ)
+    env["MCP_FIXTURE_PORT"] = str(port)
+    proc = subprocess.Popen(
+        [sys.executable, str(HTTP_FIXTURE)],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                    break
+            except OSError:
+                await asyncio.sleep(0.1)
+        else:
+            raise AssertionError("Streamable HTTP fixture 未启动")
+
+        monkeypatch.setattr(settings, "mcp_allow_private_networks", True)
+        stale = await client.delete(
+            f"/api/mcp/servers/{code}", headers=ADMIN_HEADERS
+        )
+        assert stale.status_code in (204, 404)
+        created = await client.post(
+            "/api/mcp/servers",
+            json={
+                "code": code,
+                "transport": "http",
+                "url": f"http://127.0.0.1:{port}/mcp",
+            },
+            headers=ADMIN_HEADERS,
+        )
+        assert created.status_code == 201, created.text
+        refreshed = await client.post(
+            f"/api/mcp/servers/{code}/refresh", headers=ADMIN_HEADERS
+        )
+        assert refreshed.status_code == 200, refreshed.text
+        assert f"mcp__{code}__echo" in refreshed.json()["imported"]
+
+        ok, text = await execute_tool(
+            f"mcp__{code}__echo", {"text": "stream"}
+        )
+        assert ok is True
+        assert "http: stream" in text
+
+        error_ok, error_text = await execute_tool(f"mcp__{code}__boom", {})
+        assert error_ok is False
+        assert error_text
+    finally:
+        await mcp_manager.close_all()
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 async def test_agent_can_bind_discovered_mcp_tool(
     client: httpx.AsyncClient, llm_factory, mcp_stdio: str
 ):

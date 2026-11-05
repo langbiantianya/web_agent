@@ -1,6 +1,7 @@
 """ORM 模型汇总导出。"""
 
 from app.models.agent import Agent
+from app.models.admin_user import AdminUser
 from app.models.base import Base
 from app.models.conversation import Conversation
 from app.models.enums import (
@@ -16,13 +17,15 @@ from app.models.mcp_server import McpServer
 from app.models.mcp_tool import McpTool
 from app.models.message import Message
 from app.models.run import Run, RunStep
-from app.models.run_approval import RunApproval
+from app.models.run_approval import RunApproval, RunApprovalVote
 from app.models.run_event import RunEvent
-from app.models.skill import Skill, SkillResource, SkillRevision
+from app.models.skill import Skill, SkillResource, SkillRevision, SkillRevisionResource
+from app.models.tool_call_audit import ToolCallAudit
 from app.models.workflow import Workflow
 
 __all__ = [
     "Agent",
+    "AdminUser",
     "Base",
     "Conversation",
     "ConversationStatus",
@@ -35,12 +38,15 @@ __all__ = [
     "McpTool",
     "Run",
     "RunApproval",
+    "RunApprovalVote",
     "RunEvent",
     "RunStatus",
     "RunStep",
     "Skill",
     "SkillResource",
     "SkillRevision",
+    "SkillRevisionResource",
     "StepStatus",
+    "ToolCallAudit",
     "Workflow",
 ]

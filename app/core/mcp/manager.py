@@ -60,6 +60,7 @@ class McpConnection:
         # 连上 / 连不上时的回调（由管理器注入，用来维护「可用性」状态）。
         self.on_unavailable: Callable[[str], None] = lambda _reason: None
         self.on_available: Callable[[], None] = lambda: None
+        self.on_tools_changed: Callable[[], None] = lambda: None
         self._queue: asyncio.Queue | None = None
         self._task: asyncio.Task | None = None
         self._ready = asyncio.Event()
@@ -95,7 +96,18 @@ class McpConnection:
         try:
             async with open_transport(self.server) as streams:
                 read_stream, write_stream = streams
-                async with ClientSession(read_stream, write_stream) as session:
+                from mcp_types import ToolListChangedNotification
+
+                async def _message_handler(message: Any) -> None:
+                    """收到工具清单变更通知后异步刷新数据库快照。"""
+                    if isinstance(message, ToolListChangedNotification):
+                        self.on_tools_changed()
+
+                async with ClientSession(
+                    read_stream,
+                    write_stream,
+                    message_handler=_message_handler,
+                ) as session:
                     await session.initialize()
                     self._ready.set()
                     self.on_available()
@@ -107,6 +119,7 @@ class McpConnection:
             self._error = exc
             self._ready.set()
             logger.warning("MCP 连接失败：%s（%s）", self.code, exc)
+            logger.debug("MCP %s 连接失败详情", self.code, exc_info=True)
             self._fail_pending(exc)
             # 连不上 → 这台服务器的工具不该再展开给模型（§21.9）。
             self.on_unavailable(str(exc))
@@ -149,6 +162,20 @@ class McpConnection:
         method = request["method"]
         if method == "list_tools":
             return await session.list_tools(params=request.get("params"))
+        if method == "list_resources":
+            return await session.list_resources(params=request.get("params"))
+        if method == "list_resource_templates":
+            return await session.list_resource_templates(
+                params=request.get("params")
+            )
+        if method == "read_resource":
+            return await session.read_resource(request["uri"])
+        if method == "list_prompts":
+            return await session.list_prompts(params=request.get("params"))
+        if method == "get_prompt":
+            return await session.get_prompt(
+                request["prompt"], request.get("args")
+            )
         if method == "call_tool":
             return await session.call_tool(
                 request["tool"],
@@ -279,6 +306,7 @@ class McpClientManager:
         # 已知不可用的服务器：code → 原因。**只有连失败过才会被记上**——
         # 「还没连过」不等于「不可用」（§21.9）。
         self._unavailable: dict[str, str] = {}
+        self._refresh_tasks: set[asyncio.Task] = set()
 
     def is_available(self, server_code: str) -> bool:
         """这台服务器现在算不算「可用」。
@@ -319,8 +347,32 @@ class McpClientManager:
                     code, reason
                 )
                 conn.on_available = lambda code=server.code: self.clear_unavailable(code)
+                conn.on_tools_changed = (
+                    lambda current=server: self._schedule_catalog_refresh(current)
+                )
                 self._connections[server.code] = conn
             return conn
+
+    def _schedule_catalog_refresh(self, server) -> None:
+        """通知回调只投递后台任务，避免阻塞协议消息处理器。"""
+
+        async def _refresh() -> None:
+            """刷新 MCP 工具目录快照，并隔离后台任务异常。"""
+            from app.config.db import SessionLocal
+            from app.core.mcp.catalog import refresh_catalog
+
+            try:
+                async with SessionLocal() as db:
+                    await refresh_catalog(db, server)
+                logger.info("MCP %s 收到 tools/list_changed，快照已刷新", server.code)
+            except Exception:
+                logger.exception("MCP %s 工具清单通知刷新失败", server.code)
+
+        task = asyncio.create_task(
+            _refresh(), name=f"mcp-catalog-refresh-{server.code}"
+        )
+        self._refresh_tasks.add(task)
+        task.add_done_callback(self._refresh_tasks.discard)
 
     async def call_tool(
         self, server, tool_name: str, args: dict, timeout: float | None = None
@@ -372,6 +424,61 @@ class McpClientManager:
                 break
             seen_cursors.add(cursor)
         return tools
+
+    async def list_resources(self, server) -> list[Any]:
+        """列出服务器资源，自动翻完分页。"""
+        return await self._list_paginated(
+            server, "list_resources", "resources"
+        )
+
+    async def list_resource_templates(self, server) -> list[Any]:
+        """列出资源模板，自动翻完分页。"""
+        return await self._list_paginated(
+            server, "list_resource_templates", "resource_templates"
+        )
+
+    async def list_prompts(self, server) -> list[Any]:
+        """列出 prompt 模板，自动翻完分页。"""
+        return await self._list_paginated(server, "list_prompts", "prompts")
+
+    async def _list_paginated(
+        self, server, method: str, result_attr: str
+    ) -> list[Any]:
+        """通用的 MCP 分页列表实现。"""
+        from mcp.types import PaginatedRequestParams
+
+        conn = await self._get(server)
+        items: list[Any] = []
+        cursor: str | None = None
+        seen: set[str] = set()
+        while True:
+            params = PaginatedRequestParams(cursor=cursor) if cursor else None
+            result = await conn.request(method, params=params)
+            items.extend(list(getattr(result, result_attr, None) or []))
+            cursor = getattr(result, "nextCursor", None)
+            if not cursor:
+                break
+            if cursor in seen:
+                logger.warning(
+                    "MCP %s 的 %s nextCursor 循环了，停止翻页",
+                    server.code,
+                    method,
+                )
+                break
+            seen.add(cursor)
+        return items
+
+    async def read_resource(self, server, uri: str) -> Any:
+        """读取一个 MCP 资源 URI。"""
+        conn = await self._get(server)
+        return await conn.request("read_resource", uri=uri)
+
+    async def get_prompt(
+        self, server, prompt: str, arguments: dict[str, str] | None = None
+    ) -> Any:
+        """获取一个 MCP prompt。"""
+        conn = await self._get(server)
+        return await conn.request("get_prompt", prompt=prompt, args=arguments)
 
     async def close_all(self) -> None:
         """关掉全部连接（进程退出 / 测试收尾时用）。"""

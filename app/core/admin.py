@@ -8,21 +8,70 @@
 技能进了数据库之后，「改它要改代码 + 走部署」这道物理阻力没有了——后台就能改。
 阻力没了，权限就得从别处补回来，就是这个门。
 
-## 为什么是共享密钥而不是用户体系
+## 两层身份
 
-本项目目前**没有用户模型**（§1.1：单部署多 Agent，没有登录体系）。为了一个权限位
-引入用户表、会话、RBAC 是另一个量级的工程，而且和「技能」这个功能无关。所以这里
-用一把**共享密钥**：持有 ``ADMIN_KEY`` 的调用方即管理员。
+环境变量 ``ADMIN_KEY`` 只在首次部署和应急时使用，代表默认租户的引导管理员。
+日常身份保存在 ``admin_user``：使用独立 API Key、支持角色、停用和轮换，数据库只保存
+HMAC-SHA256 摘要。:func:`resolve_admin` 同时解析两类主体，路由再按角色授权。
 
-将来真的有了用户体系，把 :func:`require_admin` 换成按用户查权限即可，调用点不用动。
+:func:`require_admin` 保留为兼容旧调用点的引导 Key 校验；新代码应使用
+:func:`resolve_admin` 获取主体，再通过 :func:`require_min_role` 检查权限。
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
+from dataclasses import dataclass
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import settings
-from app.core.errors import UnauthorizedError
+from app.core.errors import ForbiddenError, UnauthorizedError
+from app.models.base import utcnow
+
+ROLES = ("viewer", "operator", "admin")
+_ROLE_RANK = {name: index for index, name in enumerate(ROLES)}
+
+
+@dataclass(frozen=True, slots=True)
+class AdminPrincipal:
+    """认证后的管理员主体。"""
+
+    username: str
+    tenant_id: str
+    role: str
+    bootstrap: bool = False
+
+
+def admin_key_hash(key: str) -> str:
+    """用部署密钥对管理员 API Key 做 HMAC-SHA256。"""
+    return hmac.new(
+        settings.secret_key.encode("utf-8"),
+        (key or "").encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def new_admin_key() -> str:
+    """生成只在创建/轮换响应中出现一次的管理员 Key。"""
+    return "wa_admin_" + secrets.token_urlsafe(32)
+
+
+def require_min_role(principal: AdminPrincipal, minimum: str) -> AdminPrincipal:
+    """校验主体至少具备指定角色。
+
+    Raises:
+        ForbiddenError: 角色不足。
+    """
+    if minimum not in _ROLE_RANK:
+        raise ValueError(f"未知管理员角色：{minimum}")
+    if _ROLE_RANK.get(principal.role, -1) < _ROLE_RANK[minimum]:
+        raise ForbiddenError(
+            f"当前角色 {principal.role} 不能执行该操作（至少需要 {minimum}）"
+        )
+    return principal
 
 
 def admin_key_matches(key: str | None) -> bool:
@@ -70,3 +119,39 @@ def require_admin(key: str | None) -> str:
     if not secrets.compare_digest(key, configured):
         raise UnauthorizedError("管理员密钥不正确")
     return settings.admin_author
+
+
+async def resolve_admin(db: AsyncSession, key: str | None) -> AdminPrincipal:
+    """解析环境引导 Key 或数据库管理员 Key。
+
+    环境引导 Key 始终拥有默认租户的 admin 角色；数据库用户的角色和租户由记录
+    决定。用户认证成功后更新 ``last_used_at``，但不阻塞认证失败路径。
+    """
+    if admin_key_matches(key):
+        return AdminPrincipal(
+            username=settings.admin_author,
+            tenant_id="default",
+            role="admin",
+            bootstrap=True,
+        )
+
+    if not key:
+        raise UnauthorizedError("缺少管理员密钥")
+    from app.models.admin_user import AdminUser
+
+    key_digest = admin_key_hash(key)
+    row = await db.scalar(
+        sa.select(AdminUser).where(
+            AdminUser.api_key_hash == key_digest,
+            AdminUser.enabled == 1,
+        )
+    )
+    if row is None:
+        raise UnauthorizedError("管理员密钥不正确")
+    row.last_used_at = utcnow()
+    await db.commit()
+    return AdminPrincipal(
+        username=row.username,
+        tenant_id=row.tenant_id,
+        role=row.role,
+    )

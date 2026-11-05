@@ -76,6 +76,8 @@ class EventType(StrEnum):
     # V3.1：人工审批的三个事件。它们都**不是**终止事件——「等审批」时流要继续
     # 开着，批准后同一条流上继续吐字；驳回之后会紧跟一个 done 事件收尾。
     APPROVAL_REQUIRED = "approval_required"
+    APPROVAL_VOTE = "approval_vote"
+    APPROVAL_TIMEOUT = "approval_timeout"
     APPROVED = "approved"
     REJECTED = "rejected"
 

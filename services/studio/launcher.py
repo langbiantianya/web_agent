@@ -60,6 +60,7 @@ class ExecSpec:
         image: 镜像**目录名**（不是完整 ref）；空 = 默认镜像。只有 isolated
             档会用它，fast 档忽略。
         request_id: 调用方的追踪键；dispatcher 用它做标签/幂等（审计用）。
+        traceparent: W3C 链路上下文。
     """
 
     skill: str = ""
@@ -71,6 +72,7 @@ class ExecSpec:
     timeout_ms: int = 0
     image: str = ""
     request_id: str = ""
+    traceparent: str = ""
 
 
 class LauncherUnavailableError(Exception):
@@ -107,6 +109,10 @@ class Launcher(Protocol):
 
     async def close(self) -> None:
         """收尾（释放运行时资源）。"""
+        ...
+
+    async def cancel(self, request_id: str) -> bool:
+        """尽力取消一次正在执行的沙箱。"""
         ...
 
 
@@ -179,6 +185,10 @@ class InProcessLauncher:
         """没有要收的尾。"""
         return None
 
+    async def cancel(self, request_id: str) -> bool:
+        """fast 档的取消由取消执行协程触发，进程树在 finally 中回收。"""
+        return False
+
 
 class IsolatedLauncher:
     """``isolated`` 档：每次执行起一个一次性容器（**骨架**）。
@@ -227,3 +237,10 @@ class IsolatedLauncher:
         """收尾。"""
         if self._runtime is not None:
             await self._runtime.close()
+
+    async def cancel(self, request_id: str) -> bool:
+        """把取消传播到容器运行时。"""
+        cancel = getattr(self._runtime, "cancel", None)
+        if cancel is None:
+            return False
+        return bool(await cancel(request_id))

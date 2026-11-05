@@ -425,6 +425,9 @@ class StudioMetrics:
         output_truncated_total: 输出被截断次数（``language``）。
         failed_total: 启动失败的原因分布（``reason``）。
         orphan_process_total: 启动巡检发现的残留进程数。
+        sandbox_start: 沙箱启动耗时（``profile`` / ``image``）。
+        sandbox_total: 沙箱阶段计数（``phase`` / ``profile``）。
+        sandbox_duration: 沙箱执行耗时（``image`` / ``status``）。
         registry: 底层的注册表（渲染用）。
     """
 
@@ -436,6 +439,9 @@ class StudioMetrics:
     output_truncated_total: Counter
     failed_total: Counter
     orphan_process_total: Counter
+    sandbox_start: Histogram
+    sandbox_total: Counter
+    sandbox_duration: Histogram
     registry: MetricsRegistry
 
 
@@ -474,6 +480,21 @@ def build_metrics() -> StudioMetrics:
         ),
         orphan_process_total=registry.counter(
             "studio_orphan_process_total", "启动巡检发现的残留进程数"
+        ),
+        sandbox_start=registry.histogram(
+            "sandbox_start_seconds",
+            "沙箱从创建到启动完成的耗时（秒）",
+            ("profile", "image"),
+        ),
+        sandbox_total=registry.counter(
+            "sandbox_total",
+            "沙箱阶段计数",
+            ("phase", "profile"),
+        ),
+        sandbox_duration=registry.histogram(
+            "sandbox_duration_seconds",
+            "沙箱执行耗时（秒）",
+            ("image", "status"),
         ),
         registry=registry,
     )

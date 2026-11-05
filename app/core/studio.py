@@ -38,6 +38,7 @@ import grpc
 from webagent.studio.v1 import studio_pb2, studio_pb2_grpc
 
 from app.config.settings import settings
+from app.core.studio_context import current_exec_context
 
 logger = logging.getLogger(__name__)
 
@@ -453,6 +454,7 @@ class StudioClient:
         timeout = effective_timeout_ms(timeout_ms)
         deadline = timeout / 1000.0 + DEADLINE_GRACE_SEC
         stub = await self._get_stub()
+        ctx = current_exec_context()
         request = studio_pb2.ExecRequest(
             skill=skill,
             script=script,
@@ -468,6 +470,7 @@ class StudioClient:
                 profile, studio_pb2.EXEC_PROFILE_UNSPECIFIED
             ),
             image=image,
+            traceparent=(ctx.traceparent if ctx else ""),
         )
         try:
             response = await stub.Exec(request, timeout=deadline)
