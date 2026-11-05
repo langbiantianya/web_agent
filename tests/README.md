@@ -18,6 +18,16 @@ docker run --rm --memory=1200m --cpus=1 \
 挂载。Docker daemon 解析 bind mount 时看的是宿主文件系统；只挂 socket 会让沙箱读不到
 测试生成的 `payload.json`，表现为 `sandbox_result_lost`。
 
+需要让整套测试直接跑在 PostgreSQL 上时，先创建一个专用空库，再显式传入
+`TEST_DATABASE_URL`。`conftest.py` 只在变量存在时使用该库，不会自动删除外部数据库：
+
+```bash
+docker run --rm --network host \
+  -e TEST_DATABASE_URL='postgresql+psycopg://webagent:...@127.0.0.1:5432/webagent_test' \
+  -e DB_POOL_SIZE=5 -e DB_MAX_OVERFLOW=5 \
+  webagent/tests:local
+```
+
 ## 测试层次
 
 | 层次 | 代表目录/文件 | 验证内容 |

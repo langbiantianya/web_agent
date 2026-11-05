@@ -17,6 +17,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 # --- 测试环境配置（先于任何 app.* 导入）---
+# 默认用独立 SQLite；CI/实机验证可显式设置 TEST_DATABASE_URL 切到专用 PG
+# 测试库。外部库必须由调用方准备且可清空，conftest 不会自动删除它。
+_EXTERNAL_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
+
 # 库文件名带上进程号：早先固定名 %TEMP%\web_agent_test.db 时，并行跑两遍 pytest
 # 会互相覆盖同一个文件（还会在 import 期 unlink 掉对方正在用的库，Windows 上直接
 # 抛 PermissionError），表现为毫无关联的用例随机失败。按进程隔离即可各跑各的。
@@ -24,18 +28,21 @@ _TMP_DB = Path(tempfile.gettempdir()) / f"web_agent_test_{os.getpid()}.db"
 # SQLite 开了 WAL（见 app/config/db.py），会带出 -wal / -shm 两个副文件。
 # 只删主库、留着副文件，下一个进程打开时会把它们当成「已有事务的日志」——
 # 症状是莫名其妙的 "database is locked" 或读到不存在的行。一起清掉。
-for _stale in (
-    _TMP_DB,
-    _TMP_DB.with_name(_TMP_DB.name + "-wal"),
-    _TMP_DB.with_name(_TMP_DB.name + "-shm"),
-):
-    if _stale.exists():
-        try:
-            _stale.unlink()
-        except OSError:  # pragma: no cover - 上一次进程残留且被占用
-            pass
+if not _EXTERNAL_DATABASE_URL:
+    for _stale in (
+        _TMP_DB,
+        _TMP_DB.with_name(_TMP_DB.name + "-wal"),
+        _TMP_DB.with_name(_TMP_DB.name + "-shm"),
+    ):
+        if _stale.exists():
+            try:
+                _stale.unlink()
+            except OSError:  # pragma: no cover - 上一次进程残留且被占用
+                pass
 
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP_DB.as_posix()}"
+os.environ["DATABASE_URL"] = (
+    _EXTERNAL_DATABASE_URL or f"sqlite+aiosqlite:///{_TMP_DB.as_posix()}"
+)
 os.environ["SECRET_KEY"] = "test-secret-key-0123456789"
 os.environ["DEBUG"] = "false"
 # 管理员门禁的密钥（V4）。测试里要能以管理员身份调写接口；「未配置即拒绝」那条
@@ -114,6 +121,8 @@ def _isolate_module_db(_db_schema):
 def _cleanup_db_file():
     """会话结束后删掉本进程的测试库，不在系统临时目录留垃圾。"""
     yield
+    if _EXTERNAL_DATABASE_URL:
+        return
     try:
         _TMP_DB.unlink(missing_ok=True)
     except OSError:  # pragma: no cover - 仍有连接未释放
