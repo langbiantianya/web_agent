@@ -1,16 +1,17 @@
 # 测试
 
-运行全量测试。studio 服务与 studio e2e 使用真实子进程和固定测试端口，
-需要各自放在独立 pytest 进程里，避免 session 级 SQLite 留下技能/Agent 后污染
-下一次应用启动审计：
+推荐用固定 Python 3.11 的测试镜像运行全量测试，避免宿主解释器与二进制依赖不匹配：
 
-```powershell
-pytest -q --ignore=tests/test_studio_service.py --ignore=tests/test_studio_e2e.py
-pytest -q tests/test_studio_service.py
-pytest -q tests/test_studio_e2e.py
+```bash
+docker build -f Dockerfile.test -t webagent/tests:local .
+docker run --rm --memory=1200m --cpus=1 \
+  -v /var/run/docker.sock:/var/run/docker.sock webagent/tests:local
 ```
 
-测试库按进程号隔离，默认位于临时目录，避免并行 pytest 互相抢数据库。`conftest.py` 会强制关闭 Redis，需要 Redis 的用例自行建立连接。
+`.dockerignore` 排除 `.env`、Git、虚拟环境和测试数据库，测试镜像不会携带真实凭据。
+测试库按进程号隔离，默认位于临时目录；`conftest.py` 还会按模块清表，因此单进程
+全量测试不会把上一个模块的 Agent/Skill 带入下一次应用启动审计。需要 Redis 的用例
+自行建立连接。
 
 ## 测试层次
 
