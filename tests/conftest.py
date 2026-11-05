@@ -141,6 +141,23 @@ async def _clean_hub():
             pass
 
 
+@pytest.fixture(autouse=True)
+async def _reset_external_db_pool():
+    """外部 PostgreSQL 测试时，在每个用例结束后释放连接池。
+
+    pytest-asyncio 默认给每个用例创建一个事件循环，而 SQLAlchemy 的异步连接池
+    会缓存连接及其等待队列。池跨事件循环复用时会报
+    ``Queue is bound to a different event loop``。生产进程只有一个事件循环，
+    不需要这一步；外部数据库测试在用例边界 dispose，既保持池化行为可测，又
+    不把测试框架的 loop 隔离泄漏成业务失败。
+    """
+    yield
+    if _EXTERNAL_DATABASE_URL:
+        from app.config.db import engine
+
+        await engine.dispose()
+
+
 @pytest.fixture
 async def db():
     """请求外的独立 AsyncSession，用于直接断言 DB 事实。"""
