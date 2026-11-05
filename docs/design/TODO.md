@@ -17,9 +17,9 @@
 
 ## 隔离执行与供应链
 
-- [ ] **P1：镜像签名验证与自定义 seccomp**
-  dispatcher 已默认拒绝未固定 digest 的镜像，但尚未验证签名来源，也未加载项目自定义
-  seccomp profile。生产采用前需接入镜像签名策略并完成真实运行时回归。
+- [ ] **P1：自定义 seccomp**
+  dispatcher 已默认拒绝未固定 digest 的镜像，并使用运行时默认 seccomp profile；
+  尚未加载项目自定义 profile。生产采用前需完成自定义策略与真实运行时回归。
 
 - [ ] **P1：跨实例全局配额、预算与预热池**
   当前已有 studio 实例级、isolated 档级和静态技能级并发配额；尚未实现跨实例共享配额、
