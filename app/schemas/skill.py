@@ -23,6 +23,11 @@ class SkillSummaryOut(BaseModel):
     version: int
     content_hash: str
     enabled: bool
+    allowed_tools: str = ""
+    runtime_profile: str = "fast"
+    runtime_image: str = ""
+    runtime_available: bool = True
+    runtime_detail: str = ""
     # 哪些 Agent 绑着它——删技能前得先看一眼这个。
     used_by: list[str] = Field(default_factory=list)
 
@@ -49,6 +54,11 @@ class SkillOut(BaseModel):
     content_hash: str
     enabled: bool
     version: int
+    runtime_profile: str = "fast"
+    runtime_image: str = ""
+    runtime_available: bool = True
+    runtime_detail: str = ""
+    import_warnings: list[str] = Field(default_factory=list)
     used_by: list[str] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None

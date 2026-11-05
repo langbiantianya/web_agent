@@ -93,6 +93,8 @@ class Settings(BaseSettings):
     mcp_allow_private_networks: bool = False
     # 连接空闲多久后主动关闭。stdio 子进程必须回收，否则会攒出一堆僵尸进程。
     mcp_idle_timeout_sec: int = 300
+    # 周期巡检间隔。不能只依赖调用时清理：没有新调用时，旧子进程也应该被回收。
+    mcp_idle_sweep_interval_sec: float = 30.0
     # 单台服务器的并发调用上限（信号量）。避免把远端打爆。
     mcp_max_concurrency: int = 4
     # 连接失败时的重试次数（指数退避）。
@@ -159,6 +161,15 @@ class Settings(BaseSettings):
     # 审批暂停点互不可见，run 就永远卡在 waiting。与下面的 sensitive_model_path
     # 同一个口径。
     checkpoint_sqlite_path: str = "./checkpoints.db"
+    # 周期清理崩溃后遗留的 checkpoint。正常终态会立即删除；这里兜住进程在
+    # 删除前被硬杀、或数据库里已经找不到对应 run 的孤儿 thread。
+    checkpoint_cleanup_enabled: bool = True
+    checkpoint_cleanup_interval_sec: float = 300.0
+    # 找不到对应 run 的 thread 至少保留这么久，避免刚创建、DB 尚未提交的
+    # checkpoint 被误删。终态 run 的 thread 不受这个宽限期影响。
+    checkpoint_orphan_retention_sec: int = 86400
+    # 单次最多扫描多少条 checkpoint 记录，限制小内存机器上的瞬时开销。
+    checkpoint_cleanup_scan_limit: int = 1000
     # 审批决策的等待上限（秒）。**当前未启用**（设计文档 §16.10）：超时算通过
     # 还是算驳回尚未定，语义没定就不能自动收尾——那等于替审批人做决定。
     # 保留这一项是为了把「将来启用时需要什么」写下来，不是说它现在生效。

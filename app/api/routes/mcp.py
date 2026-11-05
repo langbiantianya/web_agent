@@ -58,7 +58,9 @@ def _to_out(server, tool_count: int = 0) -> McpServerOut:
         timeout_sec=server.timeout_sec or 30,
         enabled=bool(server.enabled),
         version=server.version or 1,
-        online=mcp_manager.is_available(server.code),
+        # “没有失败标记”不等于“当前有连接”：空闲巡检会主动关闭 stdio/远端连接，
+        # 下一次调用再惰性重连。这里展示真实的进程内连接状态。
+        online=mcp_manager.is_connected(server.code),
         unavailable_reason=mcp_manager.unavailable_reason(server.code),
         tool_count=tool_count,
         created_at=server.created_at,

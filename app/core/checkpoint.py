@@ -26,7 +26,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 _saver: Any | None = None
 _saver_cm: Any | None = None
+_cleanup_task: asyncio.Task | None = None
 
 
 def checkpoint_enabled() -> bool:
@@ -118,6 +121,7 @@ async def close_checkpointer() -> None:
     """关闭 checkpointer（应用退出时调用）。"""
     global _saver, _saver_cm
 
+    await stop_checkpoint_cleanup()
     if _saver_cm is not None:
         try:
             await _saver_cm.__aexit__(None, None, None)
@@ -184,3 +188,149 @@ async def delete_thread(run_id: int) -> None:
         await saver.adelete_thread(thread_id_for(run_id))
     except Exception:  # pragma: no cover - 清理失败不影响结果
         logger.exception("删除 run %s 的 checkpoint 失败", run_id)
+
+
+def _run_id_from_thread(thread_id: str) -> int | None:
+    """从 ``run-<id>`` thread 名解析 run id；其它 thread 不属于本服务。"""
+    if not thread_id.startswith("run-"):
+        return None
+    try:
+        return int(thread_id.removeprefix("run-"))
+    except ValueError:
+        return None
+
+
+def _checkpoint_time(tuple_) -> datetime | None:
+    """读取 checkpoint 的 UTC 时间；格式不认识时返回 None。"""
+    raw = (getattr(tuple_, "checkpoint", None) or {}).get("ts")
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+async def cleanup_orphan_checkpoints() -> int:
+    """清理终态 run 或超期无主 run 的 checkpoint thread。
+
+    正常路径会在 run 收尾时立即删除 thread。本巡检兜住三类失败：进程在删除前
+    被硬杀、删除调用临时失败、数据库记录已经不存在但 thread 仍留在存储里。
+
+    缺失 run 的 thread 必须超过 ``checkpoint_orphan_retention_sec`` 才删除，
+    避免 run 和 checkpoint 跨两个存储、写入有先后时误删刚创建的数据。
+
+    Returns:
+        成功删除的 thread 数。扫描或单项删除失败只记日志，不阻断服务。
+    """
+    saver = get_checkpointer()
+    if saver is None:
+        return 0
+
+    threads: dict[str, datetime | None] = {}
+    try:
+        async for item in saver.alist(
+            None, limit=max(1, settings.checkpoint_cleanup_scan_limit)
+        ):
+            config = getattr(item, "config", None) or {}
+            thread_id = (config.get("configurable") or {}).get("thread_id")
+            if not isinstance(thread_id, str):
+                continue
+            stamp = _checkpoint_time(item)
+            previous = threads.get(thread_id)
+            if previous is None or (stamp is not None and stamp > previous):
+                threads[thread_id] = stamp
+    except Exception:
+        logger.exception("扫描 checkpoint 失败")
+        return 0
+
+    run_ids = [
+        run_id
+        for thread_id in threads
+        if (run_id := _run_id_from_thread(thread_id)) is not None
+    ]
+    if not run_ids:
+        return 0
+
+    try:
+        import sqlalchemy as sa
+
+        from app.config.db import SessionLocal
+        from app.models.run import Run
+
+        async with SessionLocal() as db:
+            rows = await db.execute(
+                sa.select(Run.id, Run.status).where(Run.id.in_(run_ids))
+            )
+            statuses = {int(run_id): status for run_id, status in rows}
+    except Exception:
+        logger.exception("读取 checkpoint 对应 run 状态失败")
+        return 0
+
+    from app.models.enums import RunStatus
+
+    now = datetime.now(UTC)
+    terminal = {status.value for status in RunStatus if status.terminal}
+    retention = max(0, settings.checkpoint_orphan_retention_sec)
+    deleted = 0
+    for thread_id, stamp in threads.items():
+        run_id = _run_id_from_thread(thread_id)
+        if run_id is None:
+            continue
+        status = statuses.get(run_id)
+        should_delete = status in terminal
+        if status is None and stamp is not None:
+            should_delete = (now - stamp).total_seconds() >= retention
+        if not should_delete:
+            continue
+        try:
+            await saver.adelete_thread(thread_id)
+            deleted += 1
+        except Exception:
+            logger.exception("删除孤儿 checkpoint thread %s 失败", thread_id)
+    if deleted:
+        logger.info("已清理 %s 个孤儿 checkpoint thread", deleted)
+    return deleted
+
+
+def start_checkpoint_cleanup() -> None:
+    """启动周期清理任务；未启用 checkpointer 时为空操作。"""
+    global _cleanup_task
+
+    if not settings.checkpoint_enabled or not settings.checkpoint_cleanup_enabled:
+        return
+    if _cleanup_task is not None and not _cleanup_task.done():
+        return
+    interval = max(1.0, settings.checkpoint_cleanup_interval_sec)
+    _cleanup_task = asyncio.create_task(_checkpoint_cleanup_loop(interval))
+    logger.info("checkpoint 孤儿清理已启动，间隔 %.1f 秒", interval)
+
+
+async def _checkpoint_cleanup_loop(interval: float) -> None:
+    """周期清理；单轮失败不影响下一轮。"""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await cleanup_orphan_checkpoints()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("checkpoint 孤儿清理巡检失败（下一周期继续）")
+
+
+async def stop_checkpoint_cleanup() -> None:
+    """停止周期清理任务。"""
+    global _cleanup_task
+
+    task = _cleanup_task
+    _cleanup_task = None
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass

@@ -85,7 +85,8 @@ services:
       TMPDIR: "/tmp"
     # 只挂在内部网络里——**没有出网路径**（§7 / §11.1）。
     depends_on:
-      - studio-dispatcher
+      studio-dispatcher:
+        condition: service_healthy
     networks:
       - lab_internal
     ports:
@@ -146,6 +147,16 @@ services:
       # payload 目录：dispatcher 写、沙箱只读挂载。必须和宿主机同路径，
       # 否则 Docker daemon 解析容器 bind mount 时找不到文件。
       - /var/lib/studio-payloads:/var/lib/studio-payloads
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; assert urlopen('http://127.0.0.1:9100/health', timeout=2).status == 200"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
     read_only: true
     tmpfs:
       - /tmp:size=64m
@@ -171,7 +182,8 @@ services:
       - ../.env
     environment:
       # 容器里跑要连宿主机上已发布的 MySQL / Redis。
-      DATABASE_URL: "mysql+asyncmy://root:666666@host.docker.internal:3306/web_agent"
+      # 数据库口令只从部署环境注入，不能写进仓库或镜像。
+      DATABASE_URL: "mysql+asyncmy://${MYSQL_USER:-root}:${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}@host.docker.internal:3306/${MYSQL_DATABASE:-webagent}?charset=utf8mb4"
       REDIS_URL: "redis://host.docker.internal:6379/0"
       # studio 在内部网络里，服务名就是 DNS 名。
       STUDIO_EXEC_ADDR: "studio:9000"

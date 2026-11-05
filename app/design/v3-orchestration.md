@@ -303,8 +303,9 @@ checkpointer 里，图状态与事件流分工明确（前者管「停在哪」�
   判定，那是另一种设计。
 - **审批节点不能有超时自动通过/驳回**：`approval_timeout` 配置项已预留，但语义（超时算通过
   还是算驳回）没有定，因此没有启用。
-- **`checkpointer` 的数据没有清理策略**：只有 run 进终态时删对应 thread。进程崩溃留下的孤儿
-  thread 会一直在 Redis / SQLite 里——量很小，但确实没有兜底清理。
+- **`checkpointer` 已增加孤儿清理兜底**：run 进终态时仍立即删除对应 thread；应用启动和
+  周期巡检还会清理终态 run 与超过保留期的无主 thread，非 `run-<id>` thread 不处理。
+  实现与配置见 [V4.2](v4.2-admin-maintenance.md#3-checkpoint-孤儿治理)。
 
 ---
 

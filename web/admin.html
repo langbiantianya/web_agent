@@ -62,6 +62,11 @@
   button.primary:hover:not(:disabled) { background: #2b7cf3; }
   button.danger { border-color: #6e2b28; color: var(--red); }
   button.sm { padding: 4px 8px; font-size: 12px; }
+  .button-link {
+    display: inline-block; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px;
+    font-size: 13px; text-decoration: none;
+  }
 
   select, textarea, input[type=text], input[type=number], input[type=password] {
     width: 100%; background: var(--bg); color: var(--text);
@@ -169,6 +174,7 @@
 
 <nav>
   <button data-tab="agents" class="active">Agent 配置</button>
+  <button data-tab="skills">Skill 管理</button>
   <button data-tab="endpoints">LLM 接口</button>
   <button data-tab="workflows">Workflow 编排</button>
   <button data-tab="convs">会话观测</button>
@@ -184,6 +190,27 @@
     <div class="card">
       <h2 id="agentTitle">选择左侧 Agent，或新建一个</h2>
       <div class="body" id="agentForm"></div>
+    </div>
+  </section>
+
+  <!-- ==================================================== Skill 管理 -->
+  <section id="tab-skills" class="split hidden">
+    <div class="card">
+      <h2>Skill 列表 <span class="sp"><button class="sm primary" id="btnNewSkill">+ 新建</button></span></h2>
+      <div style="padding:10px 14px;border-bottom:1px solid var(--border)">
+        <label style="margin:0"><span>X-Admin-Key <span class="hint">（写入与导入需要）</span></span>
+          <input type="password" id="skAdminKey" autocomplete="current-password">
+        </label>
+        <div class="row" style="margin-top:8px">
+          <input type="file" id="skillImportFile" accept=".zip,application/zip" style="flex:1">
+          <button class="sm" id="btnImportSkill">导入 ZIP</button>
+        </div>
+      </div>
+      <div class="items" id="skillList"></div>
+    </div>
+    <div class="card">
+      <h2 id="skillTitle">选择左侧 Skill，或新建一个</h2>
+      <div class="body" id="skillForm"></div>
     </div>
   </section>
 
@@ -246,8 +273,9 @@
    会整片失效；列表项是 innerHTML 重绘出来的，委托一次就够，不必每次重绘重绑。 */
 
 const state = {
-  agents: [], wfs: [], convs: [], endpoints: [],
-  agent: null, wf: null, conv: null, endpoint: null, tools: [],
+  agents: [], skills: [], wfs: [], convs: [], endpoints: [],
+  skillResources: [], skillRevisions: [], skillImportWarnings: [],
+  agent: null, skill: null, wf: null, conv: null, endpoint: null, tools: [],
 };
 let adminKey = "";
 const $ = id => document.getElementById(id);
@@ -280,6 +308,35 @@ async function api(path, opts) {
   return body;
 }
 
+/** 上传 multipart 表单。不能复用 api()：它会强制设置 JSON Content-Type。 */
+async function apiUpload(path, form, opts) {
+  opts = opts || {};
+  const headers = {};
+  if (opts.admin && adminKey) headers["X-Admin-Key"] = adminKey;
+  const r = await fetch(path, { method: opts.method || "POST", headers, body: form });
+  const text = await r.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch (e) { body = null; }
+  if (!r.ok) throw new Error(errText(r, body));
+  return body;
+}
+
+/** 上传原始二进制资源；路径通过 header 传，避免 multipart 改变内容语义。 */
+async function apiBinary(path, blob, resourcePath, opts) {
+  opts = opts || {};
+  const headers = {
+    "Content-Type": "application/octet-stream",
+    "X-Resource-Path": resourcePath,
+  };
+  if (opts.admin && adminKey) headers["X-Admin-Key"] = adminKey;
+  const r = await fetch(path, { method: "PUT", headers, body: blob });
+  const text = await r.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch (e) { body = null; }
+  if (!r.ok) throw new Error(errText(r, body));
+  return body;
+}
+
 let toastTimer = null;
 function toast(msg, kind) {
   const el = $("toast");
@@ -305,7 +362,7 @@ const esc = s => String(s == null ? "" : s)
 const fmtTime = s => s ? new Date(s).toLocaleString("zh-CN", { hour12: false }) : "—";
 
 function switchTab(name) {
-  ["agents", "endpoints", "workflows", "convs"].forEach(t => {
+  ["agents", "skills", "endpoints", "workflows", "convs"].forEach(t => {
     $("tab-" + t).classList.toggle("hidden", t !== name);
   });
   document.querySelectorAll("nav button").forEach(b => {
@@ -362,6 +419,36 @@ function renderToolGroups(tools, picked) {
   return out.join("");
 }
 
+/** 技能绑定的 allowed-tools 只是提示，不扩大 Agent 的授权。 */
+function skillToolWarning(skill, agentTools) {
+  const declared = String(skill.allowed_tools || "")
+    .split(/\s+/)
+    .map(v => v.split("(", 1)[0].trim())
+    .filter(Boolean);
+  if (!declared.length) return "";
+  const allowed = new Set(agentTools.map(v => v.toLowerCase()));
+  const missing = declared.filter(v => !allowed.has(v.toLowerCase()));
+  return missing.length ? "未在 Agent 工具白名单：" + missing.join("、") : "";
+}
+
+/** 渲染可绑定技能；运行档不可用或停用的技能给出明确标记。 */
+function renderSkillPicks(skills, picked, agentTools) {
+  const usable = (skills || []).filter(s => s.enabled);
+  if (!usable.length) return '<div class="muted">还没有可绑定的启用技能</div>';
+  return usable.map(s => {
+    const warning = skillToolWarning(s, agentTools);
+    const runtime = s.runtime_profile === "isolated"
+      ? (s.runtime_available ? "isolated 可用" : "isolated 不可用")
+      : "fast";
+    return `
+      <label class="tool-pick">
+        <input type="checkbox" data-skill="${esc(s.code)}" ${picked.has(s.code) ? "checked" : ""}>
+        <span class="tn">${esc(s.code)}</span>
+        <span class="td">${esc(s.name)} · ${esc(runtime)}${s.runtime_detail ? " · " + esc(s.runtime_detail) : ""}${warning ? " · ⚠ " + esc(warning) : ""}</span>
+      </label>`;
+  }).join("");
+}
+
 async function loadAgents() {
   state.agents = await api("/api/agents?limit=200");
   const el = $("agentList");
@@ -394,6 +481,8 @@ function renderAgentForm() {
   // 工具勾选：选项来自服务端注册表，已勾的按 Agent 已存的名字回填
   const picked = new Set(Array.isArray(a.tools) ? a.tools : []);
   const toolRows = renderToolGroups(state.tools, picked);
+  const pickedSkills = new Set(Array.isArray(a.skills) ? a.skills : []);
+  const skillRows = renderSkillPicks(state.skills, pickedSkills, picked);
 
   box.innerHTML = `
     <div class="grid2">
@@ -410,6 +499,10 @@ function renderAgentForm() {
       <label><span>temperature <span class="hint">0.0 – 2.0</span></span>
         <input type="number" id="a_temp" step="0.05" min="0" max="2" value="${a.temperature != null ? a.temperature : 0.7}"></label>
       <label><span>max_tokens</span><input type="number" id="a_max" min="1" value="${a.max_tokens || 2048}"></label>
+    </div>
+    <div class="tool-sec">
+      <span class="tool-sec-hd">技能 <span class="hint">（技能正文进入 system prompt；allowed-tools 只提示，不授权）</span></span>
+      ${skillRows}
     </div>
     <div class="tool-sec">
       <span class="tool-sec-hd">工具 <span class="hint">（勾上后模型可调用；工具名即契约，写错的会在保存时被拒）</span></span>
@@ -440,6 +533,9 @@ async function saveAgent() {
     const tools = Array.from(
       document.querySelectorAll("#agentForm input[data-tool]:checked")
     ).map(i => i.dataset.tool);
+    const skills = Array.from(
+      document.querySelectorAll("#agentForm input[data-skill]:checked")
+    ).map(i => i.dataset.skill);
     const payload = {
       name: $("a_name").value.trim(),
       description: $("a_desc").value.trim(),
@@ -448,6 +544,7 @@ async function saveAgent() {
       temperature: parseFloat($("a_temp").value),
       max_tokens: parseInt($("a_max").value, 10),
       tools: tools.length ? tools : null,
+      skills: skills.length ? skills : [],
       extra_params: extra,
       enabled: $("a_on").checked,
     };
@@ -472,6 +569,247 @@ async function delAgent() {
     renderAgentForm();
     await loadAgents();
   }, "已删除");
+}
+
+// ------------------------------------------------------------ Skill 管理
+
+/** 加载技能列表；运行档状态由服务端根据 studio 能力计算。 */
+async function loadSkills() {
+  state.skills = await api("/api/skills?limit=500");
+  const el = $("skillList");
+  if (!state.skills.length) {
+    el.innerHTML = '<div class="muted" style="padding:14px">还没有 Skill</div>';
+    return;
+  }
+  el.innerHTML = state.skills.map(s => `
+    <div data-act="skill" data-code="${esc(s.code)}"
+         class="${state.skill && state.skill.id === s.id ? "sel" : ""}">
+      <div style="min-width:0">
+        <div class="nm">${esc(s.name)} <span class="sub">${esc(s.code)}</span></div>
+        <div class="sub">v${s.version} · ${esc(s.runtime_profile)}${s.used_by.length ? " · " + esc(s.used_by.join(", ")) : ""}</div>
+      </div>
+      <span class="tag ${s.runtime_available ? "ok" : "bad"}">${s.runtime_available ? "运行可用" : "运行不可用"}</span>
+      <span class="tag ${s.enabled ? "ok" : "warn"}">${s.enabled ? "启用" : "停用"}</span>
+    </div>`).join("");
+}
+
+/** 新建 Skill 草稿。 */
+function newSkill() {
+  state.skill = {
+    isNew: true, enabled: true, body: "", metadata: null,
+  };
+  state.skillResources = [];
+  state.skillRevisions = [];
+  state.skillImportWarnings = [];
+  renderSkillForm();
+}
+
+/** 读取 Skill 详情、资源与修订历史。 */
+async function editSkill(code) {
+  await guard(async () => {
+    const [skill, resources, revisions] = await Promise.all([
+      api("/api/skills/" + encodeURIComponent(code)),
+      api("/api/skills/" + encodeURIComponent(code) + "/resources"),
+      api("/api/skills/" + encodeURIComponent(code) + "/revisions"),
+    ]);
+    state.skill = skill;
+    state.skillResources = resources;
+    state.skillRevisions = revisions;
+    state.skillImportWarnings = [];
+    renderSkillForm();
+    await loadSkills();
+  });
+}
+
+/** 渲染 Skill 编辑、资源、修订与回滚区域。 */
+function renderSkillForm() {
+  const s = state.skill, box = $("skillForm");
+  if (!s) {
+    box.innerHTML = '<div class="muted">选择左侧 Skill，或新建一个。</div>';
+    return;
+  }
+  $("skillTitle").textContent = s.isNew ? "新建 Skill" : "编辑 " + s.code;
+  const runtime = s.runtime_profile
+    ? `${s.runtime_profile}${s.runtime_image ? " / " + s.runtime_image : ""} · ${s.runtime_detail || ""}`
+    : "fast";
+  const bound = (s.used_by || []).length
+    ? '<div class="muted">被 Agent 绑定：' + esc((s.used_by || []).join("、")) + "</div>"
+    : '<div class="muted">尚未被 Agent 绑定</div>';
+  const resources = state.skillResources.length
+    ? state.skillResources.map(r => `
+        <div class="row" style="margin-bottom:6px">
+          <a href="/api/skills/${encodeURIComponent(s.code)}/resources/${r.path.split("/").map(encodeURIComponent).join("/")}" target="_blank" style="flex:1">${esc(r.path)}</a>
+          <span class="muted">${r.size_bytes} B · ${esc(r.mime_type)}</span>
+          <button class="sm danger" data-act="del-resource" data-path="${esc(r.path)}">删除</button>
+        </div>`).join("")
+    : '<div class="muted">还没有资源</div>';
+  const revisions = state.skillRevisions.length
+    ? state.skillRevisions.map(r => `
+        <div class="row" style="margin-bottom:6px">
+          <span>v${r.version} · ${esc(r.note || "更新")} · ${esc(r.author || "")}</span>
+          <span class="muted">${fmtTime(r.created_at)} · ${r.resource_count} 个资源</span>
+          <button class="sm" data-act="rollback-skill" data-version="${r.version}">回滚</button>
+        </div>`).join("")
+    : '<div class="muted">暂无修订历史</div>';
+  const warnings = state.skillImportWarnings.length
+    ? `<div class="tool-sec"><span class="tool-sec-hd">导入风险提示</span>${state.skillImportWarnings.map(w => '<div class="muted">⚠ ' + esc(w) + "</div>").join("")}</div>`
+    : "";
+
+  box.innerHTML = `
+    <div class="grid2">
+      <label><span>code <span class="hint">（创建后不可改）</span></span>
+        <input type="text" id="s_code" value="${esc(s.code || "")}" ${s.isNew ? "" : "disabled"}></label>
+      <label><span>运行档</span><input type="text" value="${esc(runtime)}" disabled></label>
+    </div>
+    <label><span>description</span><input type="text" id="s_desc" value="${esc(s.description || "")}"></label>
+    <label><span>allowed-tools <span class="hint">（仅提示，不授予工具权限）</span></span>
+      <input type="text" id="s_allowed" value="${esc(s.allowed_tools || "")}"></label>
+    <label><span>metadata JSON <span class="hint">（runtime-profile / runtime-image / runtime-timeout-ms）</span></span>
+      <textarea id="s_metadata" rows="3">${esc(s.metadata ? JSON.stringify(s.metadata, null, 2) : "")}</textarea></label>
+    <label><span>SKILL.md 正文</span>
+      <textarea id="s_body" rows="10">${esc(s.body || "")}</textarea></label>
+    <label><span><input type="checkbox" id="s_on" ${s.enabled === false ? "" : "checked"} style="width:auto;margin-right:6px">启用</span></label>
+    ${warnings}
+    ${bound}
+    <div class="row" style="margin:10px 0">
+      <button class="primary" data-act="save-skill">保存</button>
+      ${s.isNew ? "" : '<a class="button-link" href="/api/skills/' + encodeURIComponent(s.code) + '/export" target="_blank">导出 ZIP</a>'}
+      ${s.isNew ? "" : '<button class="danger" data-act="del-skill">删除</button>'}
+    </div>
+    ${s.isNew ? "" : `
+      <div class="tool-sec">
+        <span class="tool-sec-hd">资源</span>
+        ${resources}
+        <div class="row" style="margin-top:8px">
+          <input type="file" id="s_resource_file" style="flex:1">
+          <input type="text" id="s_resource_path" placeholder="references/example.md" style="flex:1">
+          <button class="sm" data-act="upload-resource">上传资源</button>
+        </div>
+      </div>
+      <div class="tool-sec">
+        <span class="tool-sec-hd">修订历史</span>
+        ${revisions}
+      </div>`}`;
+}
+
+/** 创建或更新 Skill。 */
+async function saveSkill() {
+  await guard(async () => {
+    adminKey = $("skAdminKey").value.trim();
+    if (!adminKey) throw new Error("请先填写 X-Admin-Key");
+    let metadata = null;
+    const raw = $("s_metadata").value.trim();
+    if (raw) {
+      try { metadata = JSON.parse(raw); }
+      catch (e) { throw new Error("metadata 不是合法 JSON：" + e.message); }
+    }
+    const payload = {
+      description: $("s_desc").value.trim(),
+      allowed_tools: $("s_allowed").value.trim(),
+      metadata,
+      body: $("s_body").value,
+      enabled: $("s_on").checked,
+    };
+    const s = state.skill;
+    if (s.isNew) {
+      payload.code = $("s_code").value.trim();
+      state.skill = await api("/api/skills", {
+        method: "POST", body: payload, admin: true,
+      });
+    } else {
+      state.skill = await api("/api/skills/" + encodeURIComponent(s.code), {
+        method: "PUT", body: payload, admin: true,
+      });
+    }
+    state.skillImportWarnings = [];
+    await loadSkills();
+    await editSkill(state.skill.code);
+  }, "Skill 已保存");
+}
+
+/** 删除当前 Skill。 */
+async function deleteSkill() {
+  const s = state.skill;
+  if (!s || !confirm("删除 Skill「" + s.code + "」？")) return;
+  await guard(async () => {
+    await api("/api/skills/" + encodeURIComponent(s.code), {
+      method: "DELETE", admin: true,
+    });
+    state.skill = null;
+    state.skillResources = [];
+    state.skillRevisions = [];
+    renderSkillForm();
+    await loadSkills();
+  }, "Skill 已删除");
+}
+
+/** 导入 ZIP；响应里的静态风险提示保留在当前编辑页。 */
+async function importSkill() {
+  await guard(async () => {
+    adminKey = $("skAdminKey").value.trim();
+    if (!adminKey) throw new Error("请先填写 X-Admin-Key");
+    const file = $("skillImportFile").files[0];
+    if (!file) throw new Error("请选择技能 ZIP");
+    const form = new FormData();
+    form.append("file", file);
+    const imported = await apiUpload("/api/skills/import", form, { admin: true });
+    state.skill = imported;
+    state.skillImportWarnings = imported.import_warnings || [];
+    const [resources, revisions] = await Promise.all([
+      api("/api/skills/" + encodeURIComponent(imported.code) + "/resources"),
+      api("/api/skills/" + encodeURIComponent(imported.code) + "/revisions"),
+    ]);
+    state.skillResources = resources;
+    state.skillRevisions = revisions;
+    await loadSkills();
+    renderSkillForm();
+  }, "Skill 已导入");
+}
+
+/** 上传或替换 Skill 资源。 */
+async function uploadSkillResource() {
+  await guard(async () => {
+    adminKey = $("skAdminKey").value.trim();
+    if (!adminKey) throw new Error("请先填写 X-Admin-Key");
+    const file = $("s_resource_file").files[0];
+    const path = $("s_resource_path").value.trim() || (file ? file.name : "");
+    if (!file || !path) throw new Error("请选择文件并填写资源路径");
+    await apiBinary(
+      "/api/skills/" + encodeURIComponent(state.skill.code) + "/resources",
+      file,
+      path,
+      { admin: true },
+    );
+    await editSkill(state.skill.code);
+  }, "资源已上传");
+}
+
+/** 删除一个 Skill 资源。 */
+async function deleteSkillResource(path) {
+  await guard(async () => {
+    adminKey = $("skAdminKey").value.trim();
+    if (!adminKey) throw new Error("请先填写 X-Admin-Key");
+    await api(
+      "/api/skills/" + encodeURIComponent(state.skill.code) +
+        "/resources/" + path.split("/").map(encodeURIComponent).join("/"),
+      { method: "DELETE", admin: true },
+    );
+    await editSkill(state.skill.code);
+  }, "资源已删除");
+}
+
+/** 回滚到指定修订版本。 */
+async function rollbackSkill(version) {
+  await guard(async () => {
+    adminKey = $("skAdminKey").value.trim();
+    if (!adminKey) throw new Error("请先填写 X-Admin-Key");
+    if (!confirm("回滚到 v" + version + "？当前内容会生成一条新的修订记录。")) return;
+    await api(
+      "/api/skills/" + encodeURIComponent(state.skill.code) + "/rollback",
+      { method: "POST", body: { version }, admin: true },
+    );
+    await editSkill(state.skill.code);
+  }, "已回滚");
 }
 
 // ------------------------------------------------------------ LLM 接口
@@ -976,6 +1314,8 @@ document.querySelectorAll("nav button").forEach(b => {
 });
 $("btnRefresh").addEventListener("click", () => refreshAll());
 $("btnNewAgent").addEventListener("click", newAgent);
+$("btnNewSkill").addEventListener("click", newSkill);
+$("btnImportSkill").addEventListener("click", importSkill);
 $("btnNewEndpoint").addEventListener("click", newEndpoint);
 $("btnNewWf").addEventListener("click", newWorkflow);
 $("btnNewConv").addEventListener("click", newConv);
@@ -992,6 +1332,10 @@ function delegateList(id, handlers) {
 
 delegateList("agentList", el => {
   if (el.dataset.act === "agent") editAgent(el.dataset.code);
+});
+
+delegateList("skillList", el => {
+  if (el.dataset.act === "skill") editSkill(el.dataset.code);
 });
 
 delegateList("wfList", el => {
@@ -1019,6 +1363,14 @@ function wireEditor(id, map) {
 wireEditor("agentForm", {
   "save-agent": saveAgent,
   "del-agent": delAgent,
+});
+
+wireEditor("skillForm", {
+  "save-skill": saveSkill,
+  "del-skill": deleteSkill,
+  "upload-resource": uploadSkillResource,
+  "del-resource": el => deleteSkillResource(el.dataset.path),
+  "rollback-skill": el => rollbackSkill(parseInt(el.dataset.version, 10)),
 });
 
 wireEditor("wfForm", {
@@ -1092,12 +1444,13 @@ async function refreshAll() {
   });
 
   await guard(async () => {
-    // 工具目录要先拉：Agent 表单要从它渲染勾选项，Workflow 的编辑器要从
-    // Agent 列表取下拉选项，所以三个都得先就位。
+    // 工具、Skill、Agent 与 Workflow 有渲染依赖：Agent 表单同时需要工具目录
+    // 和技能列表，Workflow 编辑器需要 Agent 列表。
     await loadTools();
+    await Promise.all([loadSkills(), loadEndpoints(), loadWorkflows(), loadConvs()]);
     await loadAgents();
-    await Promise.all([loadEndpoints(), loadWorkflows(), loadConvs()]);
     renderAgentForm();
+    renderSkillForm();
     renderEndpointForm();
     renderWorkflowForm();
     if (state.conv) await renderConvDetail();

@@ -23,8 +23,14 @@ from app.api.router import api_router
 from app.config.db import dispose_engine
 from app.config.settings import settings
 from app.core.body_limit import BodySizeLimitMiddleware, scope_header
-from app.core.checkpoint import close_checkpointer, init_checkpointer
+from app.core.checkpoint import (
+    cleanup_orphan_checkpoints,
+    close_checkpointer,
+    init_checkpointer,
+    start_checkpoint_cleanup,
+)
 from app.core.errors import AppError
+from app.core.mcp.manager import mcp_manager
 from app.core.orchestrator import get_orchestrator, recover_stale_runs
 from app.core.redis_client import (
     connect_redis,
@@ -127,6 +133,15 @@ async def lifespan(app: FastAPI):
         except Exception:  # pragma: no cover - 数据库暂时不可用时不阻塞启动
             logger.exception("启动时恢复遗留 run 失败（数据库可能尚未就绪）")
 
+        # 启动恢复把崩溃前的 running run 标成 error 之后，再清掉 checkpointer
+        # 里对应的暂停点。周期任务继续兜住删除失败与其它无主 thread。
+        try:
+            await cleanup_orphan_checkpoints()
+        except Exception:  # pragma: no cover - 清理失败不阻塞启动
+            logger.exception("启动时清理 checkpoint 孤儿失败")
+        start_checkpoint_cleanup()
+        mcp_manager.start_idle_reaper()
+
         # studio 脚本执行（V4，§22.8.6）。配了地址但连不上 → **启动失败**：
         # studio 是部署的一个组成部分，它挂了说明部署不完整，让问题在部署时暴露，
         # 而不是等到用户的一次 run 里才炸。
@@ -200,6 +215,7 @@ async def _close_resources() -> None:
         # studio 通道排在编排器**之后**：编排器要取消还在跑的 run 任务，
         # 那些任务可能正在调 studio——通道先关了，调用会变成「连不上」。
         ("studio 连接", close_studio_client),
+        ("MCP 连接", mcp_manager.shutdown),
         ("审批暂停点", close_checkpointer),
         ("Redis 连接", disconnect_redis),
         ("数据库连接池", dispose_engine),

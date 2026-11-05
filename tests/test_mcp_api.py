@@ -99,6 +99,7 @@ async def test_create_http_server(client):
     assert data["transport"] == "http"
     # 凭据只回显键名，值绝不回显
     assert data["header_keys"] == ["Authorization"]
+    assert data["online"] is False
     assert "secret-token" not in resp.text
 
 

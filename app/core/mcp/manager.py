@@ -65,6 +65,7 @@ class McpConnection:
         self._ready = asyncio.Event()
         self._error: Exception | None = None
         self._last_used = time.monotonic()
+        self._inflight = 0
         self._lock = asyncio.Lock()
         # 并发上限：避免把远端打爆（§21.7）。
         self._semaphore = asyncio.Semaphore(settings.mcp_max_concurrency)
@@ -201,31 +202,36 @@ class McpConnection:
         Raises:
             McpConnectionError: 重试用尽仍失败。
         """
-        attempts = (settings.mcp_max_retries if retries is None else retries) + 1
-        last: Exception | None = None
-        for attempt in range(1, attempts + 1):
-            try:
-                return await self._request_once(method, **kwargs)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                last = exc
-                # 连接本身断了才值得重试；参数错、工具不存在这类重试也没用。
-                if not self._is_connection_failure(exc):
-                    raise McpConnectionError(str(exc)) from exc
-                logger.warning(
-                    "MCP %s 调用失败（第 %s/%s 次）：%s",
-                    self.code,
-                    attempt,
-                    attempts,
-                    exc,
-                )
-                await self.close()
-                if attempt < attempts:
-                    await asyncio.sleep(0.2 * (2 ** (attempt - 1)))
-        raise McpConnectionError(
-            f"MCP 服务器「{self.code}」不可用：{last}"
-        ) from last
+        self._inflight += 1
+        try:
+            attempts = (settings.mcp_max_retries if retries is None else retries) + 1
+            last: Exception | None = None
+            for attempt in range(1, attempts + 1):
+                try:
+                    return await self._request_once(method, **kwargs)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    last = exc
+                    # 连接本身断了才值得重试；参数错、工具不存在这类重试也没用。
+                    if not self._is_connection_failure(exc):
+                        raise McpConnectionError(str(exc)) from exc
+                    logger.warning(
+                        "MCP %s 调用失败（第 %s/%s 次）：%s",
+                        self.code,
+                        attempt,
+                        attempts,
+                        exc,
+                    )
+                    await self.close()
+                    if attempt < attempts:
+                        await asyncio.sleep(0.2 * (2 ** (attempt - 1)))
+            raise McpConnectionError(
+                f"MCP 服务器「{self.code}」不可用：{last}"
+            ) from last
+        finally:
+            self._inflight -= 1
+            self._last_used = time.monotonic()
 
     async def _request_once(self, method: str, **kwargs) -> Any:
         """发一次请求。"""
@@ -388,7 +394,10 @@ class McpClientManager:
         stale: list[McpConnection] = []
         async with self._lock:
             for code, conn in list(self._connections.items()):
-                if now - conn._last_used > timeout:  # noqa: SLF001
+                if (
+                    conn._inflight == 0  # noqa: SLF001
+                    and now - conn._last_used > timeout  # noqa: SLF001
+                ):
                     stale.append(conn)
                     self._connections.pop(code, None)
         for conn in stale:
@@ -397,6 +406,44 @@ class McpClientManager:
             except Exception:  # pragma: no cover
                 logger.warning("关闭空闲 MCP 连接 %s 失败", conn.code, exc_info=True)
         return len(stale)
+
+    def start_idle_reaper(self) -> None:
+        """启动周期回收任务；重复调用不会创建第二条任务。"""
+        if self._sweeper is not None and not self._sweeper.done():
+            return
+        interval = max(0.1, settings.mcp_idle_sweep_interval_sec)
+        self._sweeper = asyncio.create_task(self._idle_reaper_loop(interval))
+        logger.info("MCP 空闲连接巡检已启动，间隔 %.1f 秒", interval)
+
+    async def _idle_reaper_loop(self, interval: float) -> None:
+        """周期调用 :meth:`close_idle`；单次失败不终止巡检。"""
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                closed = await self.close_idle()
+                if closed:
+                    logger.info("已回收 %s 条空闲 MCP 连接", closed)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("MCP 空闲连接巡检失败（下一周期继续）")
+
+    async def stop_idle_reaper(self) -> None:
+        """停止周期回收任务。"""
+        task = self._sweeper
+        self._sweeper = None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def shutdown(self) -> None:
+        """停止巡检并关闭全部连接，供应用生命周期调用。"""
+        await self.stop_idle_reaper()
+        await self.close_all()
 
     def is_connected(self, server_code: str) -> bool:
         """这台服务器当前有没有活连接。

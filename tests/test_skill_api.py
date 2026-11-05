@@ -286,6 +286,27 @@ async def test_put_and_read_resource(client):
     assert "指标口径" in content.text
 
 
+async def test_resource_upload_accepts_put_for_admin_page(client):
+    """管理页用 PUT 上传原始字节；旧客户端仍可继续用 POST。"""
+    created = await client.post(
+        "/api/skills",
+        json={"code": "resput", "description": "d", "body": "b"},
+        headers=ADMIN_HEADERS,
+    )
+    assert created.status_code == 201, created.text
+
+    resp = await client.put(
+        "/api/skills/resput/resources",
+        content=b"put-payload",
+        params={"path": "references/put.md"},
+        headers={**ADMIN_HEADERS, "Content-Type": "application/octet-stream"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["path"] == "references/put.md"
+    fetched = await client.get("/api/skills/resput/resources/references/put.md")
+    assert fetched.text == "put-payload"
+
+
 async def test_put_resource_with_invalid_path_rejected(client):
     """路径格式非法 → 400。"""
     await client.post(

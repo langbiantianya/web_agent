@@ -45,6 +45,10 @@ os.environ["ADMIN_KEY"] = "test-admin-key"
 os.environ["EVENT_BATCH_SIZE"] = "5"
 os.environ["EVENT_FLUSH_INTERVAL"] = "0.02"
 os.environ["NODE_RETRY_BASE_DELAY"] = "0.01"
+# gRPC 的 C 核心在首次 import 时读取这个变量。测试进程会把 studio 子进程测试与
+# 普通 asyncio 用例混跑；不在这里关掉 fork 支持，子进程可能继承其它线程正在使用
+# 的 gRPC 状态并在 exec 前 abort。
+os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "0"
 # 审批暂停点（V3.1）也按进程隔离：checkpointer 的 SQLite 文件留在项目根目录会
 # 变成跨次运行共享的状态，审批用例之间会互相看到对方的暂停点。
 os.environ["CHECKPOINT_SQLITE_PATH"] = str(

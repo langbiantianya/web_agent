@@ -21,8 +21,14 @@ STUDIO_EXEC_REQUIRED=true
 
 ```bash
 cp .env.example .env
+# 在 .env 或部署环境中填写 MYSQL_PASSWORD；不要提交该文件
 docker compose -f deploy/docker-compose.lab.yml up -d --build
 ```
+
+实验栈要求 `MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE` 从环境注入。
+`MYSQL_PASSWORD` 为空时 Compose 会直接报错，避免把测试口令写回仓库。
+dispatcher 提供 `/health` Docker healthcheck，studio 会等待它 healthy 后再启动；
+studio 自身也会在 isolated 启动预算内重试，覆盖慢启动竞态。
 
 如需在容器内运行 isolated 档，先构建 sandbox 镜像，再启动实验栈。具体环境变量和构建顺序见 compose 文件头部说明。
 

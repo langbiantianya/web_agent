@@ -1,9 +1,13 @@
 # 测试
 
-运行全量测试：
+运行全量测试。studio 服务与 studio e2e 使用真实子进程和固定测试端口，
+需要各自放在独立 pytest 进程里，避免 session 级 SQLite 留下技能/Agent 后污染
+下一次应用启动审计：
 
-```bash
-pytest -q
+```powershell
+pytest -q --ignore=tests/test_studio_service.py --ignore=tests/test_studio_e2e.py
+pytest -q tests/test_studio_service.py
+pytest -q tests/test_studio_e2e.py
 ```
 
 测试库按进程号隔离，默认位于临时目录，避免并行 pytest 互相抢数据库。`conftest.py` 会强制关闭 Redis，需要 Redis 的用例自行建立连接。

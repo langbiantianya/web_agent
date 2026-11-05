@@ -356,7 +356,8 @@ OPTIONAL_TOOLS: dict[str, ToolSpec] = {
             "在 studio 容器里执行技能包里的脚本（scripts/ 下的文件）。"
             "脚本跑在独立的受限容器里：没有凭据、不能出网、有时间与资源上限，"
             "跑挂了也不会影响主服务。参数以数组给出，不会被 shell 解析。"
-            "返回退出码与 stdout/stderr。"
+            "声明 isolated 的技能会启动一次性容器，可能额外耗时数秒；"
+            "毫秒级纯计算应优先使用内置工具。返回退出码与 stdout/stderr。"
         ),
         parameters={
             "type": "object",

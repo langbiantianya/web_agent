@@ -6,7 +6,7 @@
 
 | 项 | 当前版本 | 状态 |
 | --- | --- | --- |
-| web_agent 主服务 | V4.1 | 已实现 |
+| web_agent 主服务 | V4.2 | 已实现 |
 | MCP 工具 | V4 | 已实现 |
 | Skill 指令包与资源工具 | V4 | 已实现 |
 | studio fast 档 | V4 | 已实现并验证 |
@@ -27,6 +27,7 @@
 | [V3：编排、审批、工具与安全](../../app/design/v3-orchestration.md) | DAG、条件边、人工审批、工具闭环、PostgreSQL、敏感内容过滤 |
 | [V4：MCP、Skill 与脚本执行](../../app/design/v4-tools-skills.md) | MCP、Skill、studio 调用侧、真实验收 |
 | [V4.1：数据库 LLM 接口与故障切换](../../app/design/v4.1-llm-endpoints.md) | 多接口优先级、加密 Key、失败切换 |
+| [V4.2：后台治理与运行期维护](../../app/design/v4.2-admin-maintenance.md) | Skill 后台、MCP 空闲回收、checkpoint 孤儿清理、测试隔离 |
 
 ### studio 服务
 
@@ -65,6 +66,7 @@
 | V4 | MCP stdio/Streamable HTTP、MCP 工具目录、Skill 指令包、`skill_resource`、`skill_exec` | 工具来源不再局限于代码注册表；MCP 不再使用已废弃的 HTTP+SSE 双端点传输 | 已完成 |
 | V4 isolated | studio → dispatcher → 一次性 sandbox、档位能力协商、独立并发池、真 Docker 加固和五场景验证 | isolated 不再只是骨架；禁止静默降级到 fast | Docker 已完成 |
 | V4.1 | 独立 `llm_endpoint` 配置表、加密 Key、优先级排序、请求失败自动切换 | 模型接口地址与 Key 不再要求绑定在单个 Agent 上；新配置优先于兼容字段 | 已完成 |
+| V4.2 | Skill 管理后台、导入风险与运行档展示、`allowed-tools` 差异提示、MCP 空闲回收、checkpoint 孤儿清理 | 基础设施与 API 已有但缺少运营入口或周期治理；gRPC 测试污染固化在测试入口处理 | 已完成 |
 
 ## 已移除、已替换或明确不做
 
@@ -81,6 +83,9 @@
 | MCP `resources` / `prompts` | 当前只接 tools | 尚未实现，已列入 TODO，不属于“已完成” |
 | MCP OAuth | 当前只用静态 header | 尚未实现，已列入 TODO |
 | 每个 Agent 只能使用一个模型接口 | 使用数据库 `llm_endpoint` 优先级链 | 主接口失败时自动切换，同时保留旧 Agent 字段兼容升级 |
+| Skill 只能通过 API 或脚本维护 | 后台覆盖 CRUD、ZIP、资源、修订和 Agent 绑定 | 配置即数据需要与可操作的管理界面配套 |
+| MCP 连接只靠进程退出释放 | 应用生命周期内周期回收空闲连接 | 避免 stdio 子进程和远端会话长期驻留 |
+| checkpoint 只依赖 run 正常收尾删除 | 启动与周期巡检清理终态、过期无主 thread | 进程崩溃和删除失败需要兜底 |
 
 ## 阅读路径
 
@@ -97,6 +102,7 @@
 | Redis 多实例、租约、LangGraph | [V2](../../app/design/v2-multi-instance.md) |
 | DAG、审批、工具、敏感过滤 | [V3](../../app/design/v3-orchestration.md) |
 | MCP、Skill、脚本执行调用侧 | [V4](../../app/design/v4-tools-skills.md) |
+| Skill 管理后台、运行期资源回收 | [V4.2](../../app/design/v4.2-admin-maintenance.md) |
 | studio 协议、隔离、资源限制 | [studio V4](../../services/studio/design/v4-current.md) |
 | 下一步开发 | [TODO](TODO.md) |
 

@@ -40,7 +40,13 @@ from app.core.skill_pack import (
     render_skill_md,
 )
 from app.core.skill_paths import SkillPathError, validate_resource_path
-from app.core.skill_runtime import SkillRuntimeError, parse_skill_runtime
+from app.core.skill_risk import scan_skill_risks
+from app.core.skill_runtime import (
+    REQUIRED_ISOLATED_STUDIO_VERSION,
+    SkillRuntimeError,
+    parse_skill_runtime,
+    runtime_from_skill,
+)
 from app.repo.skill_repo import skill_repo
 from app.schemas.skill import (
     SkillCreate,
@@ -82,7 +88,48 @@ def _validate_runtime_metadata(metadata: dict | None) -> None:
         raise BadRequestError(f"运行档声明不合法：{exc}") from exc
 
 
-def _to_out(skill, used_by: list[str] | None = None) -> SkillOut:
+def _runtime_status(skill) -> tuple[str, str, bool, str]:
+    """计算技能运行档在当前部署是否可用。"""
+    try:
+        runtime = runtime_from_skill(skill)
+    except SkillRuntimeError as exc:
+        return "invalid", "", False, f"运行档声明非法：{exc}"
+    if not runtime.is_isolated:
+        return runtime.profile, runtime.image, True, runtime.describe()
+
+    from app.core.studio import get_studio_client, version_at_least
+
+    client = get_studio_client()
+    health = client.health_info if client is not None else None
+    if health is None:
+        return runtime.profile, runtime.image, False, "studio 未启用或未连接"
+    if not getattr(health, "supports_isolated", False):
+        return runtime.profile, runtime.image, False, "studio 没有可用 sandbox 运行时"
+    if not version_at_least(
+        getattr(health, "version", ""), REQUIRED_ISOLATED_STUDIO_VERSION
+    ):
+        return (
+            runtime.profile,
+            runtime.image,
+            False,
+            f"需要 studio >= {REQUIRED_ISOLATED_STUDIO_VERSION}",
+        )
+    if runtime.image and health.image(runtime.image) is None:
+        return runtime.profile, runtime.image, False, f"镜像「{runtime.image}」未登记"
+    detail = runtime.describe()
+    if runtime.image:
+        image = health.image(runtime.image)
+        if image is not None and getattr(image, "digest", ""):
+            detail += f"，digest={image.digest}"
+    return runtime.profile, runtime.image, True, detail
+
+
+def _to_out(
+    skill,
+    used_by: list[str] | None = None,
+    *,
+    import_warnings: list[str] | None = None,
+) -> SkillOut:
     """ORM ``Skill`` → 对外响应模型。
 
     库表列大多可空，而响应模型里这些字段是必填非空——这里统一兜默认值，
@@ -95,6 +142,7 @@ def _to_out(skill, used_by: list[str] | None = None) -> SkillOut:
     Returns:
         ``SkillOut``。
     """
+    profile, image, available, detail = _runtime_status(skill)
     return SkillOut(
         id=skill.id,
         code=skill.code,
@@ -109,6 +157,11 @@ def _to_out(skill, used_by: list[str] | None = None) -> SkillOut:
         content_hash=skill.content_hash or "",
         enabled=bool(skill.enabled),
         version=skill.version or 1,
+        runtime_profile=profile,
+        runtime_image=image,
+        runtime_available=available,
+        runtime_detail=detail,
+        import_warnings=import_warnings or [],
         used_by=used_by or [],
         created_at=skill.created_at,
         updated_at=skill.updated_at,
@@ -202,19 +255,27 @@ async def list_skills(
     """技能列表。带上被哪些 Agent 绑定——删技能前得先看一眼这个。"""
     rows = await skill_repo.list(db, only_enabled=only_enabled, limit=limit, offset=offset)
     used_by = await _used_by_map(db)
-    return [
-        SkillSummaryOut(
-            code=s.code,
-            name=s.name or s.code,
-            description=s.description or "",
-            origin=s.origin or "manual",
-            version=s.version or 1,
-            content_hash=s.content_hash or "",
-            enabled=bool(s.enabled),
-            used_by=used_by.get(s.code, []),
+    out: list[SkillSummaryOut] = []
+    for skill in rows:
+        profile, image, available, detail = _runtime_status(skill)
+        out.append(
+            SkillSummaryOut(
+                code=skill.code,
+                name=skill.name or skill.code,
+                description=skill.description or "",
+                origin=skill.origin or "manual",
+                version=skill.version or 1,
+                content_hash=skill.content_hash or "",
+                enabled=bool(skill.enabled),
+                allowed_tools=skill.allowed_tools or "",
+                runtime_profile=profile,
+                runtime_image=image,
+                runtime_available=available,
+                runtime_detail=detail,
+                used_by=used_by.get(skill.code, []),
+            )
         )
-        for s in rows
-    ]
+    return out
 
 
 @router.get("/{code}", response_model=SkillOut)
@@ -411,6 +472,7 @@ async def delete_skill(code: str, db: DbSession, author: AdminDep) -> None:
 
 
 @router.post("/{code}/resources", response_model=SkillResourceOut, status_code=201)
+@router.put("/{code}/resources", response_model=SkillResourceOut, status_code=201)
 async def put_skill_resource(
     code: str,
     db: DbSession,
@@ -432,6 +494,7 @@ async def put_skill_resource(
     会拿 JSON 去解析它然后报 400。
 
     路径放 query 参数或 ``X-Resource-Path`` 头里都行，query 优先。
+    ``POST`` 保留给旧客户端；管理页使用幂等语义更明确的 ``PUT``。
     """
     skill = await skill_repo.get_by_code(db, code)
     if skill is None:
@@ -530,6 +593,7 @@ async def import_skill(
             f"技能资源总量超过 {MAX_SKILL_RESOURCE_BYTES} 字节上限"
         )
 
+    warnings = scan_skill_risks(package.body, package.resources)
     skill = await skill_repo.create(
         db,
         code=code,
@@ -559,7 +623,7 @@ async def import_skill(
         db, code, {"content_hash": await _hash_for(db, skill)}, bump_version=False
     )
     await _write_revision(db, skill, author, "导入")
-    return _to_out(skill, [])
+    return _to_out(skill, [], import_warnings=warnings)
 
 
 @router.post("/import/entries", response_model=SkillOut, status_code=201)
@@ -615,6 +679,7 @@ async def import_skill_entries(
             f"技能资源总量超过 {MAX_SKILL_RESOURCE_BYTES} 字节上限"
         )
 
+    warnings = scan_skill_risks(parsed.body, resources)
     skill = await skill_repo.create(
         db,
         code=code,
@@ -642,7 +707,7 @@ async def import_skill_entries(
         db, code, {"content_hash": await _hash_for(db, skill)}, bump_version=False
     )
     await _write_revision(db, skill, author, "导入（目录结构）")
-    return _to_out(skill, [])
+    return _to_out(skill, [], import_warnings=warnings)
 
 
 @router.post("/{code}/rollback", response_model=SkillOut)

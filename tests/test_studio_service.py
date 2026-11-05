@@ -452,6 +452,27 @@ async def test_graceful_shutdown_drops_readiness_before_draining():
             task.cancel()
 
 
+async def test_dispatcher_startup_probe_retries_transient_failure():
+    """dispatcher 容器刚启动时，studio 会在预算内重试而不是永久降级。"""
+    from services.studio import _wait_for_dispatcher
+
+    class _Runtime:
+        """前一次探活失败、第二次成功的 dispatcher 桩。"""
+
+        def __init__(self) -> None:
+            """初始化调用计数。"""
+            self.calls = 0
+
+        async def health(self, timeout: float = 2.0) -> bool:
+            """模拟端口尚未监听到已经可用的过程。"""
+            self.calls += 1
+            return self.calls >= 2
+
+    runtime = _Runtime()
+    assert await _wait_for_dispatcher(runtime, 1000) is True
+    assert runtime.calls == 2
+
+
 @pytest.mark.skipif(
     os.name == "nt", reason="启动巡检依赖 /proc，Windows 上没有"
 )

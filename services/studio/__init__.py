@@ -77,6 +77,34 @@ def _install_signal_handlers(
             return
 
 
+async def _wait_for_dispatcher(runtime, budget_ms: int) -> bool:
+    """在启动预算内等待 dispatcher 就绪。
+
+    Compose 只保证容器启动顺序，不保证监听端口已经就绪。Dispatcher 与
+    studio 同时拉起时，给一次失败就永久标记 isolated 不可用会造成竞态；
+    因此这里按短退避重试，直到健康探测成功或启动预算耗尽。
+
+    Args:
+        runtime: 带异步 ``health(timeout=...)`` 的 dispatcher 客户端。
+        budget_ms: 最长等待时间（毫秒）。
+
+    Returns:
+        预算内探测成功返回 True，否则返回 False。
+    """
+    budget = max(0.0, budget_ms / 1000.0)
+    deadline = asyncio.get_running_loop().time() + budget
+    delay = 0.2
+    while True:
+        remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+        if await runtime.health(timeout=max(0.1, min(2.0, remaining or 0.1))):
+            return True
+        remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(delay, remaining))
+        delay = min(1.0, delay * 2)
+
+
 async def serve(
     config: StudioConfig | None = None,
     stop_event: asyncio.Event | None = None,
@@ -126,7 +154,7 @@ async def serve(
         from services.studio.dispatcher_runtime import DispatcherRuntime
 
         candidate = DispatcherRuntime(cfg.isolated_dispatcher_addr)
-        if await candidate.health():
+        if await _wait_for_dispatcher(candidate, cfg.isolated_startup_budget_ms):
             runtime = candidate
         else:
             logger.warning(
