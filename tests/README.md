@@ -5,13 +5,18 @@
 ```bash
 docker build -f Dockerfile.test -t webagent/tests:local .
 docker run --rm --memory=1200m --cpus=1 \
-  -v /var/run/docker.sock:/var/run/docker.sock webagent/tests:local
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /tmp:/tmp webagent/tests:local
 ```
 
 `.dockerignore` 排除 `.env`、Git、虚拟环境和测试数据库，测试镜像不会携带真实凭据。
 测试库按进程号隔离，默认位于临时目录；`conftest.py` 还会按模块清表，因此单进程
 全量测试不会把上一个模块的 Agent/Skill 带入下一次应用启动审计。需要 Redis 的用例
 自行建立连接。
+
+如果测试容器通过宿主 Docker socket 启动 sibling 沙箱，`/tmp` 必须按相同绝对路径
+挂载。Docker daemon 解析 bind mount 时看的是宿主文件系统；只挂 socket 会让沙箱读不到
+测试生成的 `payload.json`，表现为 `sandbox_result_lost`。
 
 ## 测试层次
 

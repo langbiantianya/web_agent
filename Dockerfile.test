@@ -5,7 +5,12 @@
 #
 # docker build -f Dockerfile.test -t webagent/tests:local .
 # docker run --rm --memory=1200m --cpus=1 \
-#   -v /var/run/docker.sock:/var/run/docker.sock webagent/tests:local
+#   -v /var/run/docker.sock:/var/run/docker.sock \
+#   -v /tmp:/tmp webagent/tests:local
+#
+# ``/tmp`` 必须与宿主同路径挂载：测试容器通过宿主 Docker daemon 启动 sibling
+# 沙箱时，payload 路径会由 daemon 在宿主文件系统解析。只挂 socket 会让 sibling
+# 看不到测试容器里的 /tmp 路径。
 
 FROM node:20.18.1-bookworm-slim AS node
 

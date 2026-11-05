@@ -344,6 +344,13 @@ def run_script(payload: dict) -> dict:
             out_reader.join(timeout=2)
             err_reader.join(timeout=2)
 
+        # 小脚本可能在主循环下一次检查前就退出，此时 drain 线程已经看到了
+        # 超过上限的字节，但循环条件 ``proc.poll() is None`` 不再成立。
+        # 最终状态必须再检查一次，否则同一个超限结果会随机表现成 completed。
+        if status == "completed" and (out.overflow or err.overflow):
+            status = "limited"
+            error_code = "output_limit"
+
         exit_code = proc.returncode if proc.returncode is not None else -1
         # runner 的子脚本和 runner 在同一个 sandbox cgroup 里。脚本被 OOM
         # killer 杀掉时，容器不会整体退出，所以只有 cgroup 计数能可靠区分
