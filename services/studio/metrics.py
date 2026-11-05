@@ -428,6 +428,9 @@ class StudioMetrics:
         sandbox_start: 沙箱启动耗时（``profile`` / ``image``）。
         sandbox_total: 沙箱阶段计数（``phase`` / ``profile``）。
         sandbox_duration: 沙箱执行耗时（``image`` / ``status``）。
+        sandbox_cpu_seconds: 沙箱 CPU 秒数（``profile`` / ``image``）。
+        sandbox_peak_memory_bytes: 沙箱内存峰值（``profile`` / ``image``）。
+        estimated_cost_total: 按配置费率估算的成本单位。
         registry: 底层的注册表（渲染用）。
     """
 
@@ -442,6 +445,9 @@ class StudioMetrics:
     sandbox_start: Histogram
     sandbox_total: Counter
     sandbox_duration: Histogram
+    sandbox_cpu_seconds: Histogram
+    sandbox_peak_memory_bytes: Histogram
+    estimated_cost_total: Counter
     registry: MetricsRegistry
 
 
@@ -495,6 +501,31 @@ def build_metrics() -> StudioMetrics:
             "sandbox_duration_seconds",
             "沙箱执行耗时（秒）",
             ("image", "status"),
+        ),
+        sandbox_cpu_seconds=registry.histogram(
+            "sandbox_cpu_seconds",
+            "沙箱 cgroup CPU 时间（秒）",
+            ("profile", "image"),
+            (0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0),
+        ),
+        sandbox_peak_memory_bytes=registry.histogram(
+            "sandbox_peak_memory_bytes",
+            "沙箱 cgroup 内存峰值（字节）",
+            ("profile", "image"),
+            (
+                16 * 1024 * 1024,
+                32 * 1024 * 1024,
+                64 * 1024 * 1024,
+                128 * 1024 * 1024,
+                256 * 1024 * 1024,
+                512 * 1024 * 1024,
+                1024 * 1024 * 1024,
+            ),
+        ),
+        estimated_cost_total=registry.counter(
+            "studio_estimated_cost_total",
+            "按部署费率估算的执行成本单位",
+            ("tenant", "skill", "profile"),
         ),
         registry=registry,
     )

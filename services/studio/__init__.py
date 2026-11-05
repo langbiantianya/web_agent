@@ -165,7 +165,9 @@ async def serve(
     svc = (
         service
         if service is not None
-        else StudioService(cfg, isolated_runtime=runtime)
+        else StudioService(
+            cfg, isolated_runtime=runtime, admission_runtime=runtime
+        )
     )
     if killed_orphans:
         # 巡检发现的残留进程数（§12.1 的 studio_orphan_process_total）。

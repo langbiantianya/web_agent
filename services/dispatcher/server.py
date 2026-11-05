@@ -21,6 +21,7 @@ from typing import Any
 
 from services.dispatcher.backend import SandboxBackend, SandboxError
 from services.dispatcher.config import DispatcherConfig
+from services.dispatcher.quota import QuotaExceeded, QuotaManager
 from services.sandbox.protocol import (
     MAX_ARGV_ITEMS,
     MAX_ARGV_ITEM_CHARS,
@@ -93,6 +94,7 @@ def _validate_spec(data: dict[str, Any], config: DispatcherConfig) -> SandboxSpe
         raise _HttpError(400, "image_unknown", f"镜像目录里没有「{image}」")
     return SandboxSpec(
         skill=str(data.get("skill") or ""),
+        tenant_id=str(data.get("tenant_id") or "default")[:64],
         script=str(data.get("script") or ""),
         language=language,
         content=content,
@@ -119,6 +121,12 @@ class DispatcherServer:
         self.backend = backend
         self._server: asyncio.AbstractServer | None = None
         self._semaphore = asyncio.Semaphore(config.max_inflight)
+        self.quota = QuotaManager(
+            tenant_quotas=dict(config.tenant_quotas),
+            skill_quotas=dict(config.skill_quotas),
+            tenant_budgets=dict(config.tenant_budgets),
+            skill_budgets=dict(config.skill_budgets),
+        )
 
     async def start(self) -> asyncio.AbstractServer:
         """开始监听。
@@ -219,6 +227,48 @@ class DispatcherServer:
                 "ready": bool(ready),
                 "version": self.config.version,
                 "max_inflight": self.config.max_inflight,
+                "quota_active": self.quota.active,
+                "quota_active_cost": self.quota.active_cost,
+            }
+        if method == "POST" and path == "/v1/quota/acquire":
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise _HttpError(400, "invalid_request", f"非法 JSON：{exc}") from exc
+            if not isinstance(data, dict):
+                raise _HttpError(400, "invalid_request", "请求体必须是 JSON 对象")
+            try:
+                cost = float(data.get("cost") or 1.0)
+                lease_ms = int(data.get("lease_ms") or 180_000)
+            except (TypeError, ValueError) as exc:
+                raise _HttpError(400, "invalid_request", "cost/lease_ms 非法") from exc
+            try:
+                lease = self.quota.acquire(
+                    tenant_id=str(data.get("tenant_id") or "default"),
+                    skill=str(data.get("skill") or "unknown"),
+                    cost=cost,
+                    lease_ms=lease_ms,
+                )
+            except QuotaExceeded as exc:
+                raise _HttpError(429, "quota_exceeded", str(exc)) from exc
+            return 200, {
+                "lease_id": lease.lease_id,
+                "expires_in_ms": max(
+                    0, int((lease.expires_at - asyncio.get_running_loop().time()) * 1000)
+                ),
+                "cost": lease.cost,
+            }
+        if method == "POST" and path == "/v1/quota/release":
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise _HttpError(400, "invalid_request", f"非法 JSON：{exc}") from exc
+            lease_id = str(data.get("lease_id") or "") if isinstance(data, dict) else ""
+            if not lease_id:
+                raise _HttpError(400, "invalid_request", "缺少 lease_id")
+            return 200, {
+                "released": self.quota.release(lease_id),
+                "lease_id": lease_id,
             }
         if method == "POST" and path.startswith("/v1/exec/") and path.endswith("/cancel"):
             execution_id = path[len("/v1/exec/"):-len("/cancel")]
@@ -269,6 +319,7 @@ class DispatcherServer:
             404: "Not Found",
             408: "Request Timeout",
             413: "Payload Too Large",
+            429: "Too Many Requests",
             500: "Internal Server Error",
             503: "Service Unavailable",
             504: "Gateway Timeout",
@@ -310,6 +361,9 @@ async def serve(
     cfg = config or DispatcherConfig.from_env()
     cfg.validate()
     be = backend if backend is not None else DockerBackend(cfg)
+    prepare = getattr(be, "prepare", None)
+    if prepare is not None:
+        await prepare()
     server = DispatcherServer(cfg, be)
     await server.start()
     logger.info(

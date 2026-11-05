@@ -77,16 +77,51 @@ class _FakeDocker:
     def __init__(self, container: _FakeContainer) -> None:
         """建 containers。"""
         self.containers = _FakeContainers(container)
+        self.images = _FakeImages()
 
     def ping(self) -> bool:
         """假的探活。"""
         return True
 
 
+class _FakeImages:
+    """记录预热调用。"""
+
+    def __init__(self) -> None:
+        self.gets: list[str] = []
+        self.pulls: list[str] = []
+
+    def get(self, ref: str) -> object:
+        """默认所有目录镜像都已存在。"""
+        self.gets.append(ref)
+        return object()
+
+    def pull(self, ref: str) -> object:
+        """模拟拉取。"""
+        self.pulls.append(ref)
+        return object()
+
+
 def _backend(
     container: _FakeContainer, payload_dir: Path
 ) -> tuple[DockerBackend, _FakeDocker]:
     """造一个后端，把 Docker 客户端换成假的。"""
+    profile = payload_dir.parent / "seccomp-profile.json"
+    profile.write_text(
+        json.dumps(
+            {
+                "defaultAction": "SCMP_ACT_ALLOW",
+                "syscalls": [
+                    {
+                        "names": ["ptrace"],
+                        "action": "SCMP_ACT_ERRNO",
+                        "errnoRet": 1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     backend = DockerBackend(
         DispatcherConfig(
             images=(
@@ -96,6 +131,7 @@ def _backend(
                 ),
             ),
             payload_dir=str(payload_dir),
+            seccomp_profile=str(profile),
         )
     )
     fake = _FakeDocker(container)
@@ -133,6 +169,7 @@ def test_container_template_is_fixed_and_hardened(tmp_path):
     assert kwargs["working_dir"] == "/app"
     assert kwargs["cap_drop"] == ["ALL"]
     assert "no-new-privileges" in kwargs["security_opt"]
+    assert any(item.startswith("seccomp=") for item in kwargs["security_opt"])
     assert kwargs["pids_limit"] == 256
     assert kwargs["mem_limit"] == "512m"
     assert "SECRET" not in json.dumps(kwargs["environment"])
@@ -141,6 +178,35 @@ def test_container_template_is_fixed_and_hardened(tmp_path):
     assert mount["mode"] == "ro"
     assert container.started is True
     assert container.removed is True
+
+
+async def test_prepare_materializes_profile_and_prewarms_images(tmp_path):
+    """Docker daemon 可见目录里要有 profile，镜像目录要在启动期预热。"""
+    container = _FakeContainer()
+    backend, fake = _backend(container, tmp_path)
+    await backend.prepare()
+    profiles = list(tmp_path.glob(".webagent-seccomp-*.json"))
+    assert len(profiles) == 1
+    assert json.loads(profiles[0].read_text(encoding="utf-8"))[
+        "defaultAction"
+    ] == "SCMP_ACT_ALLOW"
+    assert fake.images.gets == ["registry/sandbox@sha256:" + "a" * 64]
+    assert fake.images.pulls == []
+
+
+def test_missing_seccomp_profile_fails_closed(tmp_path):
+    """生产默认要求自定义 profile；文件缺失时不能静默退回默认 profile。"""
+    backend = DockerBackend(
+        DispatcherConfig(
+            images=(("default", "registry/sandbox@sha256:" + "a" * 64),),
+            payload_dir=str(tmp_path),
+            seccomp_profile=str(tmp_path / "missing.json"),
+        )
+    )
+    backend._docker = lambda: _FakeDocker(_FakeContainer())  # noqa: SLF001
+    with pytest.raises(SandboxError) as excinfo:
+        backend._prepare_sync()  # noqa: SLF001
+    assert excinfo.value.code == "sandbox_unavailable"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="验证 POSIX 文件权限")

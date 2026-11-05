@@ -161,6 +161,9 @@ class StudioConfig:
             ``sandbox_start_timeout``，不要让它把脚本时限耗光。
         skill_quotas: 技能级并发配额 ``((skill_code, max_concurrency), ...)``。
         skill_queue: 每个技能独立等待队列深度。
+        cpu_second_rate: 每个 CPU 秒的计价单位；用于估算而不是供应商账单。
+        memory_gib_second_rate: 每个 GiB·秒的计价单位。
+        sandbox_start_rate: 每次沙箱启动的固定计价单位。
         version: 服务版本，报在 ``HealthResponse`` 里。请求带档位、响应回显档位
             是 2.0.0 起的语义，``STUDIO_EXEC_MIN_VERSION`` 据此卡。
         languages: 本实例支持的运行时。
@@ -190,6 +193,9 @@ class StudioConfig:
     isolated_startup_budget_ms: int = 15000
     skill_quotas: tuple[tuple[str, int], ...] = ()
     skill_queue: int = 4
+    cpu_second_rate: float = 0.0
+    memory_gib_second_rate: float = 0.0
+    sandbox_start_rate: float = 0.0
     version: str = "2.0.0"
     languages: tuple[str, ...] = field(default_factory=detect_languages)
 
@@ -277,5 +283,10 @@ class StudioConfig:
             ),
             skill_quotas=_env_quota_pairs("STUDIO_SKILL_QUOTAS"),
             skill_queue=_env_int("STUDIO_SKILL_QUEUE", 4),
+            cpu_second_rate=_env_float("STUDIO_CPU_SECOND_RATE", 0.0),
+            memory_gib_second_rate=_env_float(
+                "STUDIO_MEMORY_GIB_SECOND_RATE", 0.0
+            ),
+            sandbox_start_rate=_env_float("STUDIO_SANDBOX_START_RATE", 0.0),
             version=os.environ.get("STUDIO_VERSION", "2.0.0").strip() or "2.0.0",
         )

@@ -613,6 +613,7 @@ class AgentRunner:
                 node_id=str(self.node_id),
                 tool_call_id=tool_call_id,
                 traceparent=child_traceparent(),
+                tenant_id=getattr(self.agent, "tenant_id", "default"),
             )
         )
         try:
@@ -627,6 +628,9 @@ class AgentRunner:
                             name,
                             arguments,
                             allowed=self._allowed_tools(),
+                            tenant_id=getattr(
+                                self.agent, "tenant_id", "default"
+                            ),
                         ),
                         timeout=policy.timeout_sec,
                     )
@@ -808,7 +812,8 @@ class AgentRunner:
         tools = await build_openai_tools(
             enabled_tool_names(
                 known_tool_names(self.agent.tools), self.agent.tool_policy
-            )
+            ),
+            tenant_id=getattr(self.agent, "tenant_id", "default"),
         )
         if tools:
             kwargs["tools"] = tools

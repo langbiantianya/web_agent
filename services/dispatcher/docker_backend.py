@@ -12,7 +12,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import logging
 import os
 import secrets
 import shutil
@@ -30,6 +32,8 @@ from services.sandbox.protocol import (
     build_payload,
     parse_frames,
 )
+
+logger = logging.getLogger(__name__)
 
 # 容器内的 payload 路径（与 runner 的默认值一致）。
 _PAYLOAD_DIR = "/run/sandbox"
@@ -66,6 +70,7 @@ class DockerBackend:
         self._lock = threading.Lock()
         self._containers: dict[str, object] = {}
         self._cancelled: set[str] = set()
+        self._seccomp_path: str | None = None
 
     def _docker(self):  # noqa: ANN202 - 返回 docker.DockerClient
         """懒创建 Docker 客户端。
@@ -98,6 +103,77 @@ class DockerBackend:
             return bool(await asyncio.to_thread(lambda: self._docker().ping()))
         except Exception:  # noqa: BLE001
             return False
+
+    async def prepare(self) -> None:
+        """启动期预热镜像并准备 Docker daemon 可见的 seccomp profile。
+
+        Raises:
+            SandboxError: profile 非法，或镜像无法在启动预算内准备好。
+        """
+        await asyncio.to_thread(self._prepare_sync)
+
+    def _prepare_sync(self) -> None:
+        """同步准备动作，供启动期和首个请求兜底使用。"""
+        self._seccomp_path_sync()
+        if not self.config.prewarm_images:
+            return
+        client = self._docker()
+        for name, ref in self.config.images:
+            try:
+                client.images.get(ref)
+            except Exception:  # noqa: BLE001 - 各 SDK/引擎异常类型不统一
+                try:
+                    logger.info("预热镜像：%s", ref)
+                    client.images.pull(ref)
+                except Exception as exc:  # noqa: BLE001
+                    raise SandboxError(
+                        f"镜像「{name}」预热失败：{exc}",
+                        code="sandbox_unavailable",
+                    ) from exc
+
+    def _seccomp_path_sync(self) -> str | None:
+        """把容器内 profile 复制到 Docker daemon 可见目录。
+
+        Docker Engine 用宿主文件系统解析 ``seccomp=<path>``。dispatcher 容器里的
+        ``/etc/webagent/...`` 对 daemon 不可见，而 payload 目录在两边的绝对路径
+        相同，因此把 profile 写到那里再把这个路径交给 daemon。
+
+        Returns:
+            宿主机可见的 profile 路径；关闭自定义 profile 时返回 ``None``。
+        """
+        if self._seccomp_path is not None:
+            return self._seccomp_path
+        if not self.config.require_custom_seccomp:
+            return None
+        source = Path(self.config.seccomp_profile)
+        try:
+            raw = source.read_bytes()
+            data = json.loads(raw.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SandboxError(
+                f"读取 seccomp profile 失败：{source}（{exc}）",
+                code="sandbox_unavailable",
+            ) from exc
+        if not isinstance(data, dict) or not data.get("defaultAction"):
+            raise SandboxError(
+                f"seccomp profile 形状非法：{source}",
+                code="sandbox_unavailable",
+            )
+        digest = hashlib.sha256(raw).hexdigest()[:16]
+        payload_dir = Path(self.config.payload_dir)
+        try:
+            payload_dir.mkdir(parents=True, exist_ok=True)
+            target = payload_dir / f".webagent-seccomp-{digest}.json"
+            if not target.exists() or target.read_bytes() != raw:
+                target.write_bytes(raw)
+                os.chmod(target, 0o644)
+            self._seccomp_path = str(target)
+            return self._seccomp_path
+        except OSError as exc:
+            raise SandboxError(
+                f"准备 seccomp profile 失败：{exc}",
+                code="sandbox_unavailable",
+            ) from exc
 
     async def close(self) -> None:
         """关掉客户端。"""
@@ -174,8 +250,13 @@ class DockerBackend:
         exec_dir: Path | None = None
         started_at = time.monotonic()
         startup_ms = 0
+        image_startup_ms = 0
         timed_out = False
         try:
+            seccomp_path = self._seccomp_path_sync()
+            security_opt = ["no-new-privileges"]
+            if seccomp_path:
+                security_opt.append(f"seccomp={seccomp_path}")
             # payload 写在 dispatcher 的目录里，再以**只读 bind mount** 挂进沙箱。
             # 这个目录必须对 Docker daemon 可见（lab 里从宿主机 bind mount 进来）；
             # 为什么不用 put_archive：read-only rootfs 下写容器文件系统会被 Docker 拒。
@@ -200,7 +281,7 @@ class DockerBackend:
                     # runner 在 /tmp 下另建，不会把用户文件写进只读 rootfs。
                     working_dir="/app",
                     cap_drop=["ALL"],
-                    security_opt=["no-new-privileges"],
+                    security_opt=security_opt,
                     pids_limit=_PIDS_LIMIT,
                     mem_limit=_MEMORY_LIMIT,
                     nano_cpus=_CPU_LIMIT,
@@ -222,12 +303,16 @@ class DockerBackend:
             with self._lock:
                 self._containers[execution_id] = container
 
+            image_started_at = time.monotonic()
             try:
                 container.start()
             except Exception as exc:  # noqa: BLE001
                 raise SandboxError(
                     f"启动沙箱失败：{exc}", code="sandbox_start_failed"
                 ) from exc
+            image_startup_ms = int(
+                (time.monotonic() - image_started_at) * 1000
+            )
             startup_ms = int((time.monotonic() - started_at) * 1000)
 
             # 启动时间也算在调用方的时限里（§8.1「从发出算起」）。
@@ -245,6 +330,7 @@ class DockerBackend:
                             (time.monotonic() - started_at) * 1000
                         ),
                         startup_ms=startup_ms,
+                        image_startup_ms=image_startup_ms,
                         sandbox_id=(container.id or "")[:12],
                     )
                 elapsed = time.monotonic() - started_at
@@ -278,6 +364,7 @@ class DockerBackend:
                     error_code="sandbox_timeout",
                     duration_ms=elapsed_ms,
                     startup_ms=startup_ms,
+                    image_startup_ms=image_startup_ms,
                     sandbox_id=(container.id or "")[:12],
                 )
             if execution_id in self._cancelled:
@@ -288,6 +375,7 @@ class DockerBackend:
                     error_code="cancelled",
                     duration_ms=elapsed_ms,
                     startup_ms=startup_ms,
+                    image_startup_ms=image_startup_ms,
                     sandbox_id=(container.id or "")[:12],
                 )
             if oom:
@@ -298,6 +386,7 @@ class DockerBackend:
                     error_code="sandbox_oom",
                     duration_ms=elapsed_ms,
                     startup_ms=startup_ms,
+                    image_startup_ms=image_startup_ms,
                     sandbox_id=(container.id or "")[:12],
                 )
             try:
@@ -318,6 +407,7 @@ class DockerBackend:
                     error_code="sandbox_result_lost",
                     duration_ms=elapsed_ms,
                     startup_ms=startup_ms,
+                    image_startup_ms=image_startup_ms,
                     sandbox_id=(container.id or "")[:12],
                 )
 
@@ -347,7 +437,10 @@ class DockerBackend:
                 ),
                 error_code=error_code,
                 startup_ms=startup_ms,
+                image_startup_ms=image_startup_ms,
                 sandbox_id=(container.id or "")[:12],
+                cpu_seconds=float(parsed.get("cpu_seconds") or 0),
+                peak_memory_bytes=int(parsed.get("peak_memory_bytes") or 0),
             )
         finally:
             with self._lock:

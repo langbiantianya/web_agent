@@ -27,6 +27,14 @@ class McpServerBase(BaseModel):
     timeout_sec: int = Field(default=30, ge=1, le=600)
     allow_tools: list[str] | None = None
     enabled: bool = True
+    auth_type: str = Field(
+        default="static", pattern="^(none|static|oauth_client_credentials)$"
+    )
+    oauth_token_url: str | None = Field(default=None, max_length=512)
+    oauth_revocation_url: str | None = Field(default=None, max_length=512)
+    oauth_client_id: str | None = Field(default=None, max_length=256)
+    oauth_scopes: list[str] | None = None
+    oauth_resource: str | None = Field(default=None, max_length=512)
 
 
 class McpServerCreate(McpServerBase):
@@ -42,6 +50,7 @@ class McpServerCreate(McpServerBase):
     env: dict[str, str] | None = None
     url: str | None = Field(default=None, max_length=512)
     headers: dict[str, str] | None = None
+    oauth_client_secret: str | None = Field(default=None, max_length=4096)
 
 
 class McpServerUpdate(BaseModel):
@@ -56,6 +65,15 @@ class McpServerUpdate(BaseModel):
     env: dict[str, str] | None = None
     url: str | None = Field(default=None, max_length=512)
     headers: dict[str, str] | None = None
+    auth_type: str | None = Field(
+        default=None, pattern="^(none|static|oauth_client_credentials)$"
+    )
+    oauth_token_url: str | None = Field(default=None, max_length=512)
+    oauth_revocation_url: str | None = Field(default=None, max_length=512)
+    oauth_client_id: str | None = Field(default=None, max_length=256)
+    oauth_client_secret: str | None = Field(default=None, max_length=4096)
+    oauth_scopes: list[str] | None = None
+    oauth_resource: str | None = Field(default=None, max_length=512)
 
 
 class McpServerOut(BaseModel):
@@ -67,6 +85,7 @@ class McpServerOut(BaseModel):
 
     id: int
     code: str
+    tenant_id: str = "default"
     name: str
     transport: str
     command: str | None = None
@@ -74,6 +93,14 @@ class McpServerOut(BaseModel):
     env_keys: list[str] = Field(default_factory=list)
     url: str | None = None
     header_keys: list[str] = Field(default_factory=list)
+    auth_type: str = "static"
+    oauth_token_url: str | None = None
+    oauth_revocation_url: str | None = None
+    oauth_client_id: str | None = None
+    oauth_scopes: list[str] | None = None
+    oauth_resource: str | None = None
+    oauth_configured: bool = False
+    oauth_token_expires_at: datetime | None = None
     allow_tools: list[str] | None = None
     timeout_sec: int = 30
     enabled: bool = True
@@ -148,10 +175,19 @@ class McpPromptGetIn(BaseModel):
     arguments: dict[str, str] | None = None
 
 
+class McpOAuthRevokeOut(BaseModel):
+    """OAuth 撤销结果。"""
+
+    server: str
+    local_tokens_cleared: bool = True
+    remote_revoked: bool = False
+
+
 __all__ = [
     "McpPromptGetIn",
     "McpPromptGetOut",
     "McpPromptOut",
+    "McpOAuthRevokeOut",
     "McpRefreshOut",
     "McpResourceContentOut",
     "McpResourceOut",

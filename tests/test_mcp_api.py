@@ -53,6 +53,7 @@ def allow_stdio(monkeypatch):
         ("put", "/api/mcp/servers/whatever"),
         ("delete", "/api/mcp/servers/whatever"),
         ("post", "/api/mcp/servers/whatever/refresh"),
+        ("post", "/api/mcp/servers/whatever/oauth/revoke"),
         ("get", "/api/mcp/servers/whatever/tools"),
     ],
 )

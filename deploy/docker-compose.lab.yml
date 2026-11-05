@@ -77,6 +77,11 @@ services:
       # 可选技能级并发配额：格式 skill-a=1,skill-b=2。
       STUDIO_SKILL_QUOTAS: ""
       STUDIO_SKILL_QUEUE: "4"
+      # 成本费率是部署计价单位，不写死货币。真实 CPU/内存由沙箱 cgroup 采集；
+      # 这里只负责把资源换算成账单可聚合的成本单位。
+      STUDIO_CPU_SECOND_RATE: "0"
+      STUDIO_MEMORY_GIB_SECOND_RATE: "0"
+      STUDIO_SANDBOX_START_RATE: "0"
       # 沙箱调度器的地址；空 = 本实例没有 isolated 运行时。Phase 1 起
       # `studio-dispatcher` 会作为独立容器提供它。
       STUDIO_ISOLATED_DISPATCHER_ADDR: "studio-dispatcher:9100"
@@ -142,6 +147,16 @@ services:
       DISPATCHER_IMAGES: "default=webagent/studio-sandbox:1.0.0"
       # 本地刚构建的镜像通常只有 tag；生产必须改为 image@sha256:<digest> 并设 true。
       DISPATCHER_REQUIRE_DIGEST: "false"
+      # 自定义 seccomp 与镜像预热默认开启。profile 会由 dispatcher 复制到
+      # Docker daemon 可见的 payload 目录后传给容器。
+      DISPATCHER_REQUIRE_CUSTOM_SECCOMP: "true"
+      DISPATCHER_PREWARM_IMAGES: "true"
+      # 所有 studio 实例共享本 dispatcher 的准入控制：
+      # 格式 tenant=并发数、skill=并发数、tenant/skill=成本单位上限。
+      DISPATCHER_TENANT_QUOTAS: ""
+      DISPATCHER_SKILL_QUOTAS: ""
+      DISPATCHER_TENANT_BUDGETS: ""
+      DISPATCHER_SKILL_BUDGETS: ""
       # payload 目录：必须对 Docker daemon 可见（下面从宿主机同路径挂进来）。
       DISPATCHER_PAYLOAD_DIR: "/var/lib/studio-payloads"
     networks:

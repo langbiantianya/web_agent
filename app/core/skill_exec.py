@@ -351,6 +351,7 @@ async def exec_skill_script(
             run_id=ctx.run_id if ctx else "",
             node_id=ctx.node_id if ctx else "",
             request_id=request_id,
+            tenant_id=ctx.tenant_id if ctx else "default",
         )
     except StudioError as exc:
         # studio 不可用 / 超时 / 参数被拒——都是**服务级**问题，回灌给模型，

@@ -92,6 +92,10 @@ def build_exec_log(
     profile: str = "",
     image: str = "",
     startup_ms: int = 0,
+    image_startup_ms: int = 0,
+    cpu_seconds: float = 0.0,
+    peak_memory_bytes: int = 0,
+    estimated_cost: float = 0.0,
     error_code: str = "",
     level: str = "info",
     ts: str | None = None,
@@ -115,6 +119,10 @@ def build_exec_log(
         profile: 实际档位（``fast`` / ``isolated``）。
         image: 镜像目录名（isolated 才有意义）。
         startup_ms: 沙箱启动耗时（fast 为 0）。
+        image_startup_ms: 容器启动调用本身的耗时。
+        cpu_seconds: cgroup CPU 秒数。
+        peak_memory_bytes: cgroup 内存峰值。
+        estimated_cost: 按部署费率估算的成本单位。
         error_code: 机器可读的失败码。
         level: 日志级别。
         ts: 时间戳（ISO 8601）；不给就用当前时间。
@@ -142,6 +150,10 @@ def build_exec_log(
         "profile": profile,
         "image": image,
         "startup_ms": startup_ms,
+        "image_startup_ms": image_startup_ms,
+        "cpu_seconds": cpu_seconds,
+        "peak_memory_bytes": peak_memory_bytes,
+        "estimated_cost": estimated_cost,
         "error_code": error_code,
     }
     return json.dumps(payload, ensure_ascii=False)

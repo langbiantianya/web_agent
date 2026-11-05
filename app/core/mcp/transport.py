@@ -297,6 +297,26 @@ def check_command_allowed(command: str) -> None:
 # --------------------------------------------------------------- 连接建立
 
 
+async def http_headers(server) -> dict[str, str]:
+    """Build decrypted HTTP headers, injecting an OAuth bearer token if needed."""
+    from app.core.crypto import decrypt
+
+    headers = {
+        key: decrypt(value) for key, value in (server.headers or {}).items()
+    }
+    if server.auth_type == "oauth_client_credentials":
+        from app.core.mcp.oauth import McpOAuthError, access_token
+
+        try:
+            token = await access_token(server)
+        except McpOAuthError as exc:
+            raise McpTransportError(
+                f"MCP 服务器「{server.code}」OAuth 认证失败：{exc}"
+            ) from exc
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 @asynccontextmanager
 async def open_transport(server) -> AsyncIterator[tuple[Any, Any]]:
     """建立一条到 MCP 服务器的连接，产出 ``(读流, 写流)``。
@@ -310,9 +330,9 @@ async def open_transport(server) -> AsyncIterator[tuple[Any, Any]]:
     Raises:
         McpTransportError: 配置非法或地址被策略拦下。
     """
-    from app.core.crypto import decrypt
-
     if server.transport == "stdio":
+        from app.core.crypto import decrypt
+
         if not server.command:
             raise McpTransportError(f"MCP 服务器「{server.code}」没有配置启动命令")
         check_command_allowed(server.command)
@@ -339,9 +359,7 @@ async def open_transport(server) -> AsyncIterator[tuple[Any, Any]]:
         if not server.url:
             raise McpTransportError(f"MCP 服务器「{server.code}」没有配置端点 URL")
         await check_url_allowed(server.url)
-        headers = {
-            key: decrypt(value) for key, value in (server.headers or {}).items()
-        }
+        headers = await http_headers(server)
         # httpx2 是 MCP SDK 2.x 用的 httpx 分支（与本项目自己用的 httpx 1.x
         # 并存）。延迟导入，避免把一个 SDK 内部依赖写进模块顶层。
         import httpx2

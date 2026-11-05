@@ -123,6 +123,9 @@ class ExecOutcome:
         startup_ms: 沙箱启动耗时（毫秒）；fast 档恒为 0。
         error_code: 机器可读的失败码（``timeout`` / ``limited`` / ...），
             没有失败是空串。调用方按它分支，不靠匹配人话。
+        image_startup_ms: 容器启动调用的耗时（毫秒）。
+        cpu_seconds: 沙箱 cgroup 统计的 CPU 秒数。
+        peak_memory_bytes: 沙箱 cgroup 统计的内存峰值。
     """
 
     status: str
@@ -138,6 +141,9 @@ class ExecOutcome:
     failure_reason: str = ""
     startup_ms: int = 0
     error_code: str = ""
+    image_startup_ms: int = 0
+    cpu_seconds: float = 0.0
+    peak_memory_bytes: int = 0
 
 
 def _build_env(cwd: str) -> dict[str, str]:

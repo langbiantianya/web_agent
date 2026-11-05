@@ -160,6 +160,9 @@ def test_build_metrics_registers_the_whole_table():
         "sandbox_start_seconds",
         "sandbox_total",
         "sandbox_duration_seconds",
+        "sandbox_cpu_seconds",
+        "sandbox_peak_memory_bytes",
+        "studio_estimated_cost_total",
     ):
         assert f"# TYPE {name} " in text, name
 

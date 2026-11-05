@@ -18,6 +18,7 @@ from app.core.crypto import encrypt
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.mcp.catalog import McpCatalogError, refresh_catalog
 from app.core.mcp.manager import mcp_manager
+from app.core.mcp.oauth import McpOAuthError, revoke as revoke_oauth
 from app.core.mcp.transport import McpTransportError, check_command_allowed, check_url_allowed
 from app.models.mcp_server import TRANSPORT_HTTP, TRANSPORT_STDIO
 from app.repo.mcp_repo import mcp_server_repo, mcp_tool_repo
@@ -25,6 +26,7 @@ from app.schemas.mcp import (
     McpPromptGetOut,
     McpPromptGetIn,
     McpPromptOut,
+    McpOAuthRevokeOut,
     McpRefreshOut,
     McpResourceContentOut,
     McpResourceOut,
@@ -52,6 +54,7 @@ def _to_out(server, tool_count: int = 0) -> McpServerOut:
     return McpServerOut(
         id=server.id,
         code=server.code,
+        tenant_id=server.tenant_id or "default",
         name=server.name or server.code,
         transport=server.transport,
         command=server.command,
@@ -59,6 +62,16 @@ def _to_out(server, tool_count: int = 0) -> McpServerOut:
         env_keys=sorted((server.env or {}).keys()),
         url=server.url,
         header_keys=sorted((server.headers or {}).keys()),
+        auth_type=server.auth_type or "static",
+        oauth_token_url=server.oauth_token_url,
+        oauth_revocation_url=server.oauth_revocation_url,
+        oauth_client_id=server.oauth_client_id,
+        oauth_scopes=list(server.oauth_scopes or []) or None,
+        oauth_resource=server.oauth_resource,
+        oauth_configured=bool(
+            server.oauth_client_secret_cipher or server.oauth_access_token_cipher
+        ),
+        oauth_token_expires_at=server.oauth_expires_at,
         allow_tools=list(server.allow_tools or []) or None,
         timeout_sec=server.timeout_sec or 30,
         enabled=bool(server.enabled),
@@ -102,17 +115,39 @@ def _check_transport_fields(transport: str, fields: dict) -> None:
             raise BadRequestError("stdio 传输必须提供 command")
         if fields.get("url"):
             raise BadRequestError("stdio 传输不接受 url")
+        if fields.get("auth_type") not in (None, "none", "static"):
+            raise BadRequestError("stdio 传输不支持 OAuth 认证字段")
     elif transport == TRANSPORT_HTTP:
         if not fields.get("url"):
             raise BadRequestError("http 传输必须提供 url")
         if fields.get("command"):
             raise BadRequestError("http 传输不接受 command")
+        auth_type = fields.get("auth_type") or "static"
+        if auth_type == "oauth_client_credentials":
+            if not fields.get("oauth_token_url"):
+                raise BadRequestError("OAuth 机器身份必须提供 oauth_token_url")
+            if not fields.get("oauth_client_id"):
+                raise BadRequestError("OAuth 机器身份必须提供 oauth_client_id")
+            if not (
+                fields.get("oauth_client_secret")
+                or fields.get("oauth_client_secret_cipher")
+            ):
+                raise BadRequestError("OAuth 机器身份必须提供 oauth_client_secret")
+            if any(
+                str(key).lower() == "authorization"
+                for key in (fields.get("headers") or {})
+            ):
+                raise BadRequestError(
+                    "OAuth 认证由服务端注入 Authorization，headers 不能重复配置"
+                )
 
 
 @router.get("", response_model=list[McpServerOut])
 async def list_servers(db: DbSession, admin: AdminDep) -> list[McpServerOut]:
     """列出全部 MCP 服务器 + 在线状态 + 工具数。"""
-    servers = await mcp_server_repo.list(db, limit=500)
+    servers = await mcp_server_repo.list(
+        db, tenant_id=admin.tenant_id, limit=500
+    )
     out: list[McpServerOut] = []
     for server in servers:
         tools = await mcp_tool_repo.list_by_server(db, server.id)
@@ -129,12 +164,18 @@ async def create_server(
     **这是部署级操作**：stdio 的 ``command`` 决定执行什么程序，所以命令路径
     必须在 ``MCP_ALLOWED_COMMAND_PREFIXES`` 白名单内（默认空 = 禁止）。
     """
-    if await mcp_server_repo.get_by_code(db, payload.code):
+    if await mcp_server_repo.get_by_code(db, payload.code, admin.tenant_id):
         raise ConflictError(f"MCP 服务器 code 已存在：{payload.code}")
     fields = {
         "command": payload.command,
         "args": payload.args,
         "url": payload.url,
+        "auth_type": payload.auth_type,
+        "oauth_token_url": payload.oauth_token_url,
+        "oauth_revocation_url": payload.oauth_revocation_url,
+        "oauth_client_id": payload.oauth_client_id,
+        "oauth_client_secret": payload.oauth_client_secret,
+        "headers": payload.headers,
     }
     _check_transport_fields(payload.transport, fields)
     if payload.transport == TRANSPORT_STDIO:
@@ -151,10 +192,22 @@ async def create_server(
             await check_url_allowed(payload.url or "", require_dns=False)
         except McpTransportError as exc:
             raise BadRequestError(str(exc)) from exc
+        if payload.auth_type == "oauth_client_credentials":
+            for url in (
+                payload.oauth_token_url,
+                payload.oauth_revocation_url,
+            ):
+                if not url:
+                    continue
+                try:
+                    await check_url_allowed(url, require_dns=False)
+                except McpTransportError as exc:
+                    raise BadRequestError(str(exc)) from exc
 
     server = await mcp_server_repo.create(
         db,
         code=payload.code,
+        tenant_id=admin.tenant_id,
         name=payload.name or payload.code,
         transport=payload.transport,
         command=payload.command,
@@ -162,6 +215,13 @@ async def create_server(
         env=_encrypt_map(payload.env),
         url=payload.url,
         headers=_encrypt_map(payload.headers),
+        auth_type=payload.auth_type,
+        oauth_token_url=payload.oauth_token_url,
+        oauth_revocation_url=payload.oauth_revocation_url,
+        oauth_client_id=payload.oauth_client_id,
+        oauth_client_secret_cipher=encrypt(payload.oauth_client_secret or ""),
+        oauth_scopes=payload.oauth_scopes,
+        oauth_resource=payload.oauth_resource,
         allow_tools=payload.allow_tools,
         timeout_sec=payload.timeout_sec,
         enabled=1 if payload.enabled else 0,
@@ -172,7 +232,7 @@ async def create_server(
 @router.get("/{code}", response_model=McpServerOut)
 async def get_server(code: str, db: DbSession, admin: AdminDep) -> McpServerOut:
     """查一台服务器。"""
-    server = await mcp_server_repo.get_by_code(db, code)
+    server = await mcp_server_repo.get_by_code(db, code, admin.tenant_id)
     if server is None:
         raise NotFoundError(f"MCP 服务器不存在：{code}")
     tools = await mcp_tool_repo.list_by_server(db, server.id)
@@ -188,7 +248,7 @@ async def update_server(
     连接与快照都要失效：改了命令或端点之后，旧连接连的是旧程序，旧快照描述
     的是旧工具——留着它们就是「配置说 A、实际跑 B」。
     """
-    server = await mcp_server_repo.get_by_code(db, code)
+    server = await mcp_server_repo.get_by_code(db, code, admin.tenant_id)
     if server is None:
         raise NotFoundError(f"MCP 服务器不存在：{code}")
     fields = payload.model_dump(exclude_unset=True)
@@ -196,6 +256,35 @@ async def update_server(
         fields["env"] = _encrypt_map(fields["env"])
     if "headers" in fields:
         fields["headers"] = _encrypt_map(fields["headers"])
+    if "oauth_client_secret" in fields:
+        fields["oauth_client_secret_cipher"] = encrypt(
+            fields.pop("oauth_client_secret") or ""
+        )
+    for oauth_url_key in ("oauth_token_url", "oauth_revocation_url"):
+        if fields.get(oauth_url_key):
+            try:
+                await check_url_allowed(
+                    fields[oauth_url_key], require_dns=False
+                )
+            except McpTransportError as exc:
+                raise BadRequestError(str(exc)) from exc
+    effective_auth = fields.get("auth_type", server.auth_type or "static")
+    if effective_auth == "oauth_client_credentials":
+        merged = {
+            "auth_type": effective_auth,
+            "oauth_token_url": fields.get(
+                "oauth_token_url", server.oauth_token_url
+            ),
+            "oauth_client_id": fields.get(
+                "oauth_client_id", server.oauth_client_id
+            ),
+            "oauth_client_secret": fields.get("oauth_client_secret"),
+            "oauth_client_secret_cipher": fields.get(
+                "oauth_client_secret_cipher", server.oauth_client_secret_cipher
+            ),
+            "headers": fields.get("headers", server.headers),
+        }
+        _check_transport_fields(TRANSPORT_HTTP, merged)
     if "command" in fields and fields["command"]:
         try:
             check_command_allowed(fields["command"])
@@ -208,7 +297,9 @@ async def update_server(
             raise BadRequestError(str(exc)) from exc
     if "enabled" in fields and fields["enabled"] is not None:
         fields["enabled"] = 1 if fields["enabled"] else 0
-    updated = await mcp_server_repo.update(db, code, fields, bump_version=True)
+    updated = await mcp_server_repo.update(
+        db, code, fields, bump_version=True, tenant_id=admin.tenant_id
+    )
     if updated is None:
         raise NotFoundError(f"MCP 服务器不存在：{code}")
     # 连接与快照失效：配置变了，旧的东西就不能继续用了。
@@ -220,7 +311,7 @@ async def update_server(
 @router.delete("/{code}", status_code=204)
 async def delete_server(code: str, db: DbSession, admin: AdminDep) -> None:
     """删除服务器（连带删掉它的工具快照）。"""
-    ok = await mcp_server_repo.delete(db, code)
+    ok = await mcp_server_repo.delete(db, code, admin.tenant_id)
     if not ok:
         raise NotFoundError(f"MCP 服务器不存在：{code}")
     await mcp_manager.close_all()
@@ -233,7 +324,7 @@ async def refresh_server(code: str, db: DbSession, admin: AdminDep) -> McpRefres
     这是「MCP 服务器从来没连过 → 保存期校验直接 400」那条提示的解法：先刷新
     一次目录，工具进快照了，Agent 才能绑。
     """
-    server = await mcp_server_repo.get_by_code(db, code)
+    server = await mcp_server_repo.get_by_code(db, code, admin.tenant_id)
     if server is None:
         raise NotFoundError(f"MCP 服务器不存在：{code}")
     try:
@@ -245,10 +336,32 @@ async def refresh_server(code: str, db: DbSession, admin: AdminDep) -> McpRefres
     )
 
 
+@router.post("/{code}/oauth/revoke", response_model=McpOAuthRevokeOut)
+async def revoke_server_oauth(
+    code: str, db: DbSession, admin: AdminDep
+) -> McpOAuthRevokeOut:
+    """撤销 OAuth token：清本地密文，并尽力通知远端撤销端点。"""
+    server = await mcp_server_repo.get_by_code(db, code, admin.tenant_id)
+    if server is None:
+        raise NotFoundError(f"MCP 服务器不存在：{code}")
+    if server.auth_type != "oauth_client_credentials":
+        raise BadRequestError("该服务器没有使用 OAuth 机器身份")
+    try:
+        remote_revoked = await revoke_oauth(server)
+    except McpOAuthError as exc:
+        raise BadRequestError(str(exc)) from exc
+    await mcp_manager.close_all()
+    return McpOAuthRevokeOut(
+        server=code,
+        local_tokens_cleared=True,
+        remote_revoked=remote_revoked,
+    )
+
+
 @router.get("/{code}/tools", response_model=list[McpToolOut])
 async def list_server_tools(code: str, db: DbSession, admin: AdminDep) -> list[McpToolOut]:
     """该服务器**已发现**的工具（快照，不是实时）。"""
-    server = await mcp_server_repo.get_by_code(db, code)
+    server = await mcp_server_repo.get_by_code(db, code, admin.tenant_id)
     if server is None:
         raise NotFoundError(f"MCP 服务器不存在：{code}")
     rows = await mcp_tool_repo.list_by_server(db, server.id)
@@ -273,9 +386,9 @@ def _model_json(value) -> dict:
     return dict(value or {})
 
 
-async def _server_or_404(db, code: str):
+async def _server_or_404(db, code: str, admin: AdminDep):
     """读取启用的 MCP 服务器配置。"""
-    server = await mcp_server_repo.get_by_code(db, code)
+    server = await mcp_server_repo.get_by_code(db, code, admin.tenant_id)
     if server is None:
         raise NotFoundError(f"MCP 服务器不存在：{code}")
     if not server.enabled:
@@ -288,7 +401,7 @@ async def list_server_resources(
     code: str, db: DbSession, admin: AdminDep
 ) -> list[McpResourceOut]:
     """实时列出 MCP 资源；该接口受管理员门禁保护。"""
-    server = await _server_or_404(db, code)
+    server = await _server_or_404(db, code, admin)
     try:
         rows = await mcp_manager.list_resources(server)
     except Exception as exc:
@@ -312,7 +425,7 @@ async def list_server_resource_templates(
     code: str, db: DbSession, admin: AdminDep
 ) -> list[McpResourceOut]:
     """实时列出 MCP 资源模板。"""
-    server = await _server_or_404(db, code)
+    server = await _server_or_404(db, code, admin)
     try:
         rows = await mcp_manager.list_resource_templates(server)
     except Exception as exc:
@@ -338,7 +451,7 @@ async def read_server_resource(
     uri: str,
 ) -> list[McpResourceContentOut]:
     """读取资源 URI；文本和 base64 二进制分别返回。"""
-    server = await _server_or_404(db, code)
+    server = await _server_or_404(db, code, admin)
     try:
         result = await mcp_manager.read_resource(server, uri)
     except Exception as exc:
@@ -361,7 +474,7 @@ async def list_server_prompts(
     code: str, db: DbSession, admin: AdminDep
 ) -> list[McpPromptOut]:
     """实时列出 MCP prompts。"""
-    server = await _server_or_404(db, code)
+    server = await _server_or_404(db, code, admin)
     try:
         rows = await mcp_manager.list_prompts(server)
     except Exception as exc:
@@ -388,7 +501,7 @@ async def get_server_prompt(
     admin: AdminDep,
 ) -> McpPromptGetOut:
     """获取 prompt；参数只传字符串，符合 MCP 规范。"""
-    server = await _server_or_404(db, code)
+    server = await _server_or_404(db, code, admin)
     try:
         result = await mcp_manager.get_prompt(server, prompt, body.arguments)
     except Exception as exc:

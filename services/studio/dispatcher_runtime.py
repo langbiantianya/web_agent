@@ -64,6 +64,7 @@ class DispatcherRuntime:
             )
         payload = {
             "skill": spec.skill,
+            "tenant_id": spec.tenant_id,
             "script": spec.script,
             "language": spec.language,
             "content": spec.content,
@@ -113,6 +114,54 @@ class DispatcherRuntime:
             logger.warning("取消沙箱请求失败：%s", request_id, exc_info=True)
             return False
         return status == 200 and bool(data.get("cancelled"))
+
+    async def acquire_quota(
+        self,
+        *,
+        tenant_id: str,
+        skill: str,
+        cost: float,
+        lease_ms: int,
+    ) -> str:
+        """向共享 dispatcher 申请跨实例租约。
+
+        Returns:
+            ``lease_id``；调用方必须在执行结束后 release。
+
+        Raises:
+            RuntimeError: dispatcher 拒绝或不可达。
+        """
+        status, data = await self._post(
+            "/v1/quota/acquire",
+            {
+                "tenant_id": tenant_id or "default",
+                "skill": skill or "unknown",
+                "cost": max(0.001, float(cost)),
+                "lease_ms": max(1000, int(lease_ms)),
+            },
+            timeout=5.0,
+        )
+        if status != 200:
+            code = str(data.get("error_code") or "quota_unavailable")
+            detail = str(data.get("error") or f"dispatcher 返回 {status}")
+            raise RuntimeError(f"{code}: {detail}")
+        lease_id = str(data.get("lease_id") or "")
+        if not lease_id:
+            raise RuntimeError("quota_protocol: dispatcher 没有返回 lease_id")
+        return lease_id
+
+    async def release_quota(self, lease_id: str) -> bool:
+        """释放共享租约。"""
+        if not lease_id:
+            return False
+        try:
+            status, data = await self._post(
+                "/v1/quota/release", {"lease_id": lease_id}, timeout=5.0
+            )
+        except Exception:
+            logger.warning("释放 dispatcher 配额失败：%s", lease_id, exc_info=True)
+            return False
+        return status == 200 and bool(data.get("released"))
 
     async def health(self, timeout: float = 2.0) -> bool:
         """dispatcher 是否就绪（启动期用）。
@@ -224,5 +273,8 @@ def _to_outcome(data: dict[str, Any]) -> ExecOutcome:
         error=str(data.get("error") or ""),
         stdout_digest=str(data.get("stdout_digest") or ""),
         startup_ms=int(data.get("startup_ms", 0)),
+        image_startup_ms=int(data.get("image_startup_ms", 0)),
+        cpu_seconds=float(data.get("cpu_seconds") or 0),
+        peak_memory_bytes=int(data.get("peak_memory_bytes") or 0),
         error_code=str(data.get("error_code") or ""),
     )

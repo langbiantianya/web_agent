@@ -46,6 +46,17 @@ _OOM_EVENT_PATHS = (
     Path("/sys/fs/cgroup/memory/memory.oom_control"),
 )
 
+# cgroup v2 / v1 的 CPU 与内存峰值文件。一次沙箱容器只跑一个脚本，因此容器
+# cgroup 的累计值就是这次执行可用的真实资源口径。
+_CPU_USAGE_PATHS = (
+    Path("/sys/fs/cgroup/cpu.stat"),
+    Path("/sys/fs/cgroup/cpuacct/cpuacct.usage"),
+)
+_MEMORY_PEAK_PATHS = (
+    Path("/sys/fs/cgroup/memory.peak"),
+    Path("/sys/fs/cgroup/memory/memory.max_usage_in_bytes"),
+)
+
 
 def _interpreter(language: str) -> list[str]:
     """按语言给解释器命令前缀。
@@ -101,6 +112,65 @@ def _oom_kill_count() -> int | None:
         if count is not None:
             return count
     return None
+
+
+def _read_resource_usage() -> tuple[float, int]:
+    """读取当前容器 cgroup 的 CPU 秒数与内存峰值。
+
+    Returns:
+        ``(cpu_seconds, peak_memory_bytes)``。cgroup 不可读时退回
+        ``resource.getrusage``；两个来源都不可用时返回 ``(0, 0)``，绝不因为
+        指标采集失败而影响脚本结果。
+    """
+    cpu_seconds: float | None = None
+    for path in _CPU_USAGE_PATHS:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if path.name == "cpu.stat":
+            for line in text.splitlines():
+                key, _, value = line.partition(" ")
+                if key == "usage_usec":
+                    try:
+                        cpu_seconds = int(value) / 1_000_000
+                    except ValueError:
+                        pass
+                    break
+        else:
+            try:
+                cpu_seconds = int(text.strip()) / 1_000_000_000
+            except ValueError:
+                pass
+        if cpu_seconds is not None:
+            break
+
+    peak_memory: int | None = None
+    for path in _MEMORY_PEAK_PATHS:
+        try:
+            peak_memory = int(path.read_text(encoding="utf-8").strip())
+            break
+        except (OSError, ValueError):
+            continue
+
+    if cpu_seconds is None or peak_memory is None:
+        try:
+            import resource
+
+            own = resource.getrusage(resource.RUSAGE_SELF)
+            children = resource.getrusage(resource.RUSAGE_CHILDREN)
+            if cpu_seconds is None:
+                cpu_seconds = (
+                    own.ru_utime
+                    + own.ru_stime
+                    + children.ru_utime
+                    + children.ru_stime
+                )
+            if peak_memory is None:
+                peak_memory = max(own.ru_maxrss, children.ru_maxrss) * 1024
+        except (ImportError, OSError, ValueError):
+            pass
+    return max(0.0, float(cpu_seconds or 0.0)), max(0, int(peak_memory or 0))
 
 
 def _env(tmp: str) -> dict[str, str]:
@@ -268,6 +338,7 @@ def run_script(payload: dict) -> dict:
     started = time.monotonic()
     tmp = tempfile.mkdtemp(prefix="sandbox-")
     oom_kills_before = _oom_kill_count()
+    cpu_before, _memory_before = _read_resource_usage()
     try:
         try:
             suffix = _LANGUAGE_SUFFIX[language]
@@ -280,6 +351,10 @@ def run_script(payload: dict) -> dict:
                 "duration_ms": 0,
                 "status": "failed",
                 "error_code": "unknown_language",
+                "cpu_seconds": max(
+                    0.0, _read_resource_usage()[0] - cpu_before
+                ),
+                "peak_memory_bytes": _read_resource_usage()[1],
             }
         script_path = Path(tmp) / f"main{suffix}"
         script_path.write_text(content, encoding="utf-8")
@@ -310,6 +385,10 @@ def run_script(payload: dict) -> dict:
                 "duration_ms": int((time.monotonic() - started) * 1000),
                 "status": "failed",
                 "error_code": "spawn_failed",
+                "cpu_seconds": max(
+                    0.0, _read_resource_usage()[0] - cpu_before
+                ),
+                "peak_memory_bytes": _read_resource_usage()[1],
             }
 
         out = _Capture(stdout_cap)
@@ -367,6 +446,7 @@ def run_script(payload: dict) -> dict:
                 error_code = "sandbox_oom"
         if status != "completed":
             exit_code = -1
+        cpu_after, peak_memory = _read_resource_usage()
         return {
             "exit_code": exit_code,
             "truncated": bool(out.overflow or err.overflow),
@@ -375,6 +455,8 @@ def run_script(payload: dict) -> dict:
             "duration_ms": int((time.monotonic() - started) * 1000),
             "status": status,
             "error_code": error_code,
+            "cpu_seconds": max(0.0, cpu_after - cpu_before),
+            "peak_memory_bytes": peak_memory,
         }
     finally:
         # 工作目录写的是脚本与它产生的文件；跑完就删（只读 rootfs 下只有 /tmp 可写）。

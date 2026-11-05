@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.api.deps import OptionalAdminDep
 from app.config.db import SessionLocal
 from app.core.tools import TOOL_REGISTRY
 
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/api/tools", tags=["tools"])
 
 
 @router.get("")
-async def list_tools() -> list[dict]:
+async def list_tools(admin: OptionalAdminDep) -> list[dict]:
     """列出全部可用工具（内置 + MCP）。
 
     Returns:
@@ -51,8 +52,9 @@ async def list_tools() -> list[dict]:
     from app.repo.mcp_repo import mcp_server_repo, mcp_tool_repo
 
     async with SessionLocal() as db:
-        rows = await mcp_tool_repo.list_all(db)
-        servers = await mcp_server_repo.map_by_id(db)
+        tenant_id = admin.tenant_id if admin is not None else "default"
+        rows = await mcp_tool_repo.list_all(db, tenant_id=tenant_id)
+        servers = await mcp_server_repo.map_by_id(db, tenant_id=tenant_id)
     for row in rows:
         server = servers.get(row.server_id)
         items.append(

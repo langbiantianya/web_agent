@@ -51,6 +51,7 @@ class ExecSpec:
 
     Attributes:
         skill: 技能 code（审计用）。
+        tenant_id: 租户标识；用于共享配额和计费标签，不传给脚本环境。
         script: 脚本相对路径（审计用）。
         language: 运行时（``python`` / ``bash`` / ``node``）。
         content: 脚本正文。
@@ -64,6 +65,7 @@ class ExecSpec:
     """
 
     skill: str = ""
+    tenant_id: str = "default"
     script: str = ""
     language: str = "python"
     content: str = ""

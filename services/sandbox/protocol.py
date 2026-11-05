@@ -59,6 +59,7 @@ class SandboxSpec:
     """一次沙箱执行的输入。"""
 
     skill: str = ""
+    tenant_id: str = "default"
     script: str = ""
     language: str = "python"
     content: str = ""
@@ -81,6 +82,7 @@ class SandboxSpec:
         return {
             "nonce": nonce,
             "skill": self.skill,
+            "tenant_id": self.tenant_id,
             "script": self.script,
             "language": self.language,
             "content": self.content,
@@ -108,7 +110,10 @@ class SandboxResult:
     error: str = ""
     error_code: str = ""
     startup_ms: int = 0
+    image_startup_ms: int = 0
     sandbox_id: str = ""
+    cpu_seconds: float = 0.0
+    peak_memory_bytes: int = 0
 
 
 @dataclass(slots=True)
@@ -206,6 +211,8 @@ def encode_frames(
     duration_ms: int = 0,
     status: str = "completed",
     error_code: str = "",
+    cpu_seconds: float = 0.0,
+    peak_memory_bytes: int = 0,
 ) -> str:
     """把结果编成控制帧文本（runner 用）。
 
@@ -218,6 +225,8 @@ def encode_frames(
         duration_ms: 执行耗时。
         status: ``completed`` / ``timeout`` / ``limited`` / ``failed``。
         error_code: 机器可读的失败码。
+        cpu_seconds: cgroup 统计的 CPU 秒数。
+        peak_memory_bytes: cgroup 统计的内存峰值（字节）。
 
     Returns:
         多行文本，每行一个控制帧。
@@ -230,6 +239,8 @@ def encode_frames(
         "duration_ms": duration_ms,
         "status": status,
         "error_code": error_code,
+        "cpu_seconds": max(0.0, float(cpu_seconds)),
+        "peak_memory_bytes": max(0, int(peak_memory_bytes)),
     }
     lines = [
         f"{FRAME_MARKER} {nonce} META {_b64(json.dumps(meta, separators=(',', ':')).encode('utf-8'))}"
@@ -333,6 +344,10 @@ class FrameAssembler:
             "duration_ms": int(meta.get("duration_ms", 0)),
             "status": str(meta.get("status") or "completed"),
             "error_code": str(meta.get("error_code") or ""),
+            "cpu_seconds": max(0.0, float(meta.get("cpu_seconds") or 0)),
+            "peak_memory_bytes": max(
+                0, int(meta.get("peak_memory_bytes") or 0)
+            ),
         }
 
 

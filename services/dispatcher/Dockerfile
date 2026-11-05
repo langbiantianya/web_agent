@@ -27,6 +27,7 @@ RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" -r requirements.txt
 COPY services/__init__.py ./services/__init__.py
 COPY services/sandbox/ ./services/sandbox/
 COPY services/dispatcher/ ./services/dispatcher/
+COPY services/sandbox/seccomp-profile.json /etc/webagent/seccomp-profile.json
 
 EXPOSE 9100
 

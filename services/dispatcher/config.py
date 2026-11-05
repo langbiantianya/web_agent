@@ -43,6 +43,32 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
+def _env_int_limits(name: str) -> tuple[tuple[str, int], ...]:
+    """读取 ``key=positive-int`` 配额表。"""
+    out: list[tuple[str, int]] = []
+    for key, value in _env_pairs(name):
+        try:
+            limit = int(value)
+        except ValueError:
+            continue
+        if limit > 0:
+            out.append((key, limit))
+    return tuple(out)
+
+
+def _env_float_limits(name: str) -> tuple[tuple[str, float], ...]:
+    """读取 ``key=positive-float`` 成本预算表。"""
+    out: list[tuple[str, float]] = []
+    for key, value in _env_pairs(name):
+        try:
+            limit = float(value)
+        except ValueError:
+            continue
+        if limit > 0:
+            out.append((key, limit))
+    return tuple(out)
+
+
 class DispatcherConfigError(Exception):
     """配置不自洽——启动期直接失败。"""
 
@@ -61,6 +87,16 @@ class DispatcherConfig:
         docker_socket: Docker Engine 的地址。
         payload_dir: 写 payload 的目录。它必须**对 Docker daemon 可见**（lab 里
             从宿主机 bind mount 进来），沙箱以只读方式挂到 ``/run/sandbox``。
+        seccomp_profile: 自定义 seccomp profile 在 dispatcher 容器内的路径。
+            启动时会被复制到 ``payload_dir``，因为 Docker daemon 读取的是宿主
+            可见路径，而不是 dispatcher 自己的文件系统。
+        require_custom_seccomp: 是否强制加载 profile。生产默认开启；关掉只允许
+            用于不支持自定义 profile 的本地调试环境。
+        prewarm_images: 启动时检查并预热镜像目录，避免首个请求承担拉取成本。
+        tenant_quotas: 租户并发配额。
+        skill_quotas: 技能并发配额；跨 studio 实例生效。
+        tenant_budgets: 租户同时在跑的估算成本上限。
+        skill_budgets: 技能同时在跑的估算成本上限。
         version: 服务版本。
         max_body_bytes: HTTP 请求体上限。
     """
@@ -73,6 +109,13 @@ class DispatcherConfig:
     images: tuple[tuple[str, str], ...] = ()
     docker_socket: str = "unix:///var/run/docker.sock"
     payload_dir: str = "/var/lib/studio-payloads"
+    seccomp_profile: str = "/etc/webagent/seccomp-profile.json"
+    require_custom_seccomp: bool = True
+    prewarm_images: bool = True
+    tenant_quotas: tuple[tuple[str, int], ...] = ()
+    skill_quotas: tuple[tuple[str, int], ...] = ()
+    tenant_budgets: tuple[tuple[str, float], ...] = ()
+    skill_budgets: tuple[tuple[str, float], ...] = ()
     version: str = "1.0.0"
     max_body_bytes: int = 2 * 1024 * 1024
     # 生产默认要求镜像钉到 sha256 digest；本地刚 build 的 tag 可显式关闭。
@@ -132,6 +175,21 @@ class DispatcherConfig:
                 ).strip()
                 or "/var/lib/studio-payloads"
             ),
+            seccomp_profile=(
+                os.environ.get(
+                    "DISPATCHER_SECCOMP_PROFILE",
+                    "/etc/webagent/seccomp-profile.json",
+                ).strip()
+                or "/etc/webagent/seccomp-profile.json"
+            ),
+            require_custom_seccomp=_env_bool(
+                "DISPATCHER_REQUIRE_CUSTOM_SECCOMP", True
+            ),
+            prewarm_images=_env_bool("DISPATCHER_PREWARM_IMAGES", True),
+            tenant_quotas=_env_int_limits("DISPATCHER_TENANT_QUOTAS"),
+            skill_quotas=_env_int_limits("DISPATCHER_SKILL_QUOTAS"),
+            tenant_budgets=_env_float_limits("DISPATCHER_TENANT_BUDGETS"),
+            skill_budgets=_env_float_limits("DISPATCHER_SKILL_BUDGETS"),
             version=os.environ.get("DISPATCHER_VERSION", "1.0.0").strip() or "1.0.0",
             max_body_bytes=_env_int("DISPATCHER_MAX_BODY_BYTES", 2 * 1024 * 1024),
             require_digest=_env_bool("DISPATCHER_REQUIRE_DIGEST", True),

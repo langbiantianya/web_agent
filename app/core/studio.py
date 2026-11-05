@@ -202,6 +202,9 @@ class ExecResult:
     profile: str = ""
     startup_ms: int = 0
     error_code: str = ""
+    image_startup_ms: int = 0
+    cpu_seconds: float = 0.0
+    peak_memory_bytes: int = 0
 
     @property
     def ok(self) -> bool:
@@ -425,6 +428,7 @@ class StudioClient:
         run_id: str = "",
         node_id: str = "",
         request_id: str = "",
+        tenant_id: str = "default",
     ) -> ExecResult:
         """执行一个脚本。
 
@@ -441,6 +445,7 @@ class StudioClient:
             run_id: 关联的 run id（审计）。
             node_id: 关联的节点 id（审计）。
             request_id: 追踪键。同键在 studio 的去重窗口内不重复执行。
+            tenant_id: 租户标识，用于跨实例配额和成本标签。
 
         Returns:
             :class:`ExecResult`。
@@ -471,6 +476,7 @@ class StudioClient:
             ),
             image=image,
             traceparent=(ctx.traceparent if ctx else ""),
+            tenant_id=tenant_id or (ctx.tenant_id if ctx else "default"),
         )
         try:
             response = await stub.Exec(request, timeout=deadline)
@@ -521,6 +527,9 @@ def _to_result(response: Any) -> ExecResult:
         profile=_PROTO_TO_PROFILE.get(int(response.profile), ""),
         startup_ms=int(response.startup_ms),
         error_code=response.error_code,
+        image_startup_ms=int(response.image_startup_ms),
+        cpu_seconds=float(response.cpu_seconds),
+        peak_memory_bytes=int(response.peak_memory_bytes),
     )
 
 

@@ -118,6 +118,27 @@ def _timeout_outcome(error: str) -> ExecOutcome:
     )
 
 
+def _reservation_cost(
+    config: StudioConfig, *, profile: str, timeout_ms: int
+) -> float:
+    """按执行上限估算要预占的共享成本单位。
+
+    预占是上界，不是最终账单；真实成本由 cgroup 数据写入指标和日志。即使没有
+    配置费率，也至少预占 1 个单位，让租户/技能预算仍能限制并发。
+    """
+    seconds = max(0.001, timeout_ms / 1000.0)
+    if profile == PROFILE_ISOLATED:
+        cpu = seconds * 1.0
+        memory_gib = (512 * 1024 * 1024) / (1024 ** 3)
+        value = (
+            cpu * config.cpu_second_rate
+            + memory_gib * seconds * config.memory_gib_second_rate
+            + config.sandbox_start_rate
+        )
+        return max(1.0, value)
+    return max(1.0, seconds * config.cpu_second_rate)
+
+
 class QueueFullError(Exception):
     """等待队列满了（§8.1）。"""
 
@@ -178,6 +199,7 @@ class StudioService(studio_pb2_grpc.StudioServicer):
         self,
         config: StudioConfig,
         isolated_runtime: IsolatedRuntime | None = None,
+        admission_runtime: IsolatedRuntime | None = None,
     ) -> None:
         """按配置建好闸门与执行器。
 
@@ -186,12 +208,15 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             isolated_runtime: ``isolated`` 档的一次性容器执行器；没部署时给
                 ``None``——那时走 isolated 档的技能会拿到明确的
                 ``FAILED_PRECONDITION``，不会悄悄退回 ``fast`` 档。
+            admission_runtime: 跨实例配额控制面。通常与 isolated runtime 是
+                同一个 dispatcher 客户端，也可用于 fast 档准入。
         """
         self.config = config
         # 两个档位（§2.4）。isolated 档的容器运行时**默认没有部署**——它是一份
         # 骨架：接口、独立队列都在，缺运行时时明确报错，不悄悄退回 fast。
         self._fast_launcher = InProcessLauncher(ScriptRunner(config))
         self._isolated_launcher = IsolatedLauncher(isolated_runtime)
+        self._admission_runtime = admission_runtime or isolated_runtime
         # 两个池各管各的（§8.4：isolated 必须单独排队）。
         self._fast_pool = _ExecutionPool(
             config.max_concurrency, config.max_queue
@@ -364,7 +389,37 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                 phase="started", profile=profile
             )
         started = time.monotonic()
+        quota_lease_id = ""
         try:
+            acquire_quota = getattr(self._admission_runtime, "acquire_quota", None)
+            if acquire_quota is not None:
+                remaining_for_reservation = max(
+                    1, int(max(0.0, deadline - time.monotonic()) * 1000)
+                )
+                try:
+                    quota_lease_id = await acquire_quota(
+                        tenant_id=(
+                            getattr(request, "tenant_id", "default") or "default"
+                        ),
+                        skill=request.skill,
+                        cost=_reservation_cost(
+                            self.config,
+                            profile=profile,
+                            timeout_ms=remaining_for_reservation,
+                        ),
+                        lease_ms=max(
+                            60_000,
+                            (request.timeout_ms or self.config.max_timeout_ms)
+                            + self.config.isolated_startup_budget_ms
+                            + 60_000,
+                        ),
+                    )
+                except Exception as exc:
+                    self.metrics.failed_total.inc(reason="quota_exceeded")
+                    await context.abort(
+                        grpc.StatusCode.RESOURCE_EXHAUSTED,
+                        f"quota_exceeded: {exc}",
+                    )
             remaining_ms = int(max(0.0, deadline - time.monotonic()) * 1000)
             if remaining_ms <= 0:
                 outcome = _timeout_outcome("排队时间已耗尽执行时限")
@@ -372,6 +427,8 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                 outcome = await launcher.run(
                     ExecSpec(
                         skill=request.skill,
+                        tenant_id=getattr(request, "tenant_id", "default")
+                        or "default",
                         script=request.script,
                         language=request.language,
                         content=request.content,
@@ -404,6 +461,14 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                 )
             raise
         finally:
+            release_quota = getattr(self._admission_runtime, "release_quota", None)
+            if quota_lease_id and release_quota is not None:
+                try:
+                    await release_quota(quota_lease_id)
+                except Exception:
+                    logger.warning(
+                        "释放跨实例配额失败：%s", quota_lease_id, exc_info=True
+                    )
             if skill_pool is not None:
                 skill_pool.release()
             pool.release()
@@ -561,6 +626,31 @@ class StudioService(studio_pb2_grpc.StudioServicer):
                 image=request.image or "default",
                 status=outcome.status,
             )
+            image = request.image or "default"
+            self.metrics.sandbox_cpu_seconds.observe(
+                max(0.0, outcome.cpu_seconds), profile=profile, image=image
+            )
+            self.metrics.sandbox_peak_memory_bytes.observe(
+                max(0, outcome.peak_memory_bytes),
+                profile=profile,
+                image=image,
+            )
+            memory_gib = max(0, outcome.peak_memory_bytes) / (1024 ** 3)
+            duration_sec = max(0.0, outcome.duration_ms / 1000.0)
+            startup_sec = max(0.0, outcome.image_startup_ms / 1000.0)
+            estimated_cost = (
+                max(0.0, outcome.cpu_seconds) * self.config.cpu_second_rate
+                + memory_gib * duration_sec * self.config.memory_gib_second_rate
+                + startup_sec * self.config.sandbox_start_rate
+            )
+            self.metrics.estimated_cost_total.inc(
+                estimated_cost,
+                tenant=getattr(request, "tenant_id", "default") or "default",
+                skill=request.skill or "unknown",
+                profile=profile,
+            )
+        else:
+            estimated_cost = 0.0
         emit_exec_log(
             request_id=request.request_id,
             run_id=request.run_id,
@@ -578,6 +668,10 @@ class StudioService(studio_pb2_grpc.StudioServicer):
             profile=profile,
             image=request.image,
             startup_ms=outcome.startup_ms,
+            image_startup_ms=outcome.image_startup_ms,
+            cpu_seconds=outcome.cpu_seconds,
+            peak_memory_bytes=outcome.peak_memory_bytes,
+            estimated_cost=estimated_cost,
             error_code=outcome.error_code or _default_error_code(outcome.status),
         )
 

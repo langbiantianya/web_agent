@@ -1030,6 +1030,7 @@ message ExecRequest {
   ExecProfile profile = 11;   // 调用方请求的档位；服务端只能升、不能降
   string image = 12;          // 镜像目录名（不是完整 ref）；空 = default
   string traceparent = 13;    // W3C Trace Context；贯穿 studio / dispatcher / sandbox
+  string tenant_id = 14;      // 租户标识；只用于共享配额与计费标签，不传给脚本环境
 }
 
 message ExecResponse {
@@ -1044,6 +1045,9 @@ message ExecResponse {
   ExecProfile profile = 9;     // **实际**使用的档位，必须回显
   int64 startup_ms = 10;       // 沙箱启动耗时（fast 为 0）
   string error_code = 11;      // 稳定枚举字符串；见 services/studio/design/v4-current.md §5.1
+  int64 image_startup_ms = 12; // 容器启动调用本身的耗时（fast 为 0）
+  double cpu_seconds = 13;     // 沙箱 cgroup 统计的 CPU 秒数
+  int64 peak_memory_bytes = 14; // 沙箱 cgroup 内存峰值
 }
 
 message HealthRequest {}

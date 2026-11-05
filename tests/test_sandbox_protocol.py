@@ -63,6 +63,8 @@ def test_frames_roundtrip_keeps_utf8_and_digest():
         stdout=stdout,
         stderr=stderr,
         duration_ms=12,
+        cpu_seconds=0.125,
+        peak_memory_bytes=1024,
     )
     parsed = parse_frames(text)
     assert parsed["exit_code"] == 3
@@ -70,6 +72,8 @@ def test_frames_roundtrip_keeps_utf8_and_digest():
     assert parsed["stderr"] == stderr
     assert parsed["status"] == "completed"
     assert parsed["duration_ms"] == 12
+    assert parsed["cpu_seconds"] == 0.125
+    assert parsed["peak_memory_bytes"] == 1024
 
 
 def test_frames_missing_end_is_rejected():

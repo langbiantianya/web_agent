@@ -37,6 +37,7 @@ class StudioExecContext:
     node_id: str = ""
     tool_call_id: str = ""
     traceparent: str = ""
+    tenant_id: str = "default"
 
 
 _current: ContextVar[StudioExecContext | None] = ContextVar(

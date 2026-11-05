@@ -46,6 +46,14 @@ class SandboxBackend(Protocol):
         """后端是否就绪。"""
         ...
 
+    async def prepare(self) -> None:
+        """启动期准备：预热镜像与安全 profile。
+
+        Raises:
+            SandboxError: 必需的镜像或安全配置不可用。
+        """
+        ...
+
     async def cancel(self, execution_id: str) -> bool:
         """尽力终止正在运行的沙箱。"""
         ...

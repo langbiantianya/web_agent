@@ -605,7 +605,9 @@ def _openai_spec_for(spec: ToolSpec) -> dict:
     return payload
 
 
-async def build_openai_tools(names: list[str] | None) -> list[dict] | None:
+async def build_openai_tools(
+    names: list[str] | None, tenant_id: str = "default"
+) -> list[dict] | None:
     """把工具名列表展开成 OpenAI 的 ``tools`` 参数。
     schema（dict）。曾经这里直接 ``TOOL_REGISTRY.get(name)``，遇到 dict 会抛
     ``TypeError: cannot use 'dict' as a dict key``——而这个异常在运行期被编排器
@@ -625,7 +627,7 @@ async def build_openai_tools(names: list[str] | None) -> list[dict] | None:
     """
     if not names:
         return None
-    mcp_specs = await _mcp_openai_specs(names)
+    mcp_specs = await _mcp_openai_specs(names, tenant_id=tenant_id)
     specs: list[dict] = []
     for name in names:
         if not isinstance(name, str):
@@ -649,7 +651,9 @@ async def build_openai_tools(names: list[str] | None) -> list[dict] | None:
     return specs or None
 
 
-async def _mcp_openai_specs(names: list[str]) -> dict[str, dict]:
+async def _mcp_openai_specs(
+    names: list[str], tenant_id: str = "default"
+) -> dict[str, dict]:
     """把 MCP 工具名展开成 OpenAI function schema。
 
     只展开**在线**服务器的工具：离线服务器的工具仍在快照里（保存期校验、后台
@@ -670,8 +674,8 @@ async def _mcp_openai_specs(names: list[str]) -> dict[str, dict]:
 
     out: dict[str, dict] = {}
     async with SessionLocal() as db:
-        rows = await mcp_tool_repo.list_all(db)
-        servers = await mcp_server_repo.map_by_id(db)
+        rows = await mcp_tool_repo.list_all(db, tenant_id=tenant_id)
+        servers = await mcp_server_repo.map_by_id(db, tenant_id=tenant_id)
     for row in rows:
         if row.qualified_name not in wanted:
             continue
@@ -694,7 +698,10 @@ async def _mcp_openai_specs(names: list[str]) -> dict[str, dict]:
 
 
 async def execute_tool(
-    name: str, arguments: str | dict, allowed: list[str] | None = None
+    name: str,
+    arguments: str | dict,
+    allowed: list[str] | None = None,
+    tenant_id: str = "default",
 ) -> tuple[bool, str]:
     """执行一个工具，返回 ``(是否成功, 给模型看的结果文本)``。
 
@@ -717,7 +724,7 @@ async def execute_tool(
         return False, f"工具「{name}」不在本 Agent 的授权列表里，不能调用。"
     if is_mcp_name(name):
         # MCP 分支：名字 → 服务器 → tools/call（§21.9）。白名单已经校验过。
-        return await _execute_mcp_tool(name, arguments)
+        return await _execute_mcp_tool(name, arguments, tenant_id=tenant_id)
     spec = TOOL_REGISTRY.get(name)
     if spec is None:
         return False, (
@@ -743,7 +750,9 @@ async def execute_tool(
         return False, f"错误：工具执行失败（{type(exc).__name__}）：{exc}"
 
 
-async def _execute_mcp_tool(name: str, arguments: str | dict) -> tuple[bool, str]:
+async def _execute_mcp_tool(
+    name: str, arguments: str | dict, tenant_id: str = "default"
+) -> tuple[bool, str]:
     """执行一个 MCP 工具。
 
     分发规则（§21.9）：``mcp__<server>__<tool>`` → 查服务器 → ``tools/call`` →
@@ -773,7 +782,7 @@ async def _execute_mcp_tool(name: str, arguments: str | dict) -> tuple[bool, str
         return False, f"错误：{exc}"
 
     async with SessionLocal() as db:
-        server = await mcp_server_repo.get_by_code(db, server_code)
+        server = await mcp_server_repo.get_by_code(db, server_code, tenant_id)
     if server is None:
         return False, f"错误：MCP 服务器「{server_code}」不存在。"
     if not server.enabled:

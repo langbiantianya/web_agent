@@ -106,6 +106,9 @@ async def test_runtime_maps_result_and_forwards_spec():
         assert outcome.exit_code == 0
         assert outcome.stdout == "hi"
         assert outcome.startup_ms == 4
+        assert outcome.image_startup_ms == 0
+        assert outcome.cpu_seconds == 0
+        assert outcome.peak_memory_bytes == 0
         assert outcome.duration_ms == 9
         spec = backend.specs[0]
         assert spec.request_id == "req-1"

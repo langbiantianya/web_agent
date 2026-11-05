@@ -17,6 +17,10 @@ from app.models.base import DATETIME3, JSON_COL, PK, Base
 TRANSPORT_STDIO = "stdio"
 TRANSPORT_HTTP = "http"
 
+AUTH_NONE = "none"
+AUTH_STATIC = "static"
+AUTH_OAUTH_CLIENT_CREDENTIALS = "oauth_client_credentials"
+
 
 class McpServer(Base):
     """一台已注册的 MCP 服务器。"""
@@ -27,6 +31,9 @@ class McpServer(Base):
     # 业务主键。**不是** MCP 协议里的 serverInfo.name——后者是服务端自报的，
     # 不同服务器可能重名，不能拿来当主键（§21.5）。
     code: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(
+        sa.String(64), nullable=False, default="default"
+    )
     name: Mapped[str] = mapped_column(sa.String(128), nullable=False, default="")
     transport: Mapped[str] = mapped_column(sa.String(16), nullable=False)
     # --- stdio：启动命令与参数 ---
@@ -38,6 +45,34 @@ class McpServer(Base):
     url: Mapped[str | None] = mapped_column(sa.String(512), nullable=True)
     # 请求头。**值加密**。
     headers: Mapped[dict | None] = mapped_column(JSON_COL, default=None)
+    # OAuth 2.0 机器身份。client secret 与 token 全部 Fernet 加密；client_id 和
+    # token_endpoint 不是秘密，可回显。
+    auth_type: Mapped[str] = mapped_column(
+        sa.String(32), nullable=False, default=AUTH_STATIC
+    )
+    oauth_token_url: Mapped[str | None] = mapped_column(
+        sa.String(512), nullable=True
+    )
+    oauth_revocation_url: Mapped[str | None] = mapped_column(
+        sa.String(512), nullable=True
+    )
+    oauth_client_id: Mapped[str | None] = mapped_column(
+        sa.String(256), nullable=True
+    )
+    oauth_client_secret_cipher: Mapped[str | None] = mapped_column(
+        sa.String(4096), nullable=True
+    )
+    oauth_scopes: Mapped[list | None] = mapped_column(JSON_COL, default=None)
+    oauth_resource: Mapped[str | None] = mapped_column(
+        sa.String(512), nullable=True
+    )
+    oauth_access_token_cipher: Mapped[str | None] = mapped_column(
+        sa.String(8192), nullable=True
+    )
+    oauth_refresh_token_cipher: Mapped[str | None] = mapped_column(
+        sa.String(8192), nullable=True
+    )
+    oauth_expires_at: Mapped[object] = mapped_column(DATETIME3, nullable=True)
     # 工具白名单：只导入这些工具；为空 = 全导。
     allow_tools: Mapped[list | None] = mapped_column(JSON_COL, default=None)
     timeout_sec: Mapped[int] = mapped_column(sa.Integer, default=30)
@@ -55,7 +90,7 @@ class McpServer(Base):
 
     __table_args__ = (
         sa.UniqueConstraint("code", name="uq_mcp_server_code"),
-        sa.Index("idx_mcp_server_enabled", "enabled"),
+        sa.Index("idx_mcp_server_tenant_enabled", "tenant_id", "enabled"),
     )
 
     def __repr__(self) -> str:  # pragma: no cover

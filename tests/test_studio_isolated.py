@@ -36,7 +36,15 @@ class _FakeIsolatedRuntime:
     它**不是**容器：只是记住被调用了几次、跑了多久、并发峰值多少。
     """
 
-    def __init__(self, delay: float = 0.0, status: str = "completed") -> None:
+    def __init__(
+        self,
+        delay: float = 0.0,
+        status: str = "completed",
+        *,
+        cpu_seconds: float = 0.0,
+        peak_memory_bytes: int = 0,
+        image_startup_ms: int = 0,
+    ) -> None:
         """记下模拟的耗时与终态。
 
         Args:
@@ -45,6 +53,9 @@ class _FakeIsolatedRuntime:
         """
         self.delay = delay
         self.status = status
+        self.cpu_seconds = cpu_seconds
+        self.peak_memory_bytes = peak_memory_bytes
+        self.image_startup_ms = image_startup_ms
         self.calls: list[ExecSpec] = []
         self.max_active = 0
         self._active = 0
@@ -75,12 +86,37 @@ class _FakeIsolatedRuntime:
                 error="boom" if failed else "",
                 stdout_digest="deadbeef",
                 error_code="failed" if failed else "",
+                cpu_seconds=self.cpu_seconds,
+                peak_memory_bytes=self.peak_memory_bytes,
+                image_startup_ms=self.image_startup_ms,
             )
         finally:
             self._active -= 1
 
     async def close(self) -> None:
         """没有要收的尾。"""
+        return None
+
+
+class _FakeAdmission:
+    """跨实例配额控制面的测试替身。"""
+
+    def __init__(self, deny: bool = False) -> None:
+        self.deny = deny
+        self.acquired: list[dict] = []
+        self.released: list[str] = []
+
+    async def acquire_quota(self, **kwargs) -> str:
+        self.acquired.append(kwargs)
+        if self.deny:
+            raise RuntimeError("tenant_budget 已满")
+        return "lease-1"
+
+    async def release_quota(self, lease_id: str) -> bool:
+        self.released.append(lease_id)
+        return True
+
+    async def close(self) -> None:
         return None
 
 
@@ -337,6 +373,80 @@ async def test_profile_label_reflects_the_actual_profile():
             'studio_exec_total{status="completed",language="python",'
             'profile="fast"} 1' in text
         )
+    finally:
+        await server.stop(grace=1)
+
+
+async def test_sandbox_resource_usage_and_estimated_cost_are_recorded():
+    """cgroup CPU/memory data is exported and priced with deployment rates."""
+    runtime = _FakeIsolatedRuntime(
+        cpu_seconds=0.2,
+        peak_memory_bytes=64 * 1024 * 1024,
+        image_startup_ms=500,
+    )
+    service = StudioService(
+        _config(
+            isolated_skill_codes=("iso-skill",),
+            cpu_second_rate=2.0,
+            memory_gib_second_rate=1.0,
+            sandbox_start_rate=0.05,
+        ),
+        isolated_runtime=runtime,
+    )
+    stub, server = await _start(service)
+    try:
+        response = await _exec(
+            stub, skill="iso-skill", tenant_id="tenant-cost", request_id="cost-1"
+        )
+        assert response.status == studio_pb2.EXEC_STATUS_COMPLETED
+        text = service.metrics.registry.render()
+        assert 'sandbox_cpu_seconds_sum{profile="isolated"' in text
+        assert 'sandbox_peak_memory_bytes_sum{profile="isolated"' in text
+        cost_line = next(
+            line
+            for line in text.splitlines()
+            if line.startswith(
+                'studio_estimated_cost_total{tenant="tenant-cost",'
+                'skill="iso-skill",profile="isolated"}'
+            )
+        )
+        assert float(cost_line.rsplit(" ", 1)[1]) > 0.4
+    finally:
+        await server.stop(grace=1)
+
+
+async def test_shared_admission_receives_tenant_and_releases_lease():
+    """Fast and isolated requests both use the shared tenant quota plane."""
+    admission = _FakeAdmission()
+    service = StudioService(_config(), admission_runtime=admission)
+    stub, server = await _start(service)
+    try:
+        response = await _exec(
+            stub,
+            skill="plain",
+            tenant_id="tenant-blue",
+            request_id="quota-ok",
+        )
+        assert response.status == studio_pb2.EXEC_STATUS_COMPLETED
+        assert admission.acquired[0]["tenant_id"] == "tenant-blue"
+        assert admission.acquired[0]["skill"] == "plain"
+        assert admission.acquired[0]["cost"] >= 1
+        assert admission.released == ["lease-1"]
+    finally:
+        await server.stop(grace=1)
+
+
+async def test_shared_admission_denial_fails_closed():
+    """A denied shared lease must not fall back to an unlimited execution."""
+    admission = _FakeAdmission(deny=True)
+    service = StudioService(_config(), admission_runtime=admission)
+    stub, server = await _start(service)
+    try:
+        with pytest.raises(grpc.aio.AioRpcError) as excinfo:
+            await _exec(stub, skill="plain", tenant_id="tenant-red")
+        assert excinfo.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
+        assert "quota_exceeded" in excinfo.value.details()
+        assert 'reason="quota_exceeded"' in service.metrics.registry.render()
     finally:
         await server.stop(grace=1)
 
