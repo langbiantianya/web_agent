@@ -24,7 +24,7 @@ import socket
 import grpc
 import pytest
 
-from services.studio.config import StudioConfig
+from services.studio.config import StudioConfig, detect_languages
 from services.studio.server import StudioService
 from webagent.studio.v1 import studio_pb2, studio_pb2_grpc
 
@@ -46,7 +46,7 @@ async def studio():
         ``(地址, 服务实例)``。
     """
     config = StudioConfig(
-        languages=("python",),
+        languages=detect_languages(),
         max_concurrency=2,
         max_queue=1,
         max_timeout_ms=5000,
@@ -296,7 +296,7 @@ async def test_health_reports_runtime_info(stub):
     resp = await stub.Health(studio_pb2.HealthRequest(), timeout=5)
     assert resp.ready is True
     assert resp.version
-    assert [info.name for info in resp.language_info] == ["python"]
+    assert [info.name for info in resp.language_info] == list(detect_languages())
     assert resp.max_concurrency == 2
     assert resp.profile == "fast"
 

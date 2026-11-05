@@ -150,17 +150,17 @@ def test_set_oom_score_adj_really_takes_effect():
     都不做；写 ``/proc/self/oom_score_adj`` 才有效。所以在**子进程**里做——
     顺便验证改的是子进程自己的值，父进程不受影响。
     """
+    parent_before = read_oom_score_adj()
     pid = os.fork()
     if pid == 0:  # pragma: no cover - 子进程
         ok = set_oom_score_adj(1000)
         value = read_oom_score_adj()
         os._exit(0 if (ok and value == 1000) else 1)
-        parent_before = read_oom_score_adj()
     _, status = os.waitpid(pid, 0)
     assert os.waitstatus_to_exitcode(status) == 0
-        # 父进程的值不受子进程影响。测试容器本身可能已经是 1000，
-        # 因此比较前后值，而不是假定父进程一定从 0 开始。
-        assert read_oom_score_adj() == parent_before
+    # 父进程的值不受子进程影响。测试容器本身可能已经是 1000，
+    # 因此比较前后值，而不是假定父进程一定从 0 开始。
+    assert read_oom_score_adj() == parent_before
 
 
 # --------------------------------------------------------------- 判定本身
