@@ -9,7 +9,7 @@
 
 **Architecture:** 一份 proto 契约（仓库里只有这一份，两边都从它生成代码）；调用侧 `app/core/studio.py`（gRPC 客户端 + 启动期兼容性检查）与 `app/core/skill_exec.py`（三道调用侧校验）；服务侧 `services/studio/`（gRPC server + 进程隔离 + 超时 + 截断 + 限流 + 去重 + 优雅停机）；部署产物 `services/studio/Dockerfile` 与 `deploy/docker-compose.yml`。
 
-**Tech Stack:** Python 3.11+ / FastAPI / SQLAlchemy 2.0 async / Alembic / `grpcio` 1.85（+ `grpcio-tools` 生成桩代码）/ pytest-asyncio（`asyncio_mode = auto`）
+**Tech Stack:** Python 3.11+ / FastAPI / SQLAlchemy 2.0 async / Alembic / `grpcio` 1.76.0（+ `grpcio-tools` 1.76.0 生成桩代码）/ pytest-asyncio（`asyncio_mode = auto`）
 
 ## 全局约束
 

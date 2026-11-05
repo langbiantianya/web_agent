@@ -53,12 +53,18 @@ httpx2>=2.10
 # 技能脚本的执行通道。web_agent 是**客户端**，studio 是**服务端**。
 # grpcio-tools 只在生成桩代码时用（scripts/gen_proto.py），运行期不需要——
 # 但它也带着 protoc 本体，装着省事。
-grpcio>=1.60
-grpcio-tools>=1.60
+#
+# 固定 1.76.0 是兼容性要求，不只是“锁一下版本”：1.85.1 的 manylinux wheel
+# 在无 AVX 的 x86_64 小主机上 import 即段错误（退出 139），会让测试在收集
+# 用例前就中止。生成桩与 runtime 必须一起升级，不能只改其中一个。
+grpcio==1.76.0
+grpcio-tools==1.76.0
 # protobuf 是**运行期**依赖：生成的桩代码 import 的是 google.protobuf。
 # 以前只靠 grpcio-tools 传递带进来——那在开发机上恰好成立，但独立构建的
 # studio 镜像（只装 grpcio）会直接炸 "No module named 'google'"。
-protobuf>=7.35.1,<8
+# grpcio-tools 1.76 生成的桩要求 protobuf 6.31.1；固定同一版本以免重新
+# 解析依赖时越过生成代码的兼容边界。
+protobuf==6.31.1
 
 # ---- 测试 ----
 pytest>=8.0

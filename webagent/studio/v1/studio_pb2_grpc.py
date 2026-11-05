@@ -5,7 +5,7 @@ import warnings
 
 from webagent.studio.v1 import studio_pb2 as webagent_dot_studio_dot_v1_dot_studio__pb2
 
-GRPC_GENERATED_VERSION = '1.85.1'
+GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class StudioStub:
+class StudioStub(object):
     """studio：技能脚本的受限执行容器。
     调用侧视角见主设计文档 §22.8。
     """
@@ -48,7 +48,7 @@ class StudioStub:
                 _registered_method=True)
 
 
-class StudioServicer:
+class StudioServicer(object):
     """studio：技能脚本的受限执行容器。
     调用侧视角见主设计文档 §22.8。
     """
@@ -88,7 +88,7 @@ def add_StudioServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class Studio:
+class Studio(object):
     """studio：技能脚本的受限执行容器。
     调用侧视角见主设计文档 §22.8。
     """
