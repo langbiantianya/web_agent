@@ -135,6 +135,7 @@ async def test_subscribe_receives_events_in_seq_order(hub: RunHub, run_id: int):
 
     assert [g["seq"] for g in got] == list(range(1, 12))
     await hub.unsubscribe(sub)
+    await hub.finalize(run_id)
 
 
 async def test_unsubscribe_stops_delivery(hub: RunHub, run_id: int):
