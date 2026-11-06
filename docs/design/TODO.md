@@ -24,6 +24,14 @@
   当前按真实 CPU 秒、内存峰值和启动耗时计算“活动请求成本”，用于准入和运行观测；
   尚未把每次消耗持久化为可对账的累计账单，也未接入云厂商价格目录。
 
+## 用户身份与会话
+
+- [ ] **P1：用户 OAuth/OIDC 登录与会话历史归属**
+  按 [V4.6 方案](../../app/design/v4.6-user-oauth-conversation.md) 落地终端用户登录、
+  HttpOnly 服务端会话、conversation owner 隔离，并移除客户端对 `user_id` 的信任。
+  该改动必须同时覆盖消息、run、取消、审批、SSE ticket 和存量历史迁移，不能只在前端
+  增加登录按钮。
+
 ## MCP
 
 - [ ] **P2：MCP authorization-code 用户委托**

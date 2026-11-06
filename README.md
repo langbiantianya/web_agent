@@ -11,7 +11,7 @@
 | 主服务 | [app/README.md](app/README.md) | 架构图、快速开始、配置、模块地图 |
 | API | [app/api/README.md](app/api/README.md) | REST 接口、SSE ticket、事件协议、恢复策略 |
 | 核心运行时 | [app/core/README.md](app/core/README.md) | Workflow、LangGraph、审批、工具、Redis 和敏感内容过滤 |
-| 设计总目录 | [docs/design/README.md](docs/design/README.md) | V1–V4.5 版本、迭代记录、已移除方案和设计入口 |
+| 设计总目录 | [docs/design/README.md](docs/design/README.md) | V1–V4.5 已实现版本、V4.6 方案、迭代记录和设计入口 |
 | 设计 TODO | [docs/design/TODO.md](docs/design/TODO.md) | 尚未完成的工作与优先级 |
 | Web 页面 | [web/README.md](web/README.md) | 功能验证台与后台管理 |
 | 独立服务 | [services/README.md](services/README.md) | studio、dispatcher、sandbox 的拓扑与信任边界 |

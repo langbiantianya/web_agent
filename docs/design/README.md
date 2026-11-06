@@ -7,6 +7,7 @@
 | 项 | 当前版本 | 状态 |
 | --- | --- | --- |
 | web_agent 主服务 | V4.5 | 已实现 |
+| 用户 OAuth 与会话历史归属 | V4.6 | 方案设计完成，待实现 |
 | 生产恢复与沙箱治理 | V4.5 | 已实现并完成真 PostgreSQL / Docker 验证 |
 | MCP 工具 | V4 | 已实现 |
 | Skill 指令包与资源工具 | V4 | 已实现 |
@@ -35,6 +36,7 @@
 | [V4.3：工具审计与结果持久化](../../app/design/v4.3-tool-audit.md) | 独立工具审计账本、脱敏与限长结果、管理员查询、保留期清理 |
 | [V4.4：治理、审批与运行时收口](../../app/design/v4.4-governance-runtime.md) | 数据库管理员与租户、Skill 生命周期、会签超时、工具策略、MCP 动态资源、Trace、取消、配额与指标 |
 | [V4.5：备份恢复、沙箱准入与成本闭环](../../app/design/v4.5-recovery-governance.md) | PostgreSQL PITR、自定义 seccomp、跨 studio 准入、真实资源成本、MCP OAuth 机器身份 |
+| [V4.6：用户 OAuth 登录与会话历史归属](../../app/design/v4.6-user-oauth-conversation.md) | OIDC、服务端会话、用户身份绑定、conversation owner、越权防护与迁移 |
 
 ### studio 服务
 
@@ -77,6 +79,7 @@
 | V4.3 | `tool_call_audit` 独立审计账本、参数与结果脱敏、管理员查询、保留期清理 | 工具结果不再只能依赖事件摘要与节点调用清单回看；审计写入与业务事务解耦 | 已完成 |
 | V4.4 | 数据库管理员/角色/租户、Skill 草稿发布归档与二进制回滚、审批会签超时、工具级策略、MCP resources/prompts 与动态通知、W3C Trace、sandbox 取消/指标/技能配额/摘要校验 | 共享管理员 Key 替换为“环境引导 Key + 数据库用户”；Skill 硬删除改为软删除；二进制只存摘要改为可回滚快照；单审批人改为会签；MCP 只接 tools 扩展为 resources/prompts；取消从进程边界贯通到容器 | 已完成 |
 | V4.5 | PostgreSQL 全量/增量备份与 PITR、自定义 seccomp、共享 dispatcher 租约配额与预算、cgroup 真实 CPU/内存指标、MCP OAuth 机器身份 | `backup_label` 作为备份识别依据改为显式标记；seccomp 文件路径改为内联 JSON；实例内配额改为共享 dispatcher 准入；静态 MCP header 扩展为可刷新 OAuth | 已完成 |
+| V4.6 | 用户 OIDC 登录、本地 `app_user`、服务端 cookie session、PKCE/state/nonce、conversation owner 隔离 | 客户端提交 `user_id` 改为认证主体派生；OAuth token 不进入浏览器存储；消息、run、审批和 SSE 统一按会话 owner 授权 | 方案设计完成，待实现 |
 
 ## 已移除、已替换或明确不做
 
@@ -127,6 +130,7 @@
 | 工具审计、结果回看、脱敏与保留期 | [V4.3](../../app/design/v4.3-tool-audit.md) |
 | 管理员、租户、会签、MCP 资源、运行期治理 | [V4.4](../../app/design/v4.4-governance-runtime.md) |
 | 备份恢复、seccomp、共享配额、成本与 MCP OAuth | [V4.5](../../app/design/v4.5-recovery-governance.md) |
+| 用户登录、Cookie 会话和历史按用户隔离 | [V4.6](../../app/design/v4.6-user-oauth-conversation.md) |
 | studio 协议、隔离、资源限制 | [studio V4](../../services/studio/design/v4-current.md) |
 | 下一步开发 | [TODO](TODO.md) |
 
