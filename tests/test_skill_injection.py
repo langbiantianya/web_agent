@@ -27,6 +27,7 @@ import uvicorn
 from app.config.db import SessionLocal
 from app.main import create_app
 from app.repo.skill_repo import skill_repo
+from tests.conftest import authenticate_client
 from tests.fake_llm import FakeLLM
 
 
@@ -66,6 +67,7 @@ async def server():
 async def client(server: str):
     """真实 HTTP 客户端（真 socket，不是 ASGITransport）。"""
     async with httpx.AsyncClient(base_url=server, timeout=30) as c:
+        await authenticate_client(c)
         yield c
 
 
@@ -147,15 +149,19 @@ async def _make_workflow(client: httpx.AsyncClient, codes: list[str]):
 async def _new_conversation(client: httpx.AsyncClient, wf_code: str):
     """开一个新会话。"""
     r = await client.post(
-        "/api/conversations", json={"workflow_code": wf_code, "user_id": "u1"}
+        "/api/conversations", json={"workflow_code": wf_code}
     )
     assert r.status_code == 201, r.text
     return r.json()
 
 
-async def _ticket(client: httpx.AsyncClient) -> str:
+async def _ticket(client: httpx.AsyncClient, run_id: int) -> str:
     """取一张一次性 SSE 凭证。"""
-    r = await client.post("/api/auth/sse-ticket", json={"user_id": "u1"})
+    r = await client.post(
+        "/api/auth/sse-ticket",
+        json={"run_id": run_id},
+        headers={"X-CSRF-Token": client.cookies.get("wa_csrf") or ""},
+    )
     assert r.status_code == 200, r.text
     return r.json()["ticket"]
 
@@ -204,7 +210,7 @@ async def test_skill_body_is_injected_as_own_system_message(
     )
     assert sent.status_code == 202, sent.text
     run_id = sent.json()["run_id"]
-    ticket = await _ticket(client)
+    ticket = await _ticket(client, run_id)
     events = await _read_sse(
         client, f"/api/runs/{run_id}/stream?ticket={ticket}&last_seq=0"
     )
@@ -232,7 +238,7 @@ async def test_no_skill_means_no_extra_system_message(
     )
     assert sent.status_code == 202, sent.text
     run_id = sent.json()["run_id"]
-    ticket = await _ticket(client)
+    ticket = await _ticket(client, run_id)
     await _read_sse(client, f"/api/runs/{run_id}/stream?ticket={ticket}&last_seq=0")
 
     messages = llm.calls[0]["messages"]
@@ -260,7 +266,7 @@ async def test_disabled_skill_is_not_injected(
     )
     assert sent.status_code == 202, sent.text
     run_id = sent.json()["run_id"]
-    ticket = await _ticket(client)
+    ticket = await _ticket(client, run_id)
     await _read_sse(client, f"/api/runs/{run_id}/stream?ticket={ticket}&last_seq=0")
 
     messages = llm.calls[0]["messages"]
@@ -292,7 +298,7 @@ async def test_skipped_skill_emits_event(
     )
     assert sent.status_code == 202, sent.text
     run_id = sent.json()["run_id"]
-    ticket = await _ticket(client)
+    ticket = await _ticket(client, run_id)
     events = await _read_sse(
         client, f"/api/runs/{run_id}/stream?ticket={ticket}&last_seq=0"
     )

@@ -49,6 +49,21 @@ class Settings(BaseSettings):
     # 2 MB 对本服务的 JSON 接口足够宽松（提示词与配置都远小于此）。
     max_request_bytes: int = 2 * 1024 * 1024
 
+    # ---- 终端用户 OAuth / 会话（V4.6）----
+    # 用户接口始终要求服务端会话。客户端提交的 user_id 不参与身份判断。
+    auth_default_tenant: str = "default"
+    user_session_cookie_secure: bool = True
+    user_session_idle_minutes: int = 30
+    user_session_absolute_hours: int = 12
+    oauth_state_ttl_seconds: int = 600
+    oauth_request_timeout_seconds: float = 10.0
+    # 固定回调根地址可避免 Host 头参与 redirect_uri。为空时仅适合本地开发。
+    oauth_public_base_url: str = ""
+    # 浏览器跨源写请求允许的 Origin；为空表示只允许同源。
+    auth_allowed_origins: list[str] = []
+    # 测试或内网 IdP 可以显式放行；生产保持 false，防 SSRF。
+    oauth_allow_private_networks: bool = False
+
     # ---- 事件流 ----
     event_batch_size: int = 20       # 累积多少条 flush 一次（设计 §4.5）
     event_flush_interval: float = 0.05  # 或每 50ms flush 一次

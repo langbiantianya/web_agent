@@ -57,30 +57,25 @@ def test_ticket_roundtrip():
 
     TTL 漏发或发成 0 会让所有 SSE 连接瞬时失效。
     """
-    ticket, ttl = issue_ticket("u1", run_id=42)
+    ticket, ttl = issue_ticket(user_id="u1", tenant_id="tenant-a", run_id=42)
     payload = verify_ticket(ticket)
     assert payload["uid"] == "u1"
+    assert payload["tenant"] == "tenant-a"
     assert payload["run_id"] == 42
     assert 0 < ttl <= 3600
 
 
 def test_ticket_bound_to_run_rejects_other_run():
     """凭证与 run_id 绑定：一个 run 的 ticket 不能拿去订阅别人的流。"""
-    ticket, _ = issue_ticket("u1", run_id=42)
+    ticket, _ = issue_ticket(user_id="u1", tenant_id="tenant-a", run_id=42)
     verify_ticket(ticket, run_id=42)  # 匹配
     with pytest.raises(UnauthorizedError, match="不匹配"):
         verify_ticket(ticket, run_id=43)
 
 
-def test_unbound_ticket_works_for_any_run():
-    """不绑 run_id 的 ticket（如整页级连接）应能用于任意 run。"""
-    ticket, _ = issue_ticket("u1")
-    verify_ticket(ticket, run_id=99)
-
-
 def test_expired_ticket_rejected():
     """过期凭证必须拒：否则一条断过的老连接可以在过期后继续偷看输出。"""
-    ticket, _ = issue_ticket("u1", ttl=-1)
+    ticket, _ = issue_ticket(user_id="u1", tenant_id="tenant-a", run_id=42, ttl=-1)
     with pytest.raises(UnauthorizedError, match="过期"):
         verify_ticket(ticket)
 
@@ -99,6 +94,6 @@ def test_empty_ticket_rejected():
 
 def test_ticket_cannot_be_forged():
     """篡改过期时间后签名校验失败。"""
-    ticket, _ = issue_ticket("u1", ttl=60)
+    ticket, _ = issue_ticket(user_id="u1", tenant_id="tenant-a", run_id=42, ttl=60)
     with pytest.raises(UnauthorizedError):
         verify_ticket(ticket[:-2] + ("aa" if not ticket.endswith("aa") else "bb"))

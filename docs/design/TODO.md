@@ -5,8 +5,8 @@
 
 优先级：`P0` 阻断生产采用，`P1` 重要缺口，`P2` 体验与扩展。
 
-截至 V4.5，已没有未完成的 P1 项；以下保留预启动容器池、多 dispatcher 一致性、
-累计计费和 MCP 用户委托等后续增强。
+截至 V4.6，OAuth/OIDC 主链路已经落地。尚未完成的生产 P1 项集中在真实 IdP
+联调、登录限频/过期 attempt 清理，以及存量会话归属处理。
 
 ## 隔离执行与成本
 
@@ -26,11 +26,17 @@
 
 ## 用户身份与会话
 
-- [ ] **P1：用户 OAuth/OIDC 登录与会话历史归属**
-  按 [V4.6 方案](../../app/design/v4.6-user-oauth-conversation.md) 落地终端用户登录、
-  HttpOnly 服务端会话、conversation owner 隔离，并移除客户端对 `user_id` 的信任。
-  该改动必须同时覆盖消息、run、取消、审批、SSE ticket 和存量历史迁移，不能只在前端
-  增加登录按钮。
+- [ ] **P1：OAuth 生产加固与真实 IdP 联调**
+  [V4.6 方案](../../app/design/v4.6-user-oauth-conversation.md) 中的 OIDC、PKCE、
+  HttpOnly 服务端会话、CSRF、供应商管理和 conversation owner 隔离已经实现，
+  并已通过专用 PostgreSQL 测试库验证。
+  上线前仍需用实际 `AUTH_DEFAULT_TENANT` 对应的 IdP 完成浏览器联调，并增加
+  start/callback 限频、过期 `oauth_login_attempt` 周期清理和 provider 故障监控。
+
+- [ ] **P1：存量 conversation 归属迁移**
+  当前 `owner_user_id` 仍允许为空，以承接无法证明真实身份的存量数据。
+  需要提供显式管理员映射工具，将已确认会话写入目标 user ID；完成无主数据归档后，
+  再把 owner 改为非空并删除旧 `conversation.user_id` 列。不能按 username 自动认领。
 
 ## MCP
 

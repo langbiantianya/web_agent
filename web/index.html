@@ -28,6 +28,9 @@
   @keyframes pulse { 50% { opacity: .3 } }
   .meta { margin-left: auto; color: var(--dim); font-size: 12px; display: flex; gap: 18px; }
   .meta b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .authbox { display: flex; align-items: center; gap: 8px; }
+  .authbox select { width: auto; min-width: 120px; padding: 5px 8px; }
+  .authbox .user { color: var(--text); font-weight: 600; }
 
   main { display: grid; grid-template-columns: 300px 1fr; gap: 16px; padding: 16px; align-items: start; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr } }
@@ -147,6 +150,12 @@
 <header>
   <span class="dot" id="healthDot"></span>
   <h1>多 Agent 协作服务 · 功能验证台</h1>
+  <div class="authbox">
+    <span class="user" id="userName">未登录</span>
+    <select id="providerSelect" hidden></select>
+    <button class="primary sm" id="btnLogin">登录</button>
+    <button class="sm" id="btnLogout" hidden>退出</button>
+  </div>
   <div class="meta">
     <span>会话 <b id="mConv">-</b></span>
     <span>Run <b id="mRun">-</b></span>
@@ -168,6 +177,7 @@
           <button class="sm" id="btnResume" disabled title="页面级恢复">恢复进度</button>
         </div>
         <div class="muted" id="convInfo">未创建会话</div>
+        <div class="list" id="convList"></div>
       </div>
     </div>
 
@@ -289,17 +299,109 @@ function syncMeta() {
 }
 
 async function api(path, method = 'GET', body) {
-  const opt = { method, headers: {} };
+  const opt = { method, headers: {}, credentials: 'same-origin' };
   if (body) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())) {
+    const csrf = cookie('wa_csrf') || cookie('__Host-wa_csrf');
+    if (csrf) opt.headers['X-CSRF-Token'] = csrf;
+  }
   const r = await fetch(API + path, opt);
   const txt = await r.text();
   let data = null;
   try { data = txt ? JSON.parse(txt) : null; } catch { data = txt; }
   if (!r.ok) {
     const msg = (data && (data.message || data.detail)) || ('HTTP ' + r.status);
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = r.status;
+    err.code = data && data.code;
+    if (r.status === 401 && path !== '/api/auth/me') {
+      banner('登录已过期，正在返回登录页…', 'warn');
+      setTimeout(() => location.reload(), 500);
+    }
+    throw err;
   }
   return data;
+}
+
+function cookie(name) {
+  const prefix = name + '=';
+  const part = document.cookie.split(';').map(v => v.trim()).find(v => v.startsWith(prefix));
+  return part ? decodeURIComponent(part.slice(prefix.length)) : '';
+}
+
+let AUTH_USER = null;
+
+async function login() {
+  const provider = $('providerSelect').value;
+  if (!provider) return fail('没有可用的登录供应商，请让管理员先配置 OIDC');
+  const returnTo = location.pathname + location.search;
+  const started = await api(
+    `/api/auth/oauth/${encodeURIComponent(provider)}/start`,
+    'POST',
+    { return_to: returnTo },
+  );
+  location.href = started.authorization_url;
+}
+
+async function logout() {
+  await api('/api/auth/logout', 'POST');
+  AUTH_USER = null;
+  $('userName').textContent = '未登录';
+  $('btnLogin').hidden = false;
+  $('btnLogout').hidden = true;
+  $('providerSelect').hidden = false;
+  enableConv(false);
+  $('convList').innerHTML = '';
+  if (S.es) { S.es.close(); S.es = null; }
+  S.convId = null; S.runId = null;
+}
+
+async function loadSession() {
+  try {
+    AUTH_USER = await api('/api/auth/me');
+  } catch (e) {
+    if (e.status !== 401) throw e;
+    const providers = await api('/api/auth/providers');
+    $('providerSelect').innerHTML = providers.map(p =>
+      `<option value="${p.code}">${p.display_name}</option>`
+    ).join('');
+    $('providerSelect').hidden = providers.length === 0;
+    $('btnLogin').hidden = providers.length === 0;
+    $('btnLogin').disabled = providers.length === 0;
+    banner(providers.length ? '请先选择身份提供商登录' : '尚未配置登录供应商', 'warn');
+    return false;
+  }
+  $('userName').textContent = AUTH_USER.username;
+  $('btnLogin').hidden = true;
+  $('btnLogout').hidden = false;
+  $('providerSelect').hidden = true;
+  return true;
+}
+
+async function loadConversationList() {
+  const rows = await api('/api/conversations?limit=50');
+  $('convList').innerHTML = rows.map(c =>
+    `<div data-id="${c.id}"><span>${escapeHtml(c.title || c.session_id.slice(0, 12))}</span>` +
+    `<span class="tag">${escapeHtml(c.status)}</span></div>`
+  ).join('') || '<div class="muted" style="padding:10px">暂无历史会话</div>';
+  $('convList').querySelectorAll('[data-id]').forEach(el => {
+    el.style.cursor = 'pointer';
+    el.onclick = () => openConversation(Number(el.dataset.id));
+  });
+}
+
+function escapeHtml(value) {
+  const el = document.createElement('span');
+  el.textContent = String(value || '');
+  return el.innerHTML;
+}
+
+async function openConversation(id) {
+  S.convId = id;
+  $('mConv').textContent = id;
+  $('convInfo').textContent = '已从历史恢复会话 #' + id;
+  await restore();
+  await loadConversationList();
 }
 
 // ---------------------------------------------------------------- 渲染
@@ -428,7 +530,7 @@ async function submitApproval(el, approved) {
   el.querySelectorAll('.acts button').forEach(b => { b.disabled = true; });
   try {
     const r = await api(`/api/runs/${S.runId}/approval`, 'POST', {
-      approved, comment, decidedBy: 'demo',
+      approved, comment,
     });
     settleApproval(el, approved, r.comment || comment);
     banner(approved ? '已批准，流程从审批处继续往下跑' : '已驳回，本次 run 就此终止', approved ? 'ok' : 'warn');
@@ -523,6 +625,12 @@ function handle(ev, seq, data) {
         setState('rejected');
       }
       break;
+    case 'ticket_expired':
+      // ticket 与登录态只在短期连接内信任；换一张新 ticket 并重新校验 session。
+      S.streaming = true;
+      if (S.es) { S.es.close(); S.es = null; }
+      setTimeout(() => { if (S.streaming && !S.finished) connect(); }, 100);
+      break;
   }
 }
 
@@ -556,7 +664,7 @@ async function connect() {
   await disconnect(false);
 
   // EventSource 不能带请求头，所以每次重连都换一张 60s 有效的新 ticket
-  S.ticket = (await api('/api/auth/sse-ticket', 'POST', { user_id: 'demo' })).ticket;
+  S.ticket = (await api('/api/auth/sse-ticket', 'POST', { run_id: S.runId })).ticket;
 
   const url = `/api/runs/${S.runId}/stream?ticket=${encodeURIComponent(S.ticket)}&last_seq=${S.lastSeq}`;
   S.es = new EventSource(url);
@@ -565,7 +673,7 @@ async function connect() {
   // approval_* 也要订阅：审批是「人要做决定」的时刻，卡片靠这些事件亮起/结算
   for (const ev of ['node_start', 'node_end', 'token', 'reasoning', 'tool_call',
                     'tool_result', 'approval_required', 'approved', 'rejected',
-                    'error', 'done']) {
+                    'error', 'done', 'ticket_expired']) {
     S.es.addEventListener(ev, e => {
       let data = {};
       try { data = JSON.parse(e.data); } catch {}
@@ -597,7 +705,7 @@ function disconnect(markDone = true) {
 async function newConversation() {
   const wfCode = $('wfSelect').value;
   if (!wfCode) return fail('还没有可用 workflow，请先执行 python -m scripts.seed');
-  const conv = await api('/api/conversations', 'POST', { workflow_code: wfCode, user_id: 'demo' });
+  const conv = await api('/api/conversations', 'POST', { workflow_code: wfCode });
   S.convId = conv.id;
   $('mConv').textContent = conv.id;
   $('convInfo').innerHTML = `session_id <code>${conv.session_id.slice(0, 12)}…</code><br>workflow_id ${conv.workflow_id}`;
@@ -605,6 +713,7 @@ async function newConversation() {
   S.nodeEls.clear();
   S.approvalEl = null;
   banner('会话已创建 #' + conv.id, 'ok');
+  await loadConversationList();
 }
 
 async function send() {
@@ -620,7 +729,7 @@ async function send() {
   addMsg('我', text, 'user');
   $('input').value = '';
 
-  const sent = await api(`/api/conversations/${S.convId}/messages`, 'POST', { content: text, user_id: 'demo' });
+  const sent = await api(`/api/conversations/${S.convId}/messages`, 'POST', { content: text });
   S.runId = sent.run_id;
   $('mRun').textContent = sent.run_id;
   localStorage.setItem(`run:${sent.run_id}:seq`, '0');
@@ -729,7 +838,7 @@ async function loadPendingApproval(runId) {
 }
 
 // ---------------------------------------------------------------- 加载
-async function loadConfig() {
+async function loadConfig(authenticated) {
   const [agents, wfs, health] = await Promise.all([
     api('/api/agents'), api('/api/workflows'), api('/api/health'),
   ]);
@@ -749,9 +858,11 @@ async function loadConfig() {
   $('wfSelect').innerHTML = enabled.map(w => `<option value="${w.code}">${w.name}（${w.code}）</option>`).join('')
     || '<option value="">（没有已启用的 workflow，请先 python -m scripts.seed）</option>';
 
-  enableConv(enabled.length > 0);
+  enableConv(authenticated && enabled.length > 0);
 }
 
+$('btnLogin').onclick = () => login().catch(fail);
+$('btnLogout').onclick = () => logout().catch(fail);
 $('btnNewConv').onclick = () => newConversation().catch(fail);
 $('btnSend').onclick = () => send().catch(fail);
 $('btnCancel').onclick = () => cancel().catch(fail);
@@ -777,11 +888,27 @@ onEvent = function (ev, seq, data) {
   }
 };
 
-loadConfig().catch(e => {
-  $('healthDot').className = 'dot off';
-  enableConv(false);
-  banner('后端不可用：' + e.message + '（请先启动 uvicorn app.main:app --reload）', 'warn');
-});
+async function initialize() {
+  const params = new URLSearchParams(location.search);
+  const authError = params.get('auth_error');
+  if (authError) {
+    banner('登录未完成：' + authError, 'warn');
+    params.delete('auth_error');
+    const clean = location.pathname + (params.toString() ? '?' + params.toString() : '');
+    history.replaceState(null, '', clean);
+  }
+  try {
+    const authenticated = await loadSession();
+    await loadConfig(authenticated);
+    if (authenticated) await loadConversationList();
+  } catch (e) {
+    $('healthDot').className = 'dot off';
+    enableConv(false);
+    banner('后端不可用：' + e.message, 'warn');
+  }
+}
+
+initialize();
 syncMeta();
 </script>
 </body>

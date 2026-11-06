@@ -309,8 +309,10 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=False,
+        # 登录态走 Cookie，浏览器 CORS 不能再使用 ``*`` + credentials。默认
+        # 只支持同源；跨域部署必须显式配置 AUTH_ALLOWED_ORIGINS。
+        allow_origins=[origin.rstrip("/") for origin in settings.auth_allowed_origins],
+        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["X-Accel-Buffering"],

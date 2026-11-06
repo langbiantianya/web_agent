@@ -26,6 +26,7 @@ from app.models.enums import RunStatus
 from app.repo.run_approval_repo import run_approval_repo
 from app.repo.run_repo import run_repo
 from tests.fake_llm import FakeLLM
+from tests.conftest import authenticate_client
 
 
 def _free_port() -> int:
@@ -100,6 +101,7 @@ async def client(server: str):
     async with httpx.AsyncClient(
         base_url=server, timeout=httpx.Timeout(30, read=60)
     ) as c:
+        await authenticate_client(c)
         yield c
 
 
@@ -157,7 +159,7 @@ async def _start_run(client: httpx.AsyncClient, wf_code: str) -> int:
     """开会话 + 发消息，返回 run_id。"""
     conv = (
         await client.post(
-            "/api/conversations", json={"workflow_code": wf_code, "user_id": "u1"}
+            "/api/conversations", json={"workflow_code": wf_code}
         )
     ).json()
     r = await client.post(
@@ -168,9 +170,14 @@ async def _start_run(client: httpx.AsyncClient, wf_code: str) -> int:
     return r.json()["run_id"]
 
 
-async def _ticket(client: httpx.AsyncClient) -> str:
+async def _ticket(client: httpx.AsyncClient, run_id: int) -> str:
     """取一张一次性 SSE 凭证。"""
-    r = await client.post("/api/auth/sse-ticket", json={"user_id": "u1"})
+    csrf = client.cookies.get("wa_csrf")
+    r = await client.post(
+        "/api/auth/sse-ticket",
+        json={"run_id": run_id},
+        headers={"X-CSRF-Token": csrf} if csrf else {},
+    )
     assert r.status_code == 200, r.text
     return r.json()["ticket"]
 
@@ -225,7 +232,7 @@ async def _decide(
     """提交一次审批决策。"""
     return await client.post(
         f"/api/runs/{run_id}/approval",
-        json={"approved": approved, "comment": comment, "decidedBy": "tester"},
+        json={"approved": approved, "comment": comment},
     )
 
 
@@ -245,7 +252,7 @@ async def test_approve_resumes_run_to_completion(client: httpx.AsyncClient, llm:
 
     run_id = await _start_run(client, f"{tag}_wf")
     calls_before = len(llm.calls)
-    ticket = await _ticket(client)
+    ticket = await _ticket(client, run_id)
 
     submitted: dict = {}
 
@@ -296,7 +303,7 @@ async def test_approve_resumes_run_to_completion(client: httpx.AsyncClient, llm:
     assert len(rows) == 1, f"应有一条审批记录，实际 {len(rows)} 条"
     assert rows[0].status == "approved"
     assert rows[0].comment == "可以执行"
-    assert rows[0].decided_by == "tester"
+    assert rows[0].decided_by == "test-user"
 
     # 审批意见进入下游节点的输入
     write_call = llm.calls[calls_before + 1]
@@ -321,7 +328,7 @@ async def test_reject_terminates_the_run(client: httpx.AsyncClient, llm: FakeLLM
 
     run_id = await _start_run(client, f"{tag}_wf")
     calls_before = len(llm.calls)
-    ticket = await _ticket(client)
+    ticket = await _ticket(client, run_id)
 
     async def on_approval(payload: dict) -> None:
         """收到审批请求：驳回。"""
@@ -374,7 +381,7 @@ async def test_double_decision_is_rejected(client: httpx.AsyncClient, llm: FakeL
     )
 
     run_id = await _start_run(client, f"{tag}_wf")
-    ticket = await _ticket(client)
+    ticket = await _ticket(client, run_id)
 
     async def on_approval(payload: dict) -> None:
         """批准一次，再点一次——第二次必须被拒。"""
@@ -432,7 +439,7 @@ async def test_approval_endpoint_returns_null_when_nothing_pending(
     assert r.status_code == 201, r.text
 
     run_id = await _start_run(client, f"{tag}_wf")
-    ticket = await _ticket(client)
+    ticket = await _ticket(client, run_id)
     events = await _read_sse(
         client, f"/api/runs/{run_id}/stream?ticket={ticket}&last_seq=0"
     )

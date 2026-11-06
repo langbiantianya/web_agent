@@ -34,6 +34,11 @@ redis>=5.0
 # ---- 配置与安全 ----
 pydantic-settings>=2.4
 cryptography>=42.0
+# OIDC ID Token 验签。禁止手写 JWT 解析：算法混淆、key rotation 与 claim
+# 校验的边界比业务代码更容易出错。
+PyJWT[crypto]>=2.9
+# OIDC discovery / token endpoint 与测试 HTTP 客户端。
+httpx>=0.27
 
 # ---- 敏感词前置过滤（V3.4）----
 # 刻意只用 numpy：不加载任何模型框架、不起任何外部服务。

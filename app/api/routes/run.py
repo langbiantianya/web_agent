@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Annotated
@@ -9,9 +10,9 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 from sse_starlette.sse import EventSourceResponse
 
-from app.api.deps import DbSession, OptionalAdminDep, ResumeFrom
+from app.api.deps import CurrentUserDep, DbSession, ResumeFrom
 from app.config.settings import settings
-from app.core.errors import BadRequestError, ConflictError, GoneError, NotFoundError
+from app.core.errors import ConflictError, GoneError, NotFoundError
 from app.core.orchestrator import get_orchestrator
 from app.core.run_hub import RunEventDTO, get_hub
 from app.core.sse_writer import get_sse_stream
@@ -47,14 +48,18 @@ def _to_sse(evt: RunEventDTO) -> dict:
 
 
 @router.get("/{run_id}", response_model=RunDetailOut)
-async def get_run(run_id: int, db: DbSession) -> RunDetailOut:
+async def get_run(
+    run_id: int, db: DbSession, user: CurrentUserDep
+) -> RunDetailOut:
     """run 详情：run 主记录 + 每个节点一步的执行情况（steps，按开始顺序）。
 
     面向「流已经结束、想复盘整体执行链路」的场景（比如某节点重试了几次、失败在
     哪一步）；**增量吐字过程仍然只能看 SSE**，这里拿到的是快照不是流。
     run 不存在返回 404。
     """
-    run = await run_repo.get_by_id(db, run_id)
+    run = await run_repo.get_for_user(
+        db, run_id, user.tenant_id, user.user_id
+    )
     if run is None:
         raise NotFoundError(f"run 不存在：{run_id}")
     steps = await run_repo.list_steps(db, run_id)
@@ -64,9 +69,13 @@ async def get_run(run_id: int, db: DbSession) -> RunDetailOut:
 
 
 @router.get("/{run_id}/messages", response_model=list[MessageOut])
-async def get_run_messages(run_id: int, db: DbSession) -> list[MessageOut]:
+async def get_run_messages(
+    run_id: int, db: DbSession, user: CurrentUserDep
+) -> list[MessageOut]:
     """run 的最终消息。事件被归档清理（410 场景）后，前端靠这个接口拿最终内容。"""
-    run = await run_repo.get_by_id(db, run_id)
+    run = await run_repo.get_for_user(
+        db, run_id, user.tenant_id, user.user_id
+    )
     if run is None:
         raise NotFoundError(f"run 不存在：{run_id}")
     msgs = await message_repo.list_by_run(db, run_id)
@@ -74,9 +83,13 @@ async def get_run_messages(run_id: int, db: DbSession) -> list[MessageOut]:
 
 
 @router.post("/{run_id}/cancel", response_model=CancelOut)
-async def cancel_run(run_id: int, db: DbSession) -> CancelOut:
+async def cancel_run(
+    run_id: int, db: DbSession, user: CurrentUserDep
+) -> CancelOut:
     """取消生成：置取消标志，执行中的 LLM 流在下一个 chunk 收尾。"""
-    run = await run_repo.get_by_id(db, run_id)
+    run = await run_repo.get_for_user(
+        db, run_id, user.tenant_id, user.user_id
+    )
     if run is None:
         raise NotFoundError(f"run 不存在：{run_id}")
 
@@ -98,12 +111,16 @@ async def cancel_run(run_id: int, db: DbSession) -> CancelOut:
 
 
 @router.get("/{run_id}/approval", response_model=ApprovalOut | None)
-async def get_pending_approval(run_id: int, db: DbSession) -> ApprovalOut | None:
+async def get_pending_approval(
+    run_id: int, db: DbSession, user: CurrentUserDep
+) -> ApprovalOut | None:
     """当前待审批项；没有就返回 null（HTTP 200 + body null）。
 
     页面刷新后靠它重建审批卡片——SSE 断了不代表审批消失了，run 还挂着等决策。
     """
-    run = await run_repo.get_by_id(db, run_id)
+    run = await run_repo.get_for_user(
+        db, run_id, user.tenant_id, user.user_id
+    )
     if run is None:
         raise NotFoundError(f"run 不存在：{run_id}")
 
@@ -118,7 +135,7 @@ async def submit_approval(
     run_id: int,
     body: ApprovalDecisionIn,
     db: DbSession,
-    admin: OptionalAdminDep,
+    user: CurrentUserDep,
 ) -> ApprovalDecisionOut:
     """提交审批决策：批准则继续跑，驳回则终止本次 run。
 
@@ -127,14 +144,16 @@ async def submit_approval(
 
     Args:
         run_id: 要决策的 run。
-        body: 决策内容（批准与否、意见、决策人）。
+        body: 决策内容（批准与否、意见）。
         db: 请求级数据库会话。
 
     Raises:
         NotFoundError: run 不存在。
         ConflictError: run 不在等待审批状态，或该审批已被决策过。
     """
-    run = await run_repo.get_by_id(db, run_id)
+    run = await run_repo.get_for_user(
+        db, run_id, user.tenant_id, user.user_id
+    )
     if run is None:
         raise NotFoundError(f"run 不存在：{run_id}")
 
@@ -145,9 +164,8 @@ async def submit_approval(
     if approval is None:
         raise ConflictError("该 run 没有待审批项（可能已被决策过）")
 
-    decided_by = admin.username if admin is not None else body.decidedBy.strip()
-    if not decided_by:
-        raise BadRequestError("审批决策必须提供 decidedBy")
+    # 用户审批人身份只来自当前会话，请求体不能指定其他人。
+    decided_by = user.username
     decided = await run_approval_repo.decide(
         db, approval.id, body.approved, body.comment, decided_by
     )
@@ -208,9 +226,17 @@ async def submit_approval(
     response_model=list[ApprovalVoteOut],
 )
 async def list_approval_votes(
-    run_id: int, approval_id: int, db: DbSession
+    run_id: int,
+    approval_id: int,
+    db: DbSession,
+    user: CurrentUserDep,
 ) -> list[ApprovalVoteOut]:
     """列出一张会签单的投票记录。"""
+    run = await run_repo.get_for_user(
+        db, run_id, user.tenant_id, user.user_id
+    )
+    if run is None:
+        raise NotFoundError(f"run 不存在：{run_id}")
     approval = await run_approval_repo.get_by_id(db, approval_id)
     if approval is None or approval.run_id != run_id:
         raise NotFoundError(f"审批不存在：{approval_id}")
@@ -233,6 +259,7 @@ async def stream_run(
     run_id: int,
     resume_from: ResumeFrom,
     db: DbSession,
+    user: CurrentUserDep,
     ticket: Annotated[str, Query(description="由 /api/auth/sse-ticket 签发的短期票据")],
 ) -> EventSourceResponse:
     """SSE 事件流：回放 + 实时合并，支持断线续传。
@@ -244,9 +271,16 @@ async def stream_run(
     - 先订阅再回放，按 ``seq > max_sent`` 去重合并，不漏字、不重复、不乱序；
     - 心跳由 EventSourceResponse 以 ``: ping`` 注释行发送，不占 seq、不落库。
     """
-    verify_ticket(ticket, run_id=run_id)
+    ticket_data = verify_ticket(ticket, run_id=run_id)
+    if (
+        ticket_data.get("uid") != user.user_id
+        or ticket_data.get("tenant") != user.tenant_id
+    ):
+        raise NotFoundError(f"run 不存在：{run_id}")
 
-    run = await run_repo.get_by_id(db, run_id)
+    run = await run_repo.get_for_user(
+        db, run_id, user.tenant_id, user.user_id
+    )
     if run is None:
         raise NotFoundError(f"run 不存在：{run_id}")
 
@@ -294,8 +328,20 @@ async def stream_run(
         用户重连后凭 last_seq 续上即可（设计文档 §9）。
         """
         try:
-            async for evt in sse_stream.stream(run_id, resume_from):
-                yield _to_sse(evt)
+            # ticket 与登录会话都不是永久凭证。连接最多存活一个 ticket TTL，
+            # 到点后发一个控制事件让前端重新换票；新连接会重新校验 session，
+            # 因而登出、停用和撤销最多在一个 TTL 内生效。
+            async with asyncio.timeout(settings.sse_ticket_ttl):
+                async for evt in sse_stream.stream(run_id, resume_from):
+                    yield _to_sse(evt)
+        except TimeoutError:
+            yield {
+                "event": "ticket_expired",
+                "data": json.dumps(
+                    {"reason": "ticket_expired", "runId": run_id},
+                    ensure_ascii=False,
+                ),
+            }
         except Exception:  # noqa: BLE001
             # 客户端断开属正常路径（sse_starlette 会取消生成器），
             # run 不受影响，继续在后台生成并写库。

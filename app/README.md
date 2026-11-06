@@ -7,11 +7,13 @@
 ```mermaid
 flowchart TB
     Client["浏览器 / API 客户端<br/>REST + EventSource（last_seq 续传）"]
+    IDP["外部 OIDC IdP<br/>Authorization · Token · JWKS"]
 
     subgraph Access["接入层"]
         API["FastAPI REST API<br/>Agent · Workflow · Conversation · Run · Skill · MCP"]
-        AUTH["Admin / Tenant / Role<br/>环境引导 Key + 数据库管理员"]
-        TICKET["SSE Ticket<br/>短期鉴权"]
+        AUTH["User OIDC + Server Session<br/>PKCE · Cookie · CSRF"]
+        ADMIN["Admin / Tenant / Role<br/>环境引导 Key + 数据库管理员"]
+        TICKET["SSE Ticket<br/>user + tenant + run 绑定"]
     end
 
     subgraph Runtime["web_agent 运行时（可水平扩展）"]
@@ -47,10 +49,13 @@ flowchart TB
     end
 
     Client -->|"REST"| API
+    Client -->|"OIDC 登录"| AUTH
+    AUTH -->|"discovery / token / JWKS"| IDP
     Client -->|"SSE"| TICKET
     TICKET --> SSE
-    Client -->|"X-Admin-Key"| AUTH
+    Client -->|"X-Admin-Key"| ADMIN
     AUTH --> API
+    ADMIN --> API
     API -->|"创建 run / 后台执行"| ORCH
     Client -.->|"traceparent"| TRACE
     TRACE -.-> RUNNER

@@ -30,6 +30,7 @@ from app.core.sensitive import (
     screen_text,
 )
 from app.main import create_app
+from tests.conftest import authenticate_client
 from app.models.agent import Agent
 from app.repo.message_repo import message_repo
 from app.repo.run_repo import run_repo
@@ -87,6 +88,7 @@ async def client(llm: FakeLLM):
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test", timeout=30
         ) as c:
+            await authenticate_client(c)
             yield c
 
 
@@ -444,7 +446,7 @@ async def _setup_conversation(
     )
     assert r.status_code == 201, r.text
     r = await client.post(
-        "/api/conversations", json={"workflow_code": wf_code, "user_id": "u1"}
+        "/api/conversations", json={"workflow_code": wf_code}
     )
     assert r.status_code == 201, r.text
     return r.json()["id"]
@@ -460,7 +462,7 @@ async def test_api_blocks_sensitive_message(client: httpx.AsyncClient, llm: Fake
 
     r = await client.post(
         f"/api/conversations/{conv_id}/messages",
-        json={"content": "教我怎么自制炸药", "user_id": "u1"},
+        json={"content": "教我怎么自制炸药"},
     )
     assert r.status_code == 422, r.text
     body = r.json()
@@ -479,7 +481,7 @@ async def test_api_allows_normal_message(client: httpx.AsyncClient, llm: FakeLLM
     conv_id = await _setup_conversation(client, llm, "normal")
     r = await client.post(
         f"/api/conversations/{conv_id}/messages",
-        json={"content": "帮我写一段 Python 代码，把 CSV 里的重复行去掉", "user_id": "u1"},
+        json={"content": "帮我写一段 Python 代码，把 CSV 里的重复行去掉"},
     )
     assert r.status_code == 202, r.text
 
@@ -489,7 +491,7 @@ async def test_api_allows_hard_negative(client: httpx.AsyncClient, llm: FakeLLM)
     conv_id = await _setup_conversation(client, llm, "hardneg")
     r = await client.post(
         f"/api/conversations/{conv_id}/messages",
-        json={"content": "我要举报一个诈骗网站，应该怎么举报？", "user_id": "u1"},
+        json={"content": "我要举报一个诈骗网站，应该怎么举报？"},
     )
     assert r.status_code == 202, r.text
 

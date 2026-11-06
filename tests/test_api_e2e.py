@@ -18,6 +18,7 @@ from app.core.run_hub import get_hub
 from app.main import create_app
 from app.repo.run_event_repo import run_event_repo
 from app.repo.run_repo import run_repo
+from tests.conftest import authenticate_client
 from tests.fake_llm import FakeLLM
 
 
@@ -47,6 +48,7 @@ async def client(llm: FakeLLM):
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test", timeout=30
         ) as c:
+            await authenticate_client(c)
             yield c
 
 
@@ -98,15 +100,20 @@ async def _make_workflow(client: httpx.AsyncClient, codes: list[str], llm: FakeL
 async def _new_conversation(client: httpx.AsyncClient, wf_code: str):
     """开一个新会话；对话必须挂在一个 workflow 上，否则没有编排器可跑。"""
     r = await client.post(
-        "/api/conversations", json={"workflow_code": wf_code, "user_id": "u1"}
+        "/api/conversations", json={"workflow_code": wf_code}
     )
     assert r.status_code == 201, r.text
     return r.json()
 
 
-async def _ticket(client: httpx.AsyncClient) -> str:
+async def _ticket(client: httpx.AsyncClient, run_id: int) -> str:
     """取一张一次性 SSE 凭证：EventSource 不能带自定义头，只能走 query。"""
-    r = await client.post("/api/auth/sse-ticket", json={"user_id": "u1"})
+    csrf = client.cookies.get("wa_csrf")
+    r = await client.post(
+        "/api/auth/sse-ticket",
+        json={"run_id": run_id},
+        headers={"X-CSRF-Token": csrf} if csrf else {},
+    )
     assert r.status_code == 200, r.text
     return r.json()["ticket"]
 
@@ -337,7 +344,7 @@ async def test_full_pipeline_streams_and_persists(
     assert sent.status_code == 202, sent.text
     run_id = sent.json()["run_id"]
 
-    ticket = await _ticket(client)
+    ticket = await _ticket(client, run_id)
     events = await _read_sse(
         client, f"/api/runs/{run_id}/stream?ticket={ticket}&last_seq=0"
     )
@@ -453,7 +460,7 @@ async def test_resume_after_disconnect_replays_remaining_tokens(
             f"/api/conversations/{conv['id']}/messages", json={"content": "问题"}
         )
         run_id = sent.json()["run_id"]
-        ticket = await _ticket(client)
+        ticket = await _ticket(client, run_id)
 
         # --- 第一次连接：读到 2 个 token 就主动断开 ---
         first_batch: list[tuple[str, int, dict]] = []
@@ -506,7 +513,7 @@ async def test_last_event_id_header_takes_priority(
         f"/api/conversations/{conv['id']}/messages", json={"content": "问题"}
     )
     run_id = sent.json()["run_id"]
-    ticket = await _ticket(client)
+    ticket = await _ticket(client, run_id)
 
     await _read_sse(client, f"/api/runs/{run_id}/stream?ticket={ticket}")
 
@@ -535,8 +542,12 @@ async def test_stream_requires_valid_ticket(client: httpx.AsyncClient, llm: Fake
 
 async def test_stream_on_missing_run_is_404(client: httpx.AsyncClient):
     """run 不存在要 404 而不是「开一条空流等消息」——那会让前端永远转圈。"""
-    ticket = await _ticket(client)
-    r = await client.get(f"/api/runs/999999/stream?ticket={ticket}")
+    csrf = client.cookies.get("wa_csrf")
+    r = await client.post(
+        "/api/auth/sse-ticket",
+        json={"run_id": 999999},
+        headers={"X-CSRF-Token": csrf} if csrf else {},
+    )
     assert r.status_code == 404
 
 

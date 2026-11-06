@@ -246,11 +246,10 @@
   <!-- ================================================ 会话观测 -->
   <section id="tab-convs" class="split hidden">
     <div class="card">
-      <h2>会话列表 <span class="sp"><button class="sm primary" id="btnNewConv">+ 新建</button></span></h2>
+      <h2>我的会话 <span class="sp"><button class="sm primary" id="btnNewConv">+ 新建</button></span></h2>
       <div style="padding:10px 14px;border-bottom:1px solid var(--border)">
-        <label style="margin:0"><span>user_id <span class="hint">（列表接口按用户过滤，不传只看 anonymous）</span></span></span>
+        <span class="hint">会话观测使用当前浏览器的用户 OAuth 登录态，不再接受手工 user_id。</span>
         <div class="row" style="margin-top:6px">
-          <input type="text" id="convUser" value="anonymous" style="flex:1;min-width:120px">
           <button class="sm" id="btnLoadConvs">查询</button>
         </div>
       </div>
@@ -280,6 +279,12 @@ const state = {
 let adminKey = "";
 const $ = id => document.getElementById(id);
 
+function cookieValue(name) {
+  const prefix = name + "=";
+  const part = document.cookie.split(";").map(v => v.trim()).find(v => v.startsWith(prefix));
+  return part ? decodeURIComponent(part.slice(prefix.length)) : "";
+}
+
 // ------------------------------------------------------------ 基础设施
 
 /** 把服务端错误压成一句人话。后端统一返回 {code,message,data}，校验错误在 data.errors 里。 */
@@ -296,8 +301,13 @@ function errText(r, body) {
 
 async function api(path, opts) {
   opts = opts || {};
-  const init = { method: opts.method || "GET", headers: { "Content-Type": "application/json" } };
+  const method = opts.method || "GET";
+  const init = { method, headers: { "Content-Type": "application/json" }, credentials: "same-origin" };
   if (opts.admin && adminKey) init.headers["X-Admin-Key"] = adminKey;
+  if (!["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase())) {
+    const csrf = cookieValue("wa_csrf") || cookieValue("__Host-wa_csrf");
+    if (csrf) init.headers["X-CSRF-Token"] = csrf;
+  }
   if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
   const r = await fetch(path, init);
   if (r.status === 204) return null;
@@ -313,7 +323,11 @@ async function apiUpload(path, form, opts) {
   opts = opts || {};
   const headers = {};
   if (opts.admin && adminKey) headers["X-Admin-Key"] = adminKey;
-  const r = await fetch(path, { method: opts.method || "POST", headers, body: form });
+  const csrf = cookieValue("wa_csrf") || cookieValue("__Host-wa_csrf");
+  if (csrf) headers["X-CSRF-Token"] = csrf;
+  const r = await fetch(path, {
+    method: opts.method || "POST", headers, body: form, credentials: "same-origin",
+  });
   const text = await r.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch (e) { body = null; }
@@ -329,7 +343,11 @@ async function apiBinary(path, blob, resourcePath, opts) {
     "X-Resource-Path": resourcePath,
   };
   if (opts.admin && adminKey) headers["X-Admin-Key"] = adminKey;
-  const r = await fetch(path, { method: "PUT", headers, body: blob });
+  const csrf = cookieValue("wa_csrf") || cookieValue("__Host-wa_csrf");
+  if (csrf) headers["X-CSRF-Token"] = csrf;
+  const r = await fetch(path, {
+    method: "PUT", headers, body: blob, credentials: "same-origin",
+  });
   const text = await r.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch (e) { body = null; }
@@ -1242,20 +1260,17 @@ async function delWorkflow() {
 // ------------------------------------------------------------ 会话观测
 
 async function loadConvs() {
-  // 列表接口没有「列全部」，只有按 user_id 过滤（不传则一律落到 anonymous）。
-  // 所以这里必须带上当前输入的 user_id，否则换了用户的会话会永远查不出来。
-  const uid = ($("convUser").value || "anonymous").trim();
-  state.convs = await api("/api/conversations?limit=200&user_id=" + encodeURIComponent(uid));
+  state.convs = await api("/api/conversations?limit=200");
   const el = $("convList");
   if (!state.convs.length) {
-    el.innerHTML = '<div class="muted" style="padding:14px">该 user_id 下没有会话</div>';
+    el.innerHTML = '<div class="muted" style="padding:14px">当前登录用户没有会话</div>';
     return;
   }
   el.innerHTML = state.convs.map(c => `
     <div data-act="conv" data-id="${c.id}" class="${state.conv && state.conv.id === c.id ? "sel" : ""}">
       <div style="min-width:0">
         <div class="nm">${esc(c.title || "（无标题）")}</div>
-        <div class="sub">#${c.id} · ${esc(c.user_id)} · ${fmtTime(c.updated_at)}</div>
+        <div class="sub">#${c.id} · ${fmtTime(c.updated_at)}</div>
       </div>
       <span class="tag ${c.status === "active" ? "ok" : ""}">${esc(c.status)}</span>
     </div>`).join("");
@@ -1265,9 +1280,8 @@ function newConv() {
   if (!state.wfs.length) { toast("先建一个 Workflow 再开会话", "bad"); return; }
   const code = prompt("绑定哪个 Workflow？\n可用：" + state.wfs.map(w => w.code).join(", "), state.wfs[0].code);
   if (!code) return;
-  const uid = ($("convUser").value || "anonymous").trim();
   guard(async () => {
-    const c = await api("/api/conversations", { method: "POST", body: { workflow_code: code, user_id: uid } });
+    const c = await api("/api/conversations", { method: "POST", body: { workflow_code: code } });
     await loadConvs();
     await openConv(c.id);
   }, "会话已创建");
@@ -1291,7 +1305,7 @@ async function renderConvDetail() {
   const active = await api("/api/conversations/" + c.id + "/active-run");
 
   let html = '<div class="row" style="margin-bottom:12px">' +
-    '<span class="muted">' + esc(c.title || "（无标题）") + " · user=" + esc(c.user_id) + " · " + fmtTime(c.created_at) + "</span>" +
+    '<span class="muted">' + esc(c.title || "（无标题）") + " · " + fmtTime(c.created_at) + "</span>" +
     '<span style="margin-left:auto"></span>' +
     (active
       ? '<span class="tag warn">run ' + active.run_id + " " + esc(active.status) + " · " + esc(active.current_node || "—") + " · seq " + active.last_seq + "</span>"

@@ -42,6 +42,7 @@ from app.main import create_app
 from app.repo.run_repo import run_repo
 from services.studio.config import StudioConfig
 from services.studio.server import StudioService
+from tests.conftest import authenticate_client
 from tests.fake_llm import FakeLLM
 from webagent.studio.v1 import studio_pb2_grpc
 
@@ -193,6 +194,7 @@ async def app_server(studio, monkeypatch):
 async def client(app_server: str):
     """真实 HTTP 客户端（真 socket，不是 ASGITransport）。"""
     async with httpx.AsyncClient(base_url=app_server, timeout=60) as c:
+        await authenticate_client(c)
         yield c
 
 
@@ -319,7 +321,7 @@ async def _run_once(
     )
     assert wf.status_code == 201, wf.text
     conv = await client.post(
-        "/api/conversations", json={"workflow_code": wf.json()["code"], "user_id": "u1"}
+        "/api/conversations", json={"workflow_code": wf.json()["code"]}
     )
     assert conv.status_code == 201, conv.text
     sent = await client.post(
@@ -327,7 +329,11 @@ async def _run_once(
     )
     assert sent.status_code == 202, sent.text
     run_id = sent.json()["run_id"]
-    ticket = await client.post("/api/auth/sse-ticket", json={"user_id": "u1"})
+    ticket = await client.post(
+        "/api/auth/sse-ticket",
+        json={"run_id": run_id},
+        headers={"X-CSRF-Token": client.cookies.get("wa_csrf") or ""},
+    )
     assert ticket.status_code == 200, ticket.text
     events = await _read_sse(
         client, f"/api/runs/{run_id}/stream?ticket={ticket.json()['ticket']}&last_seq=0"

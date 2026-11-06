@@ -6,8 +6,8 @@
 
 | 项 | 当前版本 | 状态 |
 | --- | --- | --- |
-| web_agent 主服务 | V4.5 | 已实现 |
-| 用户 OAuth 与会话历史归属 | V4.6 | 方案设计完成，待实现 |
+| web_agent 主服务 | V4.6 | 基础实现完成 |
+| 用户 OAuth 与会话历史归属 | V4.6 | OIDC、会话与所有权隔离已通过真 PostgreSQL 验证；真实 IdP/存量迁移待完成 |
 | 生产恢复与沙箱治理 | V4.5 | 已实现并完成真 PostgreSQL / Docker 验证 |
 | MCP 工具 | V4 | 已实现 |
 | Skill 指令包与资源工具 | V4 | 已实现 |
@@ -79,7 +79,7 @@
 | V4.3 | `tool_call_audit` 独立审计账本、参数与结果脱敏、管理员查询、保留期清理 | 工具结果不再只能依赖事件摘要与节点调用清单回看；审计写入与业务事务解耦 | 已完成 |
 | V4.4 | 数据库管理员/角色/租户、Skill 草稿发布归档与二进制回滚、审批会签超时、工具级策略、MCP resources/prompts 与动态通知、W3C Trace、sandbox 取消/指标/技能配额/摘要校验 | 共享管理员 Key 替换为“环境引导 Key + 数据库用户”；Skill 硬删除改为软删除；二进制只存摘要改为可回滚快照；单审批人改为会签；MCP 只接 tools 扩展为 resources/prompts；取消从进程边界贯通到容器 | 已完成 |
 | V4.5 | PostgreSQL 全量/增量备份与 PITR、自定义 seccomp、共享 dispatcher 租约配额与预算、cgroup 真实 CPU/内存指标、MCP OAuth 机器身份 | `backup_label` 作为备份识别依据改为显式标记；seccomp 文件路径改为内联 JSON；实例内配额改为共享 dispatcher 准入；静态 MCP header 扩展为可刷新 OAuth | 已完成 |
-| V4.6 | 用户 OIDC 登录、本地 `app_user`、服务端 cookie session、PKCE/state/nonce、conversation owner 隔离 | 客户端提交 `user_id` 改为认证主体派生；OAuth token 不进入浏览器存储；消息、run、审批和 SSE 统一按会话 owner 授权 | 方案设计完成，待实现 |
+| V4.6 | 用户 OIDC 登录、本地 `app_user`、服务端 cookie session、PKCE/state/nonce、conversation owner 隔离 | 客户端提交 `user_id` 改为认证主体派生；OAuth token 不进入浏览器存储；消息、run、审批和 SSE 统一按会话 owner 授权 | 基础实现与真 PostgreSQL 验证完成；真实 IdP 与存量迁移待完成 |
 
 ## 已移除、已替换或明确不做
 
@@ -110,6 +110,8 @@
 | gRPC 取消只停在 studio | 取消传播到 dispatcher，并强删一次性容器 | 调用方放弃后不能继续占用宿主资源 |
 | MCP 只发现 tools | 支持 resources、resource templates、资源读取、prompts 与目录变更通知 | MCP 服务的能力不应被客户端截断 |
 | 镜像签名验证 | 明确不做；继续使用镜像目录白名单、最小基础镜像和生产 digest 固定 | 用户明确不需要签名体系，避免再把它列为 TODO |
+| 客户端提交 `user_id` 决定会话归属 | 会话只绑定服务端 session 派生的不可变 `app_user.id`，无匿名降级；越权统一 404 | 可伪造身份会直接破坏历史隔离与审批边界 |
+| 浏览器保存 OAuth access/refresh token | 登录只建立 HttpOnly 服务端会话，第三方 token 默认不落库、不下发浏览器 | 降低 XSS 泄漏面，并让会话可以服务端立即撤销 |
 
 ## 阅读路径
 

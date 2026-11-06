@@ -13,8 +13,19 @@ class Conversation(Base):
     __tablename__ = "conversation"
 
     id: Mapped[int] = mapped_column(PK, primary_key=True, autoincrement=True)
-    session_id: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
+    session_id: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(
+        sa.String(64), nullable=False, default="default"
+    )
+    owner_user_id: Mapped[str | None] = mapped_column(
+        sa.String(36),
+        sa.ForeignKey("app_user.id", name="fk_conversation_owner"),
+        # 迁移期存量行可能无主；新业务写入始终要求该字段。
+        nullable=True,
+    )
     workflow_id: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    # 旧客户端字段仅为存量数据库迁移保留；新行使用服务端默认值，不参与认证、
+    # 查询或 ownership。
     user_id: Mapped[str] = mapped_column(sa.String(64), default="anonymous")
     title: Mapped[str] = mapped_column(sa.String(255), default="")
     status: Mapped[str] = mapped_column(
@@ -32,6 +43,16 @@ class Conversation(Base):
 
     __table_args__ = (
         sa.Index("idx_user", "user_id", "created_at"),
+        sa.UniqueConstraint(
+            "tenant_id", "session_id", name="uq_conversation_tenant_session"
+        ),
+        sa.Index(
+            "idx_conversation_tenant_owner_updated",
+            "tenant_id",
+            "owner_user_id",
+            "updated_at",
+            "id",
+        ),
     )
 
     def __repr__(self) -> str:  # pragma: no cover

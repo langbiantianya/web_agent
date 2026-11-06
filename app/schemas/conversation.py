@@ -15,7 +15,6 @@ from app.schemas.common import ORMBase
 class ConversationCreate(BaseModel):
     session_id: str | None = Field(default=None, max_length=64)
     workflow_code: str = Field(min_length=1, max_length=64)
-    user_id: str = Field(default="anonymous", max_length=64)
     title: str = Field(default="", max_length=255)
 
 
@@ -23,7 +22,6 @@ class ConversationOut(ORMBase):
     id: int
     session_id: str
     workflow_id: int
-    user_id: str
     title: str
     status: str
     created_at: datetime | None = None
@@ -37,7 +35,6 @@ class SendMessageIn(BaseModel):
     # 长度上限：提示词是要整段送进模型的，无上限的话一条 5 MB 的消息会被完整
     # 受理——进内存、落库、送 LLM。2 万字对正常提示词绰绰有余。
     content: str = Field(min_length=1, max_length=20_000)
-    user_id: str = Field(default="anonymous", max_length=64)
 
 
 class SendMessageOut(BaseModel):
@@ -140,8 +137,6 @@ class ApprovalDecisionIn(BaseModel):
     approved: bool
     # 驳回时建议写清原因：它会进 run 的 error_msg，也是给下游模型的上下文
     comment: str = ""
-    # 谁做的决策（user_id / 姓名），只做审计用
-    decidedBy: str = ""
 
 
 class ApprovalDecisionOut(BaseModel):

@@ -48,6 +48,8 @@ os.environ["DEBUG"] = "false"
 # 管理员门禁的密钥（V4）。测试里要能以管理员身份调写接口；「未配置即拒绝」那条
 # fail-closed 的行为由 tests/test_admin.py 用 monkeypatch 单独钉住。
 os.environ["ADMIN_KEY"] = "test-admin-key"
+# 测试 HTTP 客户端使用 http://127.0.0.1，不启用 Secure 才能携带本地会话 Cookie。
+os.environ["USER_SESSION_COOKIE_SECURE"] = "false"
 # 让批量落库在测试里几乎立即发生，但不关掉批量逻辑本身
 os.environ["EVENT_BATCH_SIZE"] = "5"
 os.environ["EVENT_FLUSH_INTERVAL"] = "0.02"
@@ -73,6 +75,66 @@ os.environ["REDIS_ENABLED"] = "false"
 
 from app.core.run_hub import get_hub  # noqa: E402
 from app.models import Base  # noqa: E402
+
+
+async def authenticate_client(
+    client,
+    *,
+    username: str = "test-user",
+    tenant_id: str = "default",
+) -> str:
+    """给测试 HTTP 客户端装一个真实服务端用户会话。
+
+    这不是生产 bypass：用户、session token 与 CSRF 都走正式表和正式校验，
+    只是测试不走外部 IdP 的浏览器跳转。返回 CSRF token，写请求需放进 header。
+    """
+    import uuid
+
+    from app.config.db import SessionLocal
+    from app.core.user_auth import (
+        create_user_session,
+        csrf_cookie_name,
+        session_cookie_name,
+    )
+    from app.models.user import AppUser
+
+    async with SessionLocal() as db:
+        user = await db.scalar(
+            sa_select_user(username, tenant_id)
+        )
+        if user is None:
+            user = AppUser(
+                id=str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"web-agent-test:{tenant_id}:{username}",
+                    )
+                ),
+                tenant_id=tenant_id,
+                username=username,
+                status="active",
+            )
+            db.add(user)
+            await db.flush()
+        token, csrf = await create_user_session(db, user.id)
+        await db.commit()
+    client.cookies.set(session_cookie_name(), token)
+    client.cookies.set(csrf_cookie_name(), csrf)
+    # 测试客户端统一自动带 CSRF header；浏览器前端仍从非 HttpOnly Cookie 读取。
+    client.headers["X-CSRF-Token"] = csrf
+    return csrf
+
+
+def sa_select_user(username: str, tenant_id: str):
+    """构造测试用户查询；独立函数避免 conftest 顶部提前 import app 模块。"""
+    import sqlalchemy as sa
+
+    from app.models.user import AppUser
+
+    return sa.select(AppUser).where(
+        AppUser.tenant_id == tenant_id,
+        AppUser.username == username,
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -27,28 +27,45 @@ from app.core.ticket import issue_ticket
 from app.models.conversation import Conversation
 from app.models.enums import RunStatus
 from app.models.run import Run
+from app.models.user import AppUser
+from app.core.user_auth import UserPrincipal
 from app.repo.run_repo import run_repo
 
 _convs = itertools.count(980_000)
 
 
-async def _make_run_row(run_id: int) -> None:
+async def _make_run_row(run_id: int) -> tuple[str, str]:
     """造一个 run 行，供 SSE 路由查询。
 
     Args:
         run_id: 目标 run id。
     """
+    user_id = "00000000-0000-4000-8000-000000098001"
+    tenant_id = "default"
+    conv_id = next(_convs)
     async with SessionLocal() as db:
+        db.add(AppUser(id=user_id, tenant_id=tenant_id, username="sse-test"))
+        db.add(
+            Conversation(
+                id=conv_id,
+                session_id=f"s-{conv_id}",
+                tenant_id=tenant_id,
+                owner_user_id=user_id,
+                workflow_id=1,
+                user_id="sse-test",
+            )
+        )
         db.add(
             Run(
                 id=run_id,
-                conversation_id=next(_convs),
+                conversation_id=conv_id,
                 workflow_id=1,
                 status=RunStatus.RUNNING.value,
                 last_seq=0,
             )
         )
         await db.commit()
+    return user_id, tenant_id
 
 
 async def test_sse_route_releases_db_transaction_before_streaming():
@@ -69,11 +86,29 @@ async def test_sse_route_releases_db_transaction_before_streaming():
     连接才会被归还池子。
     """
     run_id = 98_001
-    await _make_run_row(run_id)
-    ticket, _ = issue_ticket(user_id="u1", run_id=run_id)
+    user_id, tenant_id = await _make_run_row(run_id)
+    ticket, _ = issue_ticket(user_id=user_id, tenant_id=tenant_id, run_id=run_id)
+    user = UserPrincipal(
+        user_id=user_id,
+        tenant_id=tenant_id,
+        username="sse-test",
+        phone=None,
+        phone_verified=None,
+        email=None,
+        email_verified=None,
+        status="active",
+        session_id=1,
+        csrf_hash="0" * 64,
+    )
 
     async with SessionLocal() as db:
-        await stream_run(run_id=run_id, resume_from=0, db=db, ticket=ticket)
+        await stream_run(
+            run_id=run_id,
+            resume_from=0,
+            db=db,
+            user=user,
+            ticket=ticket,
+        )
         # 关键断言：路由已经返回了 StreamingResponse，但事务必须已经结束
         assert not db.in_transaction(), (
             "SSE 路由返回后仍持有 DB 事务——连接会被一直占着，"

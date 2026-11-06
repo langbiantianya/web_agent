@@ -24,6 +24,7 @@ from app.config.db import SessionLocal
 from app.config.settings import settings
 from app.main import create_app
 from app.repo.run_repo import run_repo
+from tests.conftest import authenticate_client
 from tests.fake_llm import FakeLLM
 
 
@@ -72,6 +73,7 @@ async def server():
 async def client(server: str):
     """真实 HTTP 客户端（真 socket，不是 ASGITransport）。"""
     async with httpx.AsyncClient(base_url=server, timeout=30) as c:
+        await authenticate_client(c)
         yield c
 
 
@@ -150,15 +152,19 @@ async def _make_workflow(client: httpx.AsyncClient, codes: list[str]):
 async def _new_conversation(client: httpx.AsyncClient, wf_code: str):
     """开一个新会话。"""
     r = await client.post(
-        "/api/conversations", json={"workflow_code": wf_code, "user_id": "u1"}
+        "/api/conversations", json={"workflow_code": wf_code}
     )
     assert r.status_code == 201, r.text
     return r.json()
 
 
-async def _ticket(client: httpx.AsyncClient) -> str:
+async def _ticket(client: httpx.AsyncClient, run_id: int) -> str:
     """取一张一次性 SSE 凭证。"""
-    r = await client.post("/api/auth/sse-ticket", json={"user_id": "u1"})
+    r = await client.post(
+        "/api/auth/sse-ticket",
+        json={"run_id": run_id},
+        headers={"X-CSRF-Token": client.cookies.get("wa_csrf") or ""},
+    )
     assert r.status_code == 200, r.text
     return r.json()["ticket"]
 
@@ -212,7 +218,7 @@ async def _run_once(
     )
     assert sent.status_code == 202, sent.text
     run_id = sent.json()["run_id"]
-    ticket = await _ticket(client)
+    ticket = await _ticket(client, run_id)
     events = await _read_sse(
         client, f"/api/runs/{run_id}/stream?ticket={ticket}&last_seq=0"
     )

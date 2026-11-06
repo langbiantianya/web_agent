@@ -71,6 +71,12 @@ _EXPECTED_TABLES = {
     "tool_call_audit",
     # V4.4：管理员身份与租户
     "admin_user",
+    # V4.6：终端用户 OIDC、身份绑定与服务端会话
+    "oauth_provider",
+    "oauth_login_attempt",
+    "app_user",
+    "user_identity",
+    "user_session",
 }
 
 

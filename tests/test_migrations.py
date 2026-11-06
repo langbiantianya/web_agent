@@ -57,6 +57,11 @@ EXPECTED_TABLES = {
     "llm_endpoint",
     "tool_call_audit",
     "admin_user",
+    "oauth_provider",
+    "oauth_login_attempt",
+    "app_user",
+    "user_identity",
+    "user_session",
 }
 
 
@@ -150,7 +155,7 @@ def _sqlite_type(decl: str) -> str:
 
 
 def test_primary_keys_are_rowid_aliases(migrated_db: Path):
-    """每个表的主键列都必须声明成 ``INTEGER PRIMARY KEY``。
+    """除字符串 UUID 主键的 app_user 外，主键都必须声明成 ``INTEGER PRIMARY KEY``。
 
     SQLite 里只有 ``INTEGER PRIMARY KEY`` 才是 rowid 别名、才会自增。写成
     ``BIGINT`` 的主键不会自增，插入时必须自己给 id，实际报错是
@@ -165,6 +170,8 @@ def test_primary_keys_are_rowid_aliases(migrated_db: Path):
     INTEGER 都算成 "INTEGER"，主键到底能不能自增被抹平了。
     """
     for table in sorted(EXPECTED_TABLES):
+        if table == "app_user":
+            continue
         pk = [
             r for r in _query(migrated_db, f"PRAGMA table_info({table})")
             if r[5]
@@ -175,6 +182,12 @@ def test_primary_keys_are_rowid_aliases(migrated_db: Path):
             f"{table}.{name} 声明成 {decl}——SQLite 上只有 INTEGER PRIMARY KEY "
             f"才自增，写成 BIGINT 会报 NOT NULL constraint failed"
         )
+    app_user_pk = [
+        r for r in _query(migrated_db, "PRAGMA table_info(app_user)") if r[5]
+    ]
+    assert len(app_user_pk) == 1
+    assert app_user_pk[0][1] == "id"
+    assert app_user_pk[0][2].upper() in {"TEXT", "VARCHAR(36)"}
 
 
 @pytest.mark.parametrize(
@@ -183,7 +196,12 @@ def test_primary_keys_are_rowid_aliases(migrated_db: Path):
         ("run_event", {"idx_run_created"}),
         ("message", {"idx_conv", "idx_run"}),
         ("run", {"idx_conv_status", "idx_status"}),
-        ("conversation", {"idx_user"}),
+        (
+            "conversation",
+            {"idx_user", "idx_conversation_tenant_owner_updated"},
+        ),
+        ("app_user", {"idx_app_user_tenant_status"}),
+        ("user_session", {"idx_user_session_user_active", "idx_user_session_expiry"}),
         ("llm_endpoint", {"idx_llm_endpoint_enabled_priority"}),
         (
             "tool_call_audit",

@@ -18,7 +18,7 @@ from app.core.errors import UnauthorizedError
 
 
 def issue_ticket(
-    user_id: str = "anonymous", run_id: int | None = None, ttl: int | None = None
+    *, user_id: str, tenant_id: str, run_id: int, ttl: int | None = None
 ) -> tuple[str, int]:
     """签发一次性 SSE 凭证。
 
@@ -26,8 +26,9 @@ def issue_ticket(
     nginx 访问日志和 Referer，所以这里发**短期** ticket 而非长期 token。
 
     Args:
-        user_id: 会话用户 id，校验时回传给调用方做归属判断。
-        run_id: 可选。带上即把 ticket 与该 run 绑定，只能用于这一条流。
+        user_id: 不可变本地用户 id。
+        tenant_id: 用户租户，流接口会再次核验。
+        run_id: ticket 只能用于这一条 run。
         ttl: 有效期秒数，默认取 ``settings.sse_ticket_ttl``。
 
     Returns:
@@ -35,9 +36,12 @@ def issue_ticket(
         重连」，而不是硬编码一个可能已经过期的等待时长。
     """
     ttl = ttl if ttl is not None else settings.sse_ticket_ttl
-    payload = {"uid": user_id, "exp": int(time.time()) + ttl}
-    if run_id is not None:
-        payload["run_id"] = run_id
+    payload = {
+        "uid": user_id,
+        "tenant": tenant_id,
+        "run_id": run_id,
+        "exp": int(time.time()) + ttl,
+    }
     token = _fernet().encrypt(json.dumps(payload).encode("utf-8")).decode("ascii")
     return token, ttl
 
@@ -55,6 +59,8 @@ def verify_ticket(ticket: str, run_id: int | None = None) -> dict:
     if payload.get("exp", 0) < int(time.time()):
         raise UnauthorizedError("ticket 已过期，请重新获取")
 
-    if run_id is not None and payload.get("run_id") not in (None, run_id):
+    if not payload.get("uid") or not payload.get("tenant"):
+        raise UnauthorizedError("ticket 缺少用户绑定")
+    if run_id is not None and payload.get("run_id") != run_id:
         raise UnauthorizedError("ticket 与该 run 不匹配")
     return payload

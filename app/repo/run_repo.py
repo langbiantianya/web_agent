@@ -9,6 +9,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base import utcnow
+from app.models.conversation import Conversation
 from app.models.enums import RunStatus, StepStatus
 from app.models.run import Run, RunStep
 
@@ -49,6 +50,24 @@ class RunRepo:
     async def get_by_id(self, db: AsyncSession, run_id: int) -> Run | None:
         """按自增 id 取 run。"""
         return await db.get(Run, run_id)
+
+    async def get_for_user(
+        self,
+        db: AsyncSession,
+        run_id: int,
+        tenant_id: str,
+        user_id: str,
+    ) -> Run | None:
+        """通过 conversation 的租户与 owner 校验后读取 run。"""
+        return await db.scalar(
+            sa.select(Run)
+            .join(Conversation, Conversation.id == Run.conversation_id)
+            .where(
+                Run.id == run_id,
+                Conversation.tenant_id == tenant_id,
+                Conversation.owner_user_id == user_id,
+            )
+        )
 
     async def get_active_by_conversation(
         self, db: AsyncSession, conversation_id: int

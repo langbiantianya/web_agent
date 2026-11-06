@@ -39,6 +39,7 @@ from app.core.tools import build_openai_tools, execute_tool
 from app.main import create_app
 from app.repo.mcp_repo import mcp_server_repo, mcp_tool_repo
 from app.repo.run_repo import run_repo
+from tests.conftest import authenticate_client
 from tests.fake_llm import FakeLLM
 
 ADMIN_KEY = "test-admin-key"
@@ -108,6 +109,7 @@ async def server():
 async def client(server: str):
     """真实 HTTP 客户端（真 socket，不是 ASGITransport）。"""
     async with httpx.AsyncClient(base_url=server, timeout=60) as c:
+        await authenticate_client(c)
         yield c
 
 
@@ -234,9 +236,13 @@ async def _read_sse(client: httpx.AsyncClient, url: str) -> list[tuple[str, int,
     return out
 
 
-async def _ticket(client: httpx.AsyncClient) -> str:
+async def _ticket(client: httpx.AsyncClient, run_id: int) -> str:
     """取一张一次性 SSE 凭证。"""
-    r = await client.post("/api/auth/sse-ticket", json={"user_id": "u1"})
+    r = await client.post(
+        "/api/auth/sse-ticket",
+        json={"run_id": run_id},
+        headers={"X-CSRF-Token": client.cookies.get("wa_csrf") or ""},
+    )
     assert r.status_code == 200, r.text
     return r.json()["ticket"]
 
@@ -260,7 +266,7 @@ async def _run_once(
     await _make_agent(client, code, llm, tools=tools)
     wf = await _make_workflow(client, [code])
     conv = await client.post(
-        "/api/conversations", json={"workflow_code": wf["code"], "user_id": "u1"}
+        "/api/conversations", json={"workflow_code": wf["code"]}
     )
     assert conv.status_code == 201, conv.text
     conv_id = conv.json()["id"]
@@ -269,7 +275,7 @@ async def _run_once(
     )
     assert sent.status_code == 202, sent.text
     run_id = sent.json()["run_id"]
-    ticket = await _ticket(client)
+    ticket = await _ticket(client, run_id)
     events = await _read_sse(
         client, f"/api/runs/{run_id}/stream?ticket={ticket}&last_seq=0"
     )
