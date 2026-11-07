@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import string
 import uuid
 from datetime import timedelta
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -26,6 +28,7 @@ from services.admin_web.accounts import (
     create_admin_session,
     create_super_admin_account,
     create_super_admin_session,
+    ensure_owner_super_admin,
     reset_super_admin_password,
     resolve_admin_session,
     resolve_super_admin_session,
@@ -150,6 +153,49 @@ def test_eight_character_password_contract_and_argon2id():
     assert digest != samples[0]
     assert verify_password(samples[0], digest)
     assert not verify_password(samples[0] + "x", digest)
+
+
+async def test_first_install_owner_is_generated_once_without_notification():
+    """首次安装生成 owner 密码；已有 owner 时后续启动不再生成。"""
+    async with AdminSessionLocal() as db:
+        password = await ensure_owner_super_admin(db)
+        assert password is not None
+        assert len(password) == 8
+        owner = await db.scalar(
+            sa.select(SuperAdminAccount).where(
+                SuperAdminAccount.owner_slot == "superAdmin"
+            )
+        )
+        assert owner is not None
+        assert owner.username == "superAdmin"
+        assert owner.email is None and owner.phone is None
+        assert owner.status == "active"
+        assert verify_password(password, owner.password_hash)
+        assert await ensure_owner_super_admin(db) is None
+        await db.delete(owner)
+        await db.commit()
+
+
+async def test_admin_lifespan_logs_initial_password_only_when_created(
+    monkeypatch,
+    caplog,
+):
+    """启动生命周期只记录首次创建 owner 的明文密码。"""
+    import services.admin_web.app as admin_web_app
+
+    monkeypatch.setattr(
+        admin_web_app,
+        "ensure_owner_super_admin",
+        AsyncMock(return_value="Abc123@x"),
+    )
+    with caplog.at_level(logging.WARNING):
+        async with admin_web_app.app.router.lifespan_context(
+            admin_web_app.app
+        ):
+            pass
+    assert "superAdmin" in caplog.text
+    assert "Abc123@x" in caplog.text
+    assert "仅本次日志" in caplog.text
 
 
 async def test_super_admin_is_created_only_after_notification_and_has_no_plaintext():
@@ -565,6 +611,123 @@ async def test_business_pages_are_registered_for_platform_super_admin():
             response = await client.get(path)
             assert response.status_code == 200, (path, response.text)
             assert "Admin navigation" in response.text
+    finally:
+        await client.aclose()
+
+
+async def test_admin_web_dynamically_scopes_providers_for_client_and_admin():
+    """Provider 在后台配置后分别驱动客户端和管理端登录入口。"""
+    from app.main import create_app
+
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    tag = uuid.uuid4().hex[:8]
+    client_code = f"client-{tag}"
+    admin_code = f"admin-{tag}"
+    client_name = f"Client IdP {tag}"
+    admin_name = f"Admin IdP {tag}"
+    base_form = {
+        "csrf_token": csrf,
+        "issuer": "https://id.example.com",
+        "client_id": "configured-client",
+        "client_secret": "provider-secret-value",
+        "token_auth_method": "client_secret_basic",
+        "scopes": "openid profile email",
+        "username_claim": "preferred_username",
+        "role_claim": "groups",
+        "role_claim_required": "1",
+        "role_sync_max_age_seconds": "1800",
+        "auto_create": "1",
+        "enabled": "1",
+    }
+    try:
+        client_only = await client.post(
+            "/admin/oauth-providers",
+            data={
+                **base_form,
+                "code": client_code,
+                "display_name": client_name,
+                "client_login_enabled": "1",
+                "admin_login_enabled": "0",
+            },
+        )
+        assert client_only.status_code == 303, client_only.text
+        admin_only = await client.post(
+            "/admin/oauth-providers",
+            data={
+                **base_form,
+                "code": admin_code,
+                "display_name": admin_name,
+                "client_login_enabled": "0",
+                "admin_login_enabled": "1",
+            },
+        )
+        assert admin_only.status_code == 303, admin_only.text
+
+        async with AdminSessionLocal() as db:
+            from app.models.oauth import OAuthProvider
+
+            client_row = await db.scalar(
+                sa.select(OAuthProvider).where(OAuthProvider.code == client_code)
+            )
+            admin_row = await db.scalar(
+                sa.select(OAuthProvider).where(OAuthProvider.code == admin_code)
+            )
+            assert client_row is not None and admin_row is not None
+            assert client_row.client_login_enabled == 1
+            assert client_row.admin_login_enabled == 0
+            assert admin_row.client_login_enabled == 0
+            assert admin_row.admin_login_enabled == 1
+            assert client_row.client_secret_cipher
+
+        admin_page = await client.get("/admin/oauth-providers")
+        assert admin_page.status_code == 200
+        assert client_name in admin_page.text
+        assert admin_name in admin_page.text
+        assert "provider-secret-value" not in admin_page.text
+
+        from services.admin_web.app import app as admin_asgi_app
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=admin_asgi_app),
+            base_url="http://test",
+            follow_redirects=False,
+        ) as anonymous_admin:
+            login_page = await anonymous_admin.get("/admin/login")
+        assert admin_name in login_page.text
+        assert client_name not in login_page.text
+
+        main_app = create_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=main_app),
+            base_url="http://test",
+        ) as main_client:
+            providers = await main_client.get("/api/auth/providers")
+        assert providers.status_code == 200
+        names = {item["display_name"] for item in providers.json()}
+        assert client_name in names
+        assert admin_name not in names
+
+        updated = await client.post(
+            f"/admin/oauth-providers/{client_code}/update",
+            data={
+                **base_form,
+                "display_name": f"{client_name} Updated",
+                "client_secret": "",
+                "client_login_enabled": "1",
+                "admin_login_enabled": "1",
+                "clear_client_secret": "1",
+            },
+        )
+        assert updated.status_code == 303, updated.text
+        async with AdminSessionLocal() as db:
+            from app.models.oauth import OAuthProvider
+
+            updated_row = await db.scalar(
+                sa.select(OAuthProvider).where(OAuthProvider.code == client_code)
+            )
+            assert updated_row is not None
+            assert updated_row.admin_login_enabled == 1
+            assert updated_row.client_secret_cipher is None
     finally:
         await client.aclose()
 

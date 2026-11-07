@@ -66,8 +66,10 @@ class OAuthProviderRepo:
             if value is not None:
                 setattr(row, key, value)
         if client_secret is not ...:
-            row.client_secret_cipher = encrypt(
-                client_secret if isinstance(client_secret, str) else None
+            row.client_secret_cipher = (
+                encrypt(client_secret)
+                if isinstance(client_secret, str) and client_secret
+                else None
             )
         await db.commit()
         await db.refresh(row)

@@ -26,7 +26,12 @@ class OAuthProviderCreate(BaseModel):
         max_length=32,
     )
     username_claim: str = Field(default="preferred_username", max_length=64)
+    role_claim: str = Field(default="groups", max_length=64)
+    role_claim_required: bool = True
+    role_sync_max_age_seconds: int = Field(default=1800, ge=1, le=86400)
     auto_create: bool = True
+    client_login_enabled: bool = True
+    admin_login_enabled: bool = True
     enabled: bool = True
 
 
@@ -47,7 +52,14 @@ class OAuthProviderUpdate(BaseModel):
     )
     scopes: list[str] | None = Field(default=None, max_length=32)
     username_claim: str | None = Field(default=None, max_length=64)
+    role_claim: str | None = Field(default=None, max_length=64)
+    role_claim_required: bool | None = None
+    role_sync_max_age_seconds: int | None = Field(
+        default=None, ge=1, le=86400
+    )
     auto_create: bool | None = None
+    client_login_enabled: bool | None = None
+    admin_login_enabled: bool | None = None
     enabled: bool | None = None
 
 
@@ -66,5 +78,10 @@ class OAuthProviderAdminOut(BaseModel):
     token_auth_method: str
     scopes: list[str]
     username_claim: str
+    role_claim: str
+    role_claim_required: bool
+    role_sync_max_age_seconds: int
     auto_create: bool
+    client_login_enabled: bool
+    admin_login_enabled: bool
     enabled: bool

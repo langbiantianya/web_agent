@@ -95,6 +95,10 @@ python run.py
 - 后台管理（独立服务）：<http://127.0.0.1:8001/admin/>
 - OpenAPI：<http://127.0.0.1:8000/docs>
 
+独立后台首次启动会自动创建 `superAdmin`，随机密码只在首次创建时的启动日志中输出；
+后续重启不会重复生成或打印。客户端和管理端的 OIDC Provider 都在
+`/admin/oauth-providers` 动态配置。
+
 ## 文档维护约定
 
 - 模块文档放在对应模块目录，根 README 只维护导航。

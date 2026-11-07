@@ -113,7 +113,11 @@ async def provider_for_admin_login(
             OAuthProvider.code == code,
         )
     )
-    if provider is None or provider.enabled != 1:
+    if (
+        provider is None
+        or provider.enabled != 1
+        or provider.admin_login_enabled != 1
+    ):
         return None
     return provider
 

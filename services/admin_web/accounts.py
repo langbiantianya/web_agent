@@ -234,6 +234,44 @@ async def create_super_admin_account(
     return account, delivery
 
 
+async def ensure_owner_super_admin(db: AsyncSession) -> str | None:
+    """首次安装创建 owner，并返回仅供首次启动日志输出的随机密码。
+
+    已有 owner 时返回 ``None``，因此重启不会再次生成或记录密码。该初始化
+    不依赖邮件或短信，避免首次安装被通知渠道配置阻塞。
+    """
+    existing = await db.scalar(
+        sa.select(SuperAdminAccount.id).where(
+            SuperAdminAccount.owner_slot == "superAdmin"
+        )
+    )
+    if existing is not None:
+        return None
+
+    password = generate_password()
+    now = utcnow()
+    db.add(
+        SuperAdminAccount(
+            username="superAdmin",
+            password_hash=hash_password(password),
+            email=None,
+            phone=None,
+            status="active",
+            owner_slot="superAdmin",
+            password_rotated_at=now,
+            password_expires_at=_expiry_for_new_password(now),
+            password_version=1,
+        )
+    )
+    try:
+        await db.commit()
+    except IntegrityError:
+        # 多副本同时启动时只有一个实例能创建 owner；竞争失败者不记录密码。
+        await db.rollback()
+        return None
+    return password
+
+
 async def reset_super_admin_password(
     db: AsyncSession,
     account: SuperAdminAccount,

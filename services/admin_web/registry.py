@@ -297,6 +297,30 @@ PAGE_SPECS: tuple[PageSpec, ...] = (
         ),
     ),
     PageSpec(
+        code="oauth_providers",
+        route="/admin/oauth-providers",
+        title="OAuth providers",
+        nav_group="Security",
+        nav_order=55,
+        permissions=(("oauth_provider", "read"),),
+        components=(
+            ComponentSpec(
+                "provider_table",
+                "oauth_providers.table",
+                "OAuth provider list",
+                "data_table",
+                (("oauth_provider", "read"),),
+            ),
+            ComponentSpec(
+                "provider_editor",
+                "oauth_providers.editor",
+                "OAuth provider editor",
+                "editor",
+                (("oauth_provider", "manage"),),
+            ),
+        ),
+    ),
+    PageSpec(
         code="preferences",
         route="/admin/preferences",
         title="Appearance",

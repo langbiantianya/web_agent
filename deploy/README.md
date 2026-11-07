@@ -43,7 +43,9 @@ docker compose -f deploy/docker-compose.admin.yml up -d --build
 `admin-web` 默认只绑定 `127.0.0.1:8001`，所有 `/admin/*` 请求应由反向代理转发。
 容器默认限制为 768 MiB、1 CPU、256 PIDs。上线前需要：
 
-- 运行迁移并执行 `python -m scripts.bootstrap_superadmin` 创建固定 owner；
+- 运行迁移后首次启动 admin-web；服务会自动创建固定 owner，并在仅该次启动日志中
+  输出随机密码。需要通知渠道时可在首次启动前手工运行
+  `python -m scripts.bootstrap_superadmin`；
 - 配置 `ADMIN_PUBLIC_BASE_URL`、OAuth callback、邮件和短信环境变量；
 - 使用 HTTPS 并保持 `ADMIN_SESSION_COOKIE_SECURE=true`；
 - 为 admin 与客户端配置独立数据库账号，限制客户端读取超级管理员密码摘要；

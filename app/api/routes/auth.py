@@ -101,7 +101,11 @@ def _login_error_redirect(return_to: str, code: str) -> RedirectResponse:
 async def _enabled_provider(db, code: str):
     """读取默认租户中启用的登录供应商。"""
     provider = await oauth_provider_repo.get(db, code, settings.auth_default_tenant)
-    if provider is None or provider.enabled != 1:
+    if (
+        provider is None
+        or provider.enabled != 1
+        or provider.client_login_enabled != 1
+    ):
         raise NotFoundError("登录供应商不存在")
     return provider
 
@@ -115,6 +119,7 @@ async def list_login_providers(db: DbSession) -> list[AuthProviderOut]:
     return [
         AuthProviderOut(code=row.code, display_name=row.display_name, kind=row.kind)
         for row in rows
+        if row.client_login_enabled == 1
     ]
 
 

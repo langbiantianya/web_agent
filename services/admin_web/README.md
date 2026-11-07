@@ -50,13 +50,19 @@ HTTPS 部署时使用对应的 `__Host-` Cookie。两条管理员 Session 同时
 
 ```bash
 python -m alembic upgrade head
-python -m scripts.bootstrap_superadmin --email ops@example.com --phone +8613800138000
 uvicorn services.admin_web.app:app --host 0.0.0.0 --port 8001
 ```
 
-本地无通知渠道时，只能在受控初始化场景使用一次性
-`python -m scripts.bootstrap_superadmin --stdout`。不要在生产轮换或忘记密码流程使用
-明文终端输出。
+首次启动时，如果 `super_admin_account` 中还没有固定 owner `superAdmin`，服务会生成
+8 位随机密码、写入 Argon2id 摘要并输出一条 `WARNING` 日志：
+
+```text
+首次安装已创建平台超级管理员 superAdmin；初始密码仅本次日志输出：<8位密码>
+```
+
+该明文只出现一次，后续重启不会再次生成或记录。首次密码仍在 30 天轮换策略内，因此
+部署方必须保护首次启动日志的访问权限。受控环境也可以在首次启动前运行
+`python -m scripts.bootstrap_superadmin --stdout` 手工完成初始化。
 
 容器入口：
 
@@ -84,6 +90,12 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
 - `/admin/mcp`：MCP 连接、启停、删除和工具目录刷新。
 - `/admin/llm`：LLM 接口优先级、启停和只写 API Key。
 - `/admin/audit`：按 run、工具、来源和结果筛选脱敏工具审计。
+- `/admin/oauth-providers`：动态配置客户端和管理端 OIDC Provider，包括 issuer、
+  endpoints、client id/secret、scopes、claim、角色同步时效和登录用途。
+
+客户端登录与管理员登录分别只读取 `client_login_enabled=1` 和
+`admin_login_enabled=1` 的 Provider。一个 Provider 可以同时服务两端，也可以只开放
+其中一端；client secret 只写不读，页面只显示是否已配置。
 
 旧 `/api/admin-users` 统一返回 `410 Gone`。客户端不再接受 `X-Admin-Key`，环境变量
 `ADMIN_KEY`、旧管理员仓储、旧请求模型和 Key 轮换逻辑均已删除。OAuth 管理员表只
@@ -101,6 +113,8 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
   对 `NULL` 唯一约束的不同语义。
 - 平台超级管理员密码只保存 Argon2id 摘要，只能随机生成、重置或按 30 天周期轮换。
 - 密码、Session、CSRF、SMTP 和云短信密钥不写日志、页面、URL 或审计正文。
+- 首次 owner 密码按安装要求只输出一次启动日志；除此之外，密码和 client secret
+  不进入日志。
 
 ## 测试
 

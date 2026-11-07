@@ -46,6 +46,11 @@ Skill 与 MCP 管理接口分别位于 `/api/skills` 和 `/api/mcp/servers`。�
 权限。同一浏览器还存在普通用户 Session 时，后台调用使用
 `X-Admin-CSRF-Token`；后台 Session 单独使用时也可继续使用 `X-CSRF-Token`。
 
+客户端和管理端 OAuth Provider 的日常维护入口是独立后台
+`/admin/oauth-providers`。`/api/auth/providers` 只返回
+`client_login_enabled=1` 的公开项；管理端登录入口只使用
+`admin_login_enabled=1` 的 Provider。
+
 Skill 生命周期接口：
 
 | 方法 | 路径 | 说明 |

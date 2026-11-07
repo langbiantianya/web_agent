@@ -37,7 +37,12 @@ def _out(row: OAuthProvider) -> OAuthProviderAdminOut:
         token_auth_method=row.token_auth_method,
         scopes=row.scopes.split(),
         username_claim=row.username_claim,
+        role_claim=row.role_claim,
+        role_claim_required=bool(row.role_claim_required),
+        role_sync_max_age_seconds=row.role_sync_max_age_seconds,
         auto_create=bool(row.auto_create),
+        client_login_enabled=bool(row.client_login_enabled),
+        admin_login_enabled=bool(row.admin_login_enabled),
         enabled=bool(row.enabled),
     )
 
@@ -63,6 +68,9 @@ async def create_provider(
     fields = payload.model_dump(exclude={"client_secret", "scopes"})
     fields["scopes"] = " ".join(payload.scopes)
     fields["auto_create"] = int(payload.auto_create)
+    fields["role_claim_required"] = int(payload.role_claim_required)
+    fields["client_login_enabled"] = int(payload.client_login_enabled)
+    fields["admin_login_enabled"] = int(payload.admin_login_enabled)
     fields["enabled"] = int(payload.enabled)
     row = await oauth_provider_repo.create(
         db,
@@ -101,7 +109,13 @@ async def update_provider(
         secret_marker = changed.pop("client_secret")
     if "scopes" in changed:
         changed["scopes"] = " ".join(changed["scopes"])
-    for key in ("auto_create", "enabled"):
+    for key in (
+        "auto_create",
+        "role_claim_required",
+        "client_login_enabled",
+        "admin_login_enabled",
+        "enabled",
+    ):
         if key in changed and changed[key] is not None:
             changed[key] = int(changed[key])
     row = await oauth_provider_repo.update(

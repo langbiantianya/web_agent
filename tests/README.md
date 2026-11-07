@@ -81,10 +81,10 @@ docker run --rm --network postgres-db_default \
 `remaining connection slots are reserved`。
 
 2026-11-07 在约 1.8 GB 内存测试机上，以 Docker `1 GiB / 1 CPU` 限额运行当前
-全量测试，结果为 `782 passed, 21 skipped`。跳过项为未显式提供 Redis 地址的真实
+全量测试，结果为 `785 passed, 21 skipped`。跳过项为未显式提供 Redis 地址的真实
 Redis 用例；其余测试使用真实 Docker socket 启动 sibling sandbox。独立后台使用
-专用 PostgreSQL 空库从零迁移到 `8c31f0b7d2a4` 后，`tests/test_admin_web.py`
-为 `19 passed`；客户端管理 Session/Casbin/租户隔离专项为 `5 passed`。
+专用 PostgreSQL 空库从零迁移到 `4e8c2a1d7f90` 后，`tests/test_admin_web.py`
+为 `22 passed`；客户端管理 Session/Casbin/租户隔离专项为 `5 passed`。
 
 ## 测试层次
 

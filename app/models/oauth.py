@@ -48,6 +48,12 @@ class OAuthProvider(Base):
         sa.Integer, nullable=False, default=1800
     )
     auto_create: Mapped[int] = mapped_column(sa.SmallInteger, nullable=False, default=1)
+    client_login_enabled: Mapped[int] = mapped_column(
+        sa.SmallInteger, nullable=False, default=1
+    )
+    admin_login_enabled: Mapped[int] = mapped_column(
+        sa.SmallInteger, nullable=False, default=1
+    )
     enabled: Mapped[int] = mapped_column(sa.SmallInteger, nullable=False, default=1)
     created_at: Mapped[object] = mapped_column(
         DATETIME3, server_default=sa.func.now(), nullable=False
