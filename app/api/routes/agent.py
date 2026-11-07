@@ -18,7 +18,9 @@ from app.schemas.skill import SkillPromptPreviewOut
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
-async def _skill_code_sets(db) -> tuple[set[str], set[str]]:
+async def _skill_code_sets(
+    db, tenant_id: str = "default"
+) -> tuple[set[str], set[str]]:
     """库里已存在的技能 code 集合与其中已启用的那部分。
 
     两个集合用途不同：
@@ -28,13 +30,13 @@ async def _skill_code_sets(db) -> tuple[set[str], set[str]]:
     - **已启用的**：写路径用它校验——技能正文会进 prompt，而 prompt 就是模型的
       行为，绑一个停用中的技能等于绑了一条不会生效的指令。
     """
-    rows = await skill_repo.list(db, limit=1000)
+    rows = await skill_repo.list(db, limit=1000, tenant_id=tenant_id)
     all_codes = {s.code for s in rows}
     enabled = {s.code for s in rows if s.enabled}
     return all_codes, enabled
 
 
-async def _known_mcp_names(db) -> set[str]:
+async def _known_mcp_names(db, tenant_id: str = "default") -> set[str]:
     """已发现的 MCP 工具限定名集合。
 
     内置工具的名字在注册表里，是全集；MCP 工具的名字得从 ``mcp_tool`` 快照查
@@ -42,7 +44,7 @@ async def _known_mcp_names(db) -> set[str]:
     """
     from app.repo.mcp_repo import mcp_tool_repo
 
-    return await mcp_tool_repo.qualified_names(db)
+    return await mcp_tool_repo.qualified_names(db, tenant_id=tenant_id)
 
 
 def _to_out(
@@ -93,7 +95,7 @@ def _to_out(
 async def create_agent(
     payload: AgentCreate,
     db: DbSession,
-    _admin: AgentWriteDep,
+    admin: AgentWriteDep,
 ) -> AgentOut:
     """创建 Agent。配置即数据——新增 Agent 无需改代码、无需发版。
 
@@ -101,10 +103,13 @@ async def create_agent(
     库，也就不会有「模型能调、服务端执行不了」的工具。``skills`` 同理：绑一个
     库里没有或已停用的技能，在这里就拒。
     """
+    # ``agent.code`` 是全局唯一键；先做全局冲突检查，避免另一个租户已占用
+    # 同 code 时一直走到 INSERT 才抛数据库唯一约束异常。
     if await agent_repo.get_by_code(db, payload.code):
         raise ConflictError(f"Agent code 已存在：{payload.code}")
-    all_codes, enabled_codes = await _skill_code_sets(db)
-    known_mcp = await _known_mcp_names(db)
+    tenant_id = admin.tenant_id or "default"
+    all_codes, enabled_codes = await _skill_code_sets(db, tenant_id)
+    known_mcp = await _known_mcp_names(db, tenant_id)
     tools = normalize_tool_names(payload.tools, known_mcp)
     try:
         skills = normalize_skill_codes(payload.skills, enabled_codes)
@@ -113,6 +118,7 @@ async def create_agent(
     agent = await agent_repo.create(
         db,
         code=payload.code,
+        tenant_id=tenant_id,
         name=payload.name,
         description=payload.description,
         system_prompt=payload.system_prompt,
@@ -135,7 +141,7 @@ async def create_agent(
 @router.get("", response_model=list[AgentOut])
 async def list_agents(
     db: DbSession,
-    _admin: AgentReadDep,
+    admin: AgentReadDep,
     only_enabled: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -146,9 +152,15 @@ async def list_agents(
     分页为 limit/offset（默认 100，上限 500），响应不含总数，需要展示总页数
     时请另走管理端统计。响应中只有 ``has_api_key``，不会回显密钥。
     """
-    agents = await agent_repo.list(db, only_enabled=only_enabled, limit=limit, offset=offset)
-    all_codes, _ = await _skill_code_sets(db)
-    known_mcp = await _known_mcp_names(db)
+    agents = await agent_repo.list(
+        db,
+        only_enabled=only_enabled,
+        limit=limit,
+        offset=offset,
+        tenant_id=admin.tenant_id,
+    )
+    all_codes, _ = await _skill_code_sets(db, admin.tenant_id or "default")
+    known_mcp = await _known_mcp_names(db, admin.tenant_id or "default")
     return [_to_out(a, all_codes, known_mcp) for a in agents]
 
 
@@ -156,17 +168,17 @@ async def list_agents(
 async def get_agent(
     code: str,
     db: DbSession,
-    _admin: AgentReadDep,
+    admin: AgentReadDep,
 ) -> AgentOut:
     """按 code 查询单个 Agent 配置，不存在返回 404。
 
     code 是业务主键（Workflow 节点引用它），不是自增 id。
     """
-    agent = await agent_repo.get_by_code(db, code)
+    agent = await agent_repo.get_by_code(db, code, admin.tenant_id)
     if agent is None:
         raise NotFoundError(f"Agent 不存在：{code}")
-    all_codes, _ = await _skill_code_sets(db)
-    known_mcp = await _known_mcp_names(db)
+    all_codes, _ = await _skill_code_sets(db, admin.tenant_id or "default")
+    known_mcp = await _known_mcp_names(db, admin.tenant_id or "default")
     return _to_out(agent, all_codes, known_mcp)
 
 
@@ -175,7 +187,7 @@ async def update_agent(
     code: str,
     payload: AgentUpdate,
     db: DbSession,
-    _admin: AgentWriteDep,
+    admin: AgentWriteDep,
 ) -> AgentOut:
     """更新 Agent：version+1，缓存键随之失效，下个 run 自动用新配置。
 
@@ -184,11 +196,11 @@ async def update_agent(
     fields = payload.model_dump(exclude_unset=True)
     if "api_key" in fields:
         fields["api_key_cipher"] = encrypt(fields.pop("api_key"))
-    known_mcp = await _known_mcp_names(db)
+    known_mcp = await _known_mcp_names(db, admin.tenant_id or "default")
     if "tools" in fields:
         fields["tools"] = normalize_tool_names(fields["tools"], known_mcp)
     if "tool_policy" in fields:
-        existing = await agent_repo.get_by_code(db, code)
+        existing = await agent_repo.get_by_code(db, code, admin.tenant_id)
         if existing is None:
             raise NotFoundError(f"Agent 不存在：{code}")
         effective_tools = (
@@ -201,7 +213,7 @@ async def update_agent(
             known_tools=set(effective_tools or []),
         )
     if "skills" in fields:
-        _, enabled_codes = await _skill_code_sets(db)
+        _, enabled_codes = await _skill_code_sets(db, admin.tenant_id or "default")
         try:
             normalized = normalize_skill_codes(fields["skills"], enabled_codes)
         except SkillConfigError as exc:
@@ -211,10 +223,16 @@ async def update_agent(
         fields["skills"] = [] if normalized is None else normalized
     if "enabled" in fields and fields["enabled"] is not None:
         fields["enabled"] = 1 if fields["enabled"] else 0
-    agent = await agent_repo.update(db, code, fields, bump_version=True)
+    agent = await agent_repo.update(
+        db,
+        code,
+        fields,
+        bump_version=True,
+        tenant_id=admin.tenant_id,
+    )
     if agent is None:
         raise NotFoundError(f"Agent 不存在：{code}")
-    all_codes, _ = await _skill_code_sets(db)
+    all_codes, _ = await _skill_code_sets(db, admin.tenant_id or "default")
     return _to_out(agent, all_codes, known_mcp)
 
 
@@ -222,7 +240,7 @@ async def update_agent(
 async def preview_agent_prompt(
     code: str,
     db: DbSession,
-    _admin: AgentReadDep,
+    admin: AgentReadDep,
 ) -> SkillPromptPreviewOut:
     """生效提示词预览：system_prompt + 各技能正文，与实际发给模型的逐字一致。
 
@@ -233,7 +251,7 @@ async def preview_agent_prompt(
     这里复用编排器**同一套**拼装逻辑（``Orchestrator._build_skill_plan``），
     而不是另写一遍——两处各写一遍的话，预览迟早会和实际发出去的不一致。
     """
-    agent = await agent_repo.get_by_code(db, code)
+    agent = await agent_repo.get_by_code(db, code, admin.tenant_id)
     if agent is None:
         raise NotFoundError(f"Agent 不存在：{code}")
 
@@ -241,7 +259,9 @@ async def preview_agent_prompt(
 
     plan = await get_orchestrator()._build_skill_plan(agent)
     skills = await skill_repo.list_by_codes(
-        db, known_skill_codes(agent.skills) or []
+        db,
+        known_skill_codes(agent.skills) or [],
+        tenant_id=admin.tenant_id or "default",
     )
     by_code = {s.code: s for s in skills}
     return SkillPromptPreviewOut(
@@ -270,9 +290,9 @@ async def preview_agent_prompt(
 async def delete_agent(
     code: str,
     db: DbSession,
-    _admin: AgentWriteDep,
+    admin: AgentWriteDep,
 ) -> None:
     """删除 Agent。若已被 workflow 引用，建议改用 PUT enabled=false 停用。"""
-    ok = await agent_repo.delete(db, code)
+    ok = await agent_repo.delete(db, code, tenant_id=admin.tenant_id)
     if not ok:
         raise NotFoundError(f"Agent 不存在：{code}")

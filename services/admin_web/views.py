@@ -35,6 +35,7 @@ from ludic.html import (
     table,
     tbody,
     td,
+    textarea,
     th,
     thead,
     title,
@@ -354,6 +355,741 @@ def _metric(label_text: str, value: int) -> Any:
         span(str(value), class_="metric-value"),
         span(label_text, class_="metric-label"),
         class_="metric-card",
+    )
+
+
+def _management_page(
+    *,
+    title_text: str,
+    lead: str,
+    principal: AdminPrincipal,
+    csrf: str,
+    pages: Iterable[AdminPageDefinition],
+    theme: str,
+    color_mode: str,
+    density: str,
+    create_form: Any | None,
+    headers: list[str],
+    rows: list[Any],
+    flash: str | None = None,
+    flash_kind: str = "info",
+) -> Any:
+    """渲染业务管理页共用的标题、创建表单和数据表。"""
+    table_section = section(
+        h2("Configured resources"),
+        div(
+            table(
+                thead(tr(*(th(item) for item in headers))),
+                tbody(*(rows or [tr(td("No resources configured."))])),
+                class_="data-table",
+            ),
+            class_="table-scroll",
+        ),
+        class_="surface",
+    )
+    sections = []
+    if create_form is not None:
+        sections.append(section(h2("Create resource"), create_form, class_="surface"))
+    sections.append(table_section)
+    return shell(
+        title_text=title_text,
+        principal=principal,
+        csrf=csrf,
+        theme=theme,
+        color_mode=color_mode,
+        density=density,
+        pages=pages,
+        flash=flash,
+        flash_kind=flash_kind,
+        content=div(
+            section(h1(title_text), p(lead, class_="lead")),
+            *sections,
+            class_="stack",
+        ),
+    )
+
+
+def _csrf(csrf: str) -> Any:
+    """返回后台表单共用的 CSRF 隐藏字段。"""
+    return input_(type="hidden", name="csrf_token", value=csrf)
+
+
+def _toggle_and_delete(
+    *,
+    csrf: str,
+    prefix: str,
+    enabled: bool,
+    can_write: bool,
+) -> Any:
+    """渲染详情页内通用的启用切换和删除按钮。"""
+    if not can_write:
+        return span("Read only", class_="status-badge")
+    return div(
+        form(
+            _csrf(csrf),
+            input_(type="hidden", name="enabled", value="0" if enabled else "1"),
+            button(
+                "Disable" if enabled else "Enable",
+                type="submit",
+                class_="btn btn-secondary btn-small",
+            ),
+            action=f"{prefix}/toggle",
+            method="post",
+            class_="inline-form",
+        ),
+        form(
+            _csrf(csrf),
+            button(
+                "Delete",
+                type="submit",
+                class_="btn btn-danger btn-small",
+            ),
+            action=f"{prefix}/delete",
+            method="post",
+            class_="inline-form",
+        ),
+        class_="row-actions",
+    )
+
+
+def workflows_page(
+    *,
+    principal: AdminPrincipal,
+    csrf: str,
+    pages: Iterable[AdminPageDefinition],
+    rows: list[Any],
+    theme: str,
+    color_mode: str,
+    density: str,
+    can_write: bool,
+    flash: str | None = None,
+) -> Any:
+    """渲染 Workflow 编排管理页。"""
+    table_rows = []
+    for row in rows:
+        actions = _toggle_and_delete(
+            csrf=csrf,
+            prefix=f"/admin/workflows/{row.code}",
+            enabled=bool(row.enabled),
+            can_write=can_write,
+        )
+        editor = (
+            details(
+                summary("Edit definition"),
+                form(
+                    _csrf(csrf),
+                    label(span("Name"), input_(name="name", value=row.name, required=True)),
+                    label(
+                        span("Description"),
+                        input_(name="description", value=row.description or ""),
+                    ),
+                    label(
+                        span("Definition JSON"),
+                        textarea(
+                            __import__("json").dumps(
+                                row.definition, ensure_ascii=False, indent=2
+                            ),
+                            name="definition",
+                            rows=14,
+                            required=True,
+                        ),
+                    ),
+                    button("Save changes", type="submit", class_="btn btn-primary"),
+                    action=f"/admin/workflows/{row.code}/update",
+                    method="post",
+                    class_="stack",
+                ),
+            )
+            if can_write
+            else span("")
+        )
+        table_rows.append(
+            tr(
+                td(row.name, small(row.code, class_="block-muted")),
+                td("Enabled" if row.enabled else "Disabled"),
+                td(f"v{row.version}"),
+                td(actions, editor),
+            )
+        )
+    create_form = (
+        form(
+            _csrf(csrf),
+            label(span("Code"), input_(name="code", required=True)),
+            label(span("Name"), input_(name="name", required=True)),
+            label(span("Description"), input_(name="description")),
+            label(
+                span("Definition JSON"),
+                textarea(
+                    '{"nodes":[{"id":"node","agentCode":"agent"}],"edges":[],'
+                    '"inputTemplate":"{{user_input}}"}',
+                    name="definition",
+                    rows=10,
+                    required=True,
+                ),
+            ),
+            label(
+                span("Enabled"),
+                select(option("Yes", value="1"), option("No", value="0"), name="enabled"),
+            ),
+            button("Create workflow", type="submit", class_="btn btn-primary"),
+            action="/admin/workflows",
+            method="post",
+            class_="form-grid",
+        )
+        if can_write
+        else None
+    )
+    return _management_page(
+        title_text="Workflows",
+        lead="Manage graph definitions directly against the shared workflow repository.",
+        principal=principal,
+        csrf=csrf,
+        pages=pages,
+        theme=theme,
+        color_mode=color_mode,
+        density=density,
+        create_form=create_form,
+        headers=["Workflow", "State", "Version", "Actions"],
+        rows=table_rows,
+        flash=flash,
+    )
+
+
+def agents_page(
+    *,
+    principal: AdminPrincipal,
+    csrf: str,
+    pages: Iterable[AdminPageDefinition],
+    rows: list[Any],
+    theme: str,
+    color_mode: str,
+    density: str,
+    can_write: bool,
+    flash: str | None = None,
+) -> Any:
+    """渲染 Agent 配置管理页。"""
+    table_rows = []
+    for row in rows:
+        actions = _toggle_and_delete(
+            csrf=csrf,
+            prefix=f"/admin/agents/{row.code}",
+            enabled=bool(row.enabled),
+            can_write=can_write,
+        )
+        editor = (
+            details(
+                summary("Edit configuration"),
+                form(
+                    _csrf(csrf),
+                    label(span("Name"), input_(name="name", value=row.name, required=True)),
+                    label(span("Model"), input_(name="model", value=row.model, required=True)),
+                    label(span("Base URL"), input_(name="base_url", value=row.base_url or "")),
+                    label(
+                        span("Replacement API key"),
+                        input_(
+                            name="api_key",
+                            type="password",
+                            autocomplete="new-password",
+                            placeholder="Leave blank to keep current key",
+                        ),
+                    ),
+                    label(
+                        span("Tools (comma separated)"),
+                        input_(name="tools", value=", ".join(row.tools or [])),
+                    ),
+                    label(
+                        span("Skills (comma separated)"),
+                        input_(name="skills", value=", ".join(row.skills or [])),
+                    ),
+                    label(
+                        span("System prompt"),
+                        textarea(row.system_prompt, name="system_prompt", rows=10, required=True),
+                    ),
+                    button("Save changes", type="submit", class_="btn btn-primary"),
+                    action=f"/admin/agents/{row.code}/update",
+                    method="post",
+                    class_="stack",
+                ),
+            )
+            if can_write
+            else span("")
+        )
+        table_rows.append(
+            tr(
+                td(row.name, small(row.code, class_="block-muted")),
+                td(row.model),
+                td("Enabled" if row.enabled else "Disabled"),
+                td(f"v{row.version}"),
+                td(actions, editor),
+            )
+        )
+    create_form = (
+        form(
+            _csrf(csrf),
+            label(span("Code"), input_(name="code", required=True)),
+            label(span("Name"), input_(name="name", required=True)),
+            label(span("Model"), input_(name="model", required=True)),
+            label(span("Base URL"), input_(name="base_url")),
+            label(
+                span("API key"),
+                input_(name="api_key", type="password", autocomplete="new-password"),
+            ),
+            label(span("Tools (comma separated)"), input_(name="tools")),
+            label(span("Skills (comma separated)"), input_(name="skills")),
+            label(
+                span("System prompt"),
+                textarea(name="system_prompt", rows=8, required=True),
+            ),
+            label(
+                span("Enabled"),
+                select(option("Yes", value="1"), option("No", value="0"), name="enabled"),
+            ),
+            button("Create agent", type="submit", class_="btn btn-primary"),
+            action="/admin/agents",
+            method="post",
+            class_="form-grid",
+        )
+        if can_write
+        else None
+    )
+    return _management_page(
+        title_text="Agents",
+        lead="Prompt, model, tool, and skill bindings are managed inside the isolated admin service.",
+        principal=principal,
+        csrf=csrf,
+        pages=pages,
+        theme=theme,
+        color_mode=color_mode,
+        density=density,
+        create_form=create_form,
+        headers=["Agent", "Model", "State", "Version", "Actions"],
+        rows=table_rows,
+        flash=flash,
+    )
+
+
+def skills_page(
+    *,
+    principal: AdminPrincipal,
+    csrf: str,
+    pages: Iterable[AdminPageDefinition],
+    rows: list[Any],
+    theme: str,
+    color_mode: str,
+    density: str,
+    can_write: bool,
+    flash: str | None = None,
+) -> Any:
+    """渲染 Skill 定义与发布状态管理页。"""
+    table_rows = []
+    for row in rows:
+        editor = (
+            details(
+                summary("Edit skill"),
+                form(
+                    _csrf(csrf),
+                    label(
+                        span("Description"),
+                        input_(name="description", value=row.description or "", required=True),
+                    ),
+                    label(
+                        span("Status"),
+                        select(
+                            option(
+                                "Published",
+                                value="published",
+                                selected=row.status == "published",
+                            ),
+                            option(
+                                "Draft",
+                                value="draft",
+                                selected=row.status == "draft",
+                            ),
+                            name="status",
+                        ),
+                    ),
+                    label(
+                        span("Skill body"),
+                        textarea(row.body or "", name="body", rows=14, required=True),
+                    ),
+                    button("Save skill", type="submit", class_="btn btn-primary"),
+                    action=f"/admin/skills/{row.code}/update",
+                    method="post",
+                    class_="stack",
+                ),
+            )
+            if can_write and row.status != "archived"
+            else span("")
+        )
+        archive = (
+            form(
+                _csrf(csrf),
+                button("Archive", type="submit", class_="btn btn-danger btn-small"),
+                action=f"/admin/skills/{row.code}/archive",
+                method="post",
+                class_="inline-form",
+            )
+            if can_write and row.status != "archived"
+            else span("")
+        )
+        table_rows.append(
+            tr(
+                td(row.name, small(row.code, class_="block-muted")),
+                td(row.status),
+                td("Enabled" if row.enabled else "Disabled"),
+                td(f"v{row.version}"),
+                td(archive, editor),
+            )
+        )
+    create_form = (
+        form(
+            _csrf(csrf),
+            label(span("Code"), input_(name="code", required=True)),
+            label(span("Description"), input_(name="description", required=True)),
+            label(
+                span("Status"),
+                select(
+                    option("Published", value="published"),
+                    option("Draft", value="draft"),
+                    name="status",
+                ),
+            ),
+            label(span("Skill body"), textarea(name="body", rows=10)),
+            label(
+                span("Enabled"),
+                select(option("Yes", value="1"), option("No", value="0"), name="enabled"),
+            ),
+            button("Create skill", type="submit", class_="btn btn-primary"),
+            action="/admin/skills",
+            method="post",
+            class_="form-grid",
+        )
+        if can_write
+        else None
+    )
+    return _management_page(
+        title_text="Skills",
+        lead="Review publication state and edit instruction packages without crossing the legacy client API.",
+        principal=principal,
+        csrf=csrf,
+        pages=pages,
+        theme=theme,
+        color_mode=color_mode,
+        density=density,
+        create_form=create_form,
+        headers=["Skill", "Status", "Injection", "Version", "Actions"],
+        rows=table_rows,
+        flash=flash,
+    )
+
+
+def mcp_page(
+    *,
+    principal: AdminPrincipal,
+    csrf: str,
+    pages: Iterable[AdminPageDefinition],
+    rows: list[Any],
+    theme: str,
+    color_mode: str,
+    density: str,
+    can_write: bool,
+    can_refresh: bool,
+    flash: str | None = None,
+) -> Any:
+    """渲染 MCP 服务器管理页。"""
+    table_rows = []
+    for row in rows:
+        actions = _toggle_and_delete(
+            csrf=csrf,
+            prefix=f"/admin/mcp/{row.code}",
+            enabled=bool(row.enabled),
+            can_write=can_write,
+        )
+        refresh = (
+            form(
+                _csrf(csrf),
+                button("Refresh tools", type="submit", class_="btn btn-secondary btn-small"),
+                action=f"/admin/mcp/{row.code}/refresh",
+                method="post",
+                class_="inline-form",
+            )
+            if can_refresh
+            else span("")
+        )
+        edit = (
+            details(
+                summary("Edit connection"),
+                form(
+                    _csrf(csrf),
+                    label(span("Name"), input_(name="name", value=row.name or row.code)),
+                    label(
+                        span("Timeout seconds"),
+                        input_(name="timeout_sec", type="number", value=row.timeout_sec),
+                    ),
+                    label(
+                        span("Command"),
+                        input_(name="command", value=row.command or ""),
+                    ),
+                    label(span("URL"), input_(name="url", value=row.url or "")),
+                    button("Save connection", type="submit", class_="btn btn-primary"),
+                    action=f"/admin/mcp/{row.code}/update",
+                    method="post",
+                    class_="stack",
+                ),
+            )
+            if can_write
+            else span("")
+        )
+        table_rows.append(
+            tr(
+                td(row.name or row.code, small(row.code, class_="block-muted")),
+                td(row.transport),
+                td("Enabled" if row.enabled else "Disabled"),
+                td(f"v{row.version}"),
+                td(refresh, actions, edit),
+            )
+        )
+    create_form = (
+        form(
+            _csrf(csrf),
+            label(span("Code"), input_(name="code", required=True)),
+            label(span("Name"), input_(name="name")),
+            label(
+                span("Transport"),
+                select(
+                    option("HTTP", value="http"),
+                    option("stdio", value="stdio"),
+                    name="transport",
+                ),
+            ),
+            label(span("HTTP URL"), input_(name="url")),
+            label(span("stdio command"), input_(name="command")),
+            label(
+                span("Timeout seconds"),
+                input_(name="timeout_sec", type="number", value="30", min="1", max="600"),
+            ),
+            button("Register server", type="submit", class_="btn btn-primary"),
+            action="/admin/mcp",
+            method="post",
+            class_="form-grid",
+        )
+        if can_write
+        else None
+    )
+    return _management_page(
+        title_text="MCP servers",
+        lead="Connection credentials stay encrypted and are never rendered back into the console.",
+        principal=principal,
+        csrf=csrf,
+        pages=pages,
+        theme=theme,
+        color_mode=color_mode,
+        density=density,
+        create_form=create_form,
+        headers=["Server", "Transport", "State", "Version", "Actions"],
+        rows=table_rows,
+        flash=flash,
+    )
+
+
+def llm_page(
+    *,
+    principal: AdminPrincipal,
+    csrf: str,
+    pages: Iterable[AdminPageDefinition],
+    rows: list[Any],
+    theme: str,
+    color_mode: str,
+    density: str,
+    can_write: bool,
+    flash: str | None = None,
+) -> Any:
+    """渲染 LLM 接口优先级与故障切换配置页。"""
+    table_rows = []
+    for row in rows:
+        actions = _toggle_and_delete(
+            csrf=csrf,
+            prefix=f"/admin/llm/{row.code}",
+            enabled=bool(row.enabled),
+            can_write=can_write,
+        )
+        edit = (
+            details(
+                summary("Edit endpoint"),
+                form(
+                    _csrf(csrf),
+                    label(span("Name"), input_(name="name", value=row.name or row.code)),
+                    label(span("Base URL"), input_(name="base_url", value=row.base_url)),
+                    label(
+                        span("Priority"),
+                        input_(name="priority", type="number", value=row.priority),
+                    ),
+                    label(
+                        span("Replacement API key"),
+                        input_(
+                            name="api_key",
+                            type="password",
+                            autocomplete="new-password",
+                            placeholder="Leave blank to keep current key",
+                        ),
+                    ),
+                    button("Save endpoint", type="submit", class_="btn btn-primary"),
+                    action=f"/admin/llm/{row.code}/update",
+                    method="post",
+                    class_="stack",
+                ),
+            )
+            if can_write
+            else span("")
+        )
+        table_rows.append(
+            tr(
+                td(row.name or row.code, small(row.code, class_="block-muted")),
+                td(row.base_url),
+                td(str(row.priority)),
+                td("Enabled" if row.enabled else "Disabled"),
+                td(actions, edit),
+            )
+        )
+    create_form = (
+        form(
+            _csrf(csrf),
+            label(span("Code"), input_(name="code", required=True)),
+            label(span("Name"), input_(name="name")),
+            label(span("Base URL"), input_(name="base_url", required=True)),
+            label(
+                span("API key"),
+                input_(
+                    name="api_key",
+                    type="password",
+                    autocomplete="new-password",
+                ),
+            ),
+            label(
+                span("Priority"),
+                input_(name="priority", type="number", value="100", min="0"),
+            ),
+            button("Create endpoint", type="submit", class_="btn btn-primary"),
+            action="/admin/llm",
+            method="post",
+            class_="form-grid",
+        )
+        if can_write
+        else None
+    )
+    return _management_page(
+        title_text="LLM endpoints",
+        lead="Lower priority numbers are attempted first. API keys remain write-only.",
+        principal=principal,
+        csrf=csrf,
+        pages=pages,
+        theme=theme,
+        color_mode=color_mode,
+        density=density,
+        create_form=create_form,
+        headers=["Endpoint", "Base URL", "Priority", "State", "Actions"],
+        rows=table_rows,
+        flash=flash,
+    )
+
+
+def audit_page(
+    *,
+    principal: AdminPrincipal,
+    csrf: str,
+    pages: Iterable[AdminPageDefinition],
+    rows: list[Any],
+    total: int,
+    theme: str,
+    color_mode: str,
+    density: str,
+    flash: str | None = None,
+) -> Any:
+    """渲染工具审计摘要和筛选器。"""
+    table_rows = [
+        tr(
+            td(str(row.id)),
+            td(str(row.run_id)),
+            td(row.tool_name, small(row.node_id, class_="block-muted")),
+            td(row.source),
+            td("Success" if row.ok else (row.failure_type or "Failed")),
+            td(f"{row.duration_ms} ms"),
+            td(str(row.created_at)),
+        )
+        for row in rows
+    ]
+    filters = form(
+        label(span("Run ID"), input_(name="run_id", type="number", min="1")),
+        label(span("Tool name"), input_(name="tool_name")),
+        label(
+            span("Source"),
+            select(
+                option("Any", value=""),
+                option("Builtin", value="builtin"),
+                option("Skill", value="skill"),
+                option("MCP", value="mcp"),
+                name="source",
+            ),
+        ),
+        label(
+            span("Outcome"),
+            select(
+                option("Any", value=""),
+                option("Success", value="true"),
+                option("Failed", value="false"),
+                name="ok",
+            ),
+        ),
+        button("Apply filters", type="submit", class_="btn btn-primary"),
+        action="/admin/audit",
+        method="get",
+        class_="form-grid",
+    )
+    return shell(
+        title_text="Tool audit",
+        principal=principal,
+        csrf=csrf,
+        theme=theme,
+        color_mode=color_mode,
+        density=density,
+        pages=pages,
+        flash=flash,
+        content=div(
+            section(
+                h1("Tool audit"),
+                p(
+                    f"{total} redacted tool invocation records are visible to this tenant.",
+                    class_="lead",
+                ),
+                filters,
+                class_="surface",
+            ),
+            section(
+                h2("Recent invocations"),
+                div(
+                    table(
+                        thead(
+                            tr(
+                                th("ID"),
+                                th("Run"),
+                                th("Tool"),
+                                th("Source"),
+                                th("Outcome"),
+                                th("Duration"),
+                                th("Created"),
+                            )
+                        ),
+                        tbody(
+                            *(table_rows or [tr(td("No audit records found."))])
+                        ),
+                        class_="data-table",
+                    ),
+                    class_="table-scroll",
+                ),
+                class_="surface",
+            ),
+            class_="stack",
+        ),
     )
 
 

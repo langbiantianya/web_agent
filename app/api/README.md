@@ -13,9 +13,8 @@
 | GET | `/api/tools` | 当前部署可用的工具目录 |
 | GET | `/api/tool-audits` | 管理员分页查询工具审计摘要 |
 | GET | `/api/tool-audits/{id}` | 管理员查看脱敏参数与限长结果 |
-| GET/POST | `/api/admin-users` | 管理员列出或创建数据库管理员 |
-| GET/PUT/DELETE | `/api/admin-users/{username}` | 查询、更新或删除管理员 |
-| POST | `/api/admin-users/{username}/rotate-key` | 轮换管理员 Key，只返回一次明文 |
+| ANY | `/api/admin-users/**` | 退役入口，统一返回 `410 Gone` |
+| GET | `/api/catalog` | 普通用户可读的 Workflow/Agent 公开摘要 |
 | GET/POST | `/api/workflows` | 列出或创建 Workflow |
 | GET/PUT/DELETE | `/api/workflows/{code}` | Workflow 详情、更新或删除 |
 | GET/POST | `/api/conversations` | 列出或创建会话 |
@@ -38,8 +37,14 @@
 | GET/POST | `/api/llm-endpoints` | 列出或新增数据库 LLM 接口配置 |
 | GET/PUT/DELETE | `/api/llm-endpoints/{code}` | 查询、更新或删除接口配置 |
 
-Skill 与 MCP 管理接口分别位于 `/api/skills` 和 `/api/mcp/servers`。管理写操作要求
-`X-Admin-Key`；环境引导 Key 与数据库管理员 Key 均可使用，具体配置见 `.env.example`。
+Skill 与 MCP 管理接口分别位于 `/api/skills` 和 `/api/mcp/servers`。客户端管理
+读/写接口只接受独立 admin-web 签发的后台 Session Cookie，并按
+`workflow|agent|skill|mcp|llm|audit`.object/action 调用 Casbin。普通用户使用
+`/api/catalog`，该接口只返回 Workflow/Agent 公开摘要，不返回提示词或凭据。
+
+后台 API 写请求同时校验 Origin、后台 CSRF Cookie、Session 中的 CSRF 摘要和 Casbin
+权限。同一浏览器还存在普通用户 Session 时，后台调用使用
+`X-Admin-CSRF-Token`；后台 Session 单独使用时也可继续使用 `X-CSRF-Token`。
 
 Skill 生命周期接口：
 
@@ -52,7 +57,7 @@ Skill 生命周期接口：
 MCP 除工具目录外还提供 resources、resource templates 与 prompts 的实时查询。在线状态明确
 标记为实例级，不代表跨实例共识。
 
-LLM 接口配置要求 `X-Admin-Key`，API Key 不回显。多个启用项按 `priority` 数值
+LLM 接口配置要求 `llm.read`/`llm.write`，API Key 不回显。多个启用项按 `priority` 数值
 从小到大尝试；同一优先级按创建顺序稳定排序。请求尚未输出内容时失败会切换下一项，
 已经向客户端输出 token 或 reasoning 后不会重放另一接口。
 

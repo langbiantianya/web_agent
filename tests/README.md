@@ -61,6 +61,16 @@ docker run --rm --network postgres-db_default \
   sh /app/tests/run_migrations_pg.sh
 ```
 
+客户端管理 API 的 Session/Casbin/租户专项使用同一隔离库：
+
+```bash
+docker run --rm --network postgres-db_default \
+  --env-file /docker/postgres/.env \
+  -e TEST_DATABASE_NAME=webagent_v47_client_admin_test \
+  -v "$PWD:/app:ro" -w /app webagent/tests:v47 \
+  sh /app/tests/run_client_admin_pg.sh
+```
+
 2026-11-05 在 PostgreSQL 18.6 + PgBouncer 1.18 上运行全量测试，结果为
 `739 passed, 19 skipped`；19 个默认跳过项是需要显式 Redis 地址的真实 Redis 用例。
 
@@ -70,6 +80,12 @@ docker run --rm --network postgres-db_default \
 较大连接池，32 并发用例可能耗尽 PostgreSQL 的 100 个连接槽并触发
 `remaining connection slots are reserved`。
 
+2026-11-07 在约 1.8 GB 内存测试机上，以 Docker `1 GiB / 1 CPU` 限额运行当前
+全量测试，结果为 `782 passed, 21 skipped`。跳过项为未显式提供 Redis 地址的真实
+Redis 用例；其余测试使用真实 Docker socket 启动 sibling sandbox。独立后台使用
+专用 PostgreSQL 空库从零迁移到 `8c31f0b7d2a4` 后，`tests/test_admin_web.py`
+为 `19 passed`；客户端管理 Session/Casbin/租户隔离专项为 `5 passed`。
+
 ## 测试层次
 
 | 层次 | 代表目录/文件 | 验证内容 |
@@ -78,6 +94,7 @@ docker run --rm --network postgres-db_default \
 | 数据与并发 | `test_db_concurrency.py`、`test_event_writer.py`、`test_sse_resume.py` | seq、批量落库、回放和续传 |
 | 多实例 | `test_redis.py`、`test_orchestrator_resilience.py` | Pub/Sub、Stream、租约、取消和降级 |
 | API 端到端 | `test_api_e2e.py`、`test_approval_e2e.py` | 真实 uvicorn、假模型、SSE 和审批恢复 |
+| 独立后台 | `test_admin_web.py`、`test_api_admin_auth.py` | Ludic SSR、OAuth/平台 Session、Casbin、页面组件权限、业务页和旧 API Key 退役 |
 | Skill/MCP | `test_skill_*.py`、`test_mcp_*.py` | 技能注入、资源读取、MCP 传输和工具调用 |
 | studio | `test_studio_*.py` | gRPC、超时、OOM、指标、启动检查和故障注入 |
 | 沙箱 | `test_sandbox_*.py`、`test_dispatcher*.py` | 控制帧、固定模板、HTTP 调度和隔离档 |

@@ -1,9 +1,9 @@
 # web_agent 主服务设计索引
 
-主设计按版本拆分。当前已实现系统由 V1–V4.6 累积组成；V4.6 的用户 OIDC
-登录、服务端会话与历史归属已落地并通过真 PostgreSQL 验证。V4.7 已完成
-独立 admin-web 服务、OAuth 管理员、账号密码超级管理员、Casbin RBAC、Ludic SSR 管理端设计，待实现；真实 IdP 联调、存量数据和旧管理员
-迁移仍以 TODO 为准。
+主设计按版本拆分。当前已实现系统由 V1–V4.7 累积组成；V4.6 的用户 OIDC
+登录、服务端会话与历史归属已落地并通过真 PostgreSQL 验证。V4.7 已实现
+独立 admin-web 服务、OAuth 管理员、账号密码超级管理员、Casbin RBAC、Ludic SSR
+业务管理页，并退役旧管理员 API Key 栈；真实 IdP 联调和存量数据处置仍以 TODO 为准。
 版本页不重复粘贴早期章节，因此排障或修改基础协议时要回到对应版本。
 
 | 版本 | 文档 | 主要内容 |
@@ -18,7 +18,7 @@
 | V4.4 | [治理、审批与运行时收口](v4.4-governance-runtime.md) | 管理员与租户、Skill 生命周期、会签超时、工具策略、MCP 资源、Trace、取消、配额与指标 |
 | V4.5 | [备份恢复、沙箱准入与成本闭环](v4.5-recovery-governance.md) | PostgreSQL PITR、自定义 seccomp、共享配额、真实资源成本、MCP OAuth |
 | V4.6 | [用户 OAuth 登录与会话历史归属](v4.6-user-oauth-conversation.md) | OIDC 登录、本地用户、服务端会话、会话 owner 隔离与迁移方案 |
-| V4.7 | [独立 admin-web、Casbin RBAC 与 Ludic SSR](v4.7-oauth-admin.md) | 独立容器、OAuth `admin_user`、账号密码超级管理员、Casbin、页面/组件权限、三主题 |
+| V4.7 | [独立 admin-web、Casbin RBAC 与 Ludic SSR](v4.7-oauth-admin.md) | 独立容器、OAuth `admin_user`、账号密码超级管理员、Casbin、页面/组件权限、三主题、六类业务页与旧管理栈退役 |
 
 跨项目版本历史、已移除方案和任务导航见 [设计总目录](../../docs/design/README.md)。未完成事项只在 [TODO](../../docs/design/TODO.md) 中维护。
 

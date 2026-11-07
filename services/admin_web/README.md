@@ -31,6 +31,10 @@ flowchart LR
     Admin --> Notify
 ```
 
+业务页直接调用共享仓储与领域校验（Workflow、Agent、Skill、MCP、LLM、Tool Audit），
+不通过浏览器转调客户端 `/api/*`。客户端管理 API 只验证同一套管理员 Session 和
+Casbin 策略，浏览器不是权限边界。
+
 ## 身份链
 
 | 主体 | Cookie/表 | 授权 |
@@ -74,13 +78,23 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
 - `/admin/access/mappings`：OAuth 外部角色到 Casbin role 的映射。
 - `/admin/platform-admins`：仅 `owner_slot=superAdmin` 可访问的账号管理。
 - `/admin/preferences`：Fluent、Cloudscape、Material 主题及深浅色/密度。
+- `/admin/workflows`：Workflow 图定义、启停和删除。
+- `/admin/agents`：租户内 Agent、模型、提示词、工具与 Skill 绑定。
+- `/admin/skills`：技能草稿/发布状态、正文修订和归档。
+- `/admin/mcp`：MCP 连接、启停、删除和工具目录刷新。
+- `/admin/llm`：LLM 接口优先级、启停和只写 API Key。
+- `/admin/audit`：按 run、工具、来源和结果筛选脱敏工具审计。
 
-Workflow、Agent、Skill、MCP、LLM 和审计页面仍需按同一领域 service 边界继续迁移；
-不能从浏览器调用旧客户端管理接口完成这些操作。
+旧 `/api/admin-users` 统一返回 `410 Gone`。客户端不再接受 `X-Admin-Key`，环境变量
+`ADMIN_KEY`、旧管理员仓储、旧请求模型和 Key 轮换逻辑均已删除。OAuth 管理员表只
+保留 `app_user` 外键、provider、角色同步状态和 Session 版本；旧数据库列只为平滑迁移
+保留，ORM 与业务不再读写。
 
 ## 安全约束
 
 - 所有修改请求校验 Origin、双提交 CSRF Cookie 和数据库 Session 中的 CSRF 摘要。
+- 同一浏览器同时存在普通用户 Session 时，后台 API 使用
+  `X-Admin-CSRF-Token`，防止两套身份共用 `X-CSRF-Token` 时相互覆盖。
 - 页面和组件权限在 SSR 阶段分别过滤；组件隐藏不作为 API 授权边界。
 - 只允许枚举主题、色温、密度、页面 key、组件 key 和权限 object/action。
 - 用户权限配置使用非空 `binding_scope` 唯一键，兼容 SQLite、PostgreSQL 和 MySQL
@@ -94,4 +108,6 @@ Workflow、Agent、Skill、MCP、LLM 和审计页面仍需按同一领域 servic
 python -m pytest tests/test_admin_web.py tests/test_migrations.py -q
 ```
 
-完整设计与验收项见 [V4.7 设计](../../app/design/v4.7-oauth-admin.md)。
+完整设计与验收项见 [V4.7 设计](../../app/design/v4.7-oauth-admin.md)。迁移结果：
+OAuth 管理员角色固定租户；平台超级管理员绕过 Casbin 并按请求选择租户；普通用户
+只能读取 `/api/catalog` 公开摘要。

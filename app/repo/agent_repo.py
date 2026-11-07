@@ -22,9 +22,17 @@ class AgentRepo:
         await db.refresh(agent)
         return agent
 
-    async def get_by_code(self, db: AsyncSession, code: str) -> Agent | None:
+    async def get_by_code(
+        self,
+        db: AsyncSession,
+        code: str,
+        tenant_id: str | None = None,
+    ) -> Agent | None:
         """按业务唯一 code 取 Agent；编排流程与缓存键都以 code 为主键语义。"""
-        return await db.scalar(sa.select(Agent).where(Agent.code == code))
+        stmt = sa.select(Agent).where(Agent.code == code)
+        if tenant_id is not None:
+            stmt = stmt.where(Agent.tenant_id == tenant_id)
+        return await db.scalar(stmt)
 
     async def get_by_id(self, db: AsyncSession, agent_id: int) -> Agent | None:
         """按自增 id 取 Agent，走主键查询。"""
@@ -43,6 +51,7 @@ class AgentRepo:
         only_enabled: bool = False,
         limit: int = 200,
         offset: int = 0,
+        tenant_id: str | None = None,
     ) -> list[Agent]:
         """分页列出 Agent，按 id 倒序（新建的排前面）。
 
@@ -53,11 +62,18 @@ class AgentRepo:
         stmt = sa.select(Agent)
         if only_enabled:
             stmt = stmt.where(Agent.enabled == 1)
+        if tenant_id is not None:
+            stmt = stmt.where(Agent.tenant_id == tenant_id)
         stmt = stmt.order_by(Agent.id.desc()).limit(limit).offset(offset)
         return list(await db.scalars(stmt))
 
     async def update(
-        self, db: AsyncSession, code: str, fields: dict, bump_version: bool = True
+        self,
+        db: AsyncSession,
+        code: str,
+        fields: dict,
+        bump_version: bool = True,
+        tenant_id: str | None = None,
     ) -> Agent | None:
         """按 code 局部更新字段（``None`` 值视为「不修改」而被忽略）。
 
@@ -70,7 +86,7 @@ class AgentRepo:
 
         置为 False 仅用于不改语义的字段写入。
         """
-        agent = await self.get_by_code(db, code)
+        agent = await self.get_by_code(db, code, tenant_id)
         if agent is None:
             return None
         for k, v in fields.items():
@@ -79,19 +95,31 @@ class AgentRepo:
         if bump_version:
             await db.execute(
                 sa.update(Agent)
-                .where(Agent.code == code)
+                .where(
+                    Agent.code == code,
+                    *(
+                        [Agent.tenant_id == tenant_id]
+                        if tenant_id is not None
+                        else []
+                    ),
+                )
                 .values(version=Agent.version + 1)
             )
         await db.commit()
         await db.refresh(agent)
         return agent
 
-    async def delete(self, db: AsyncSession, code: str) -> bool:
+    async def delete(
+        self,
+        db: AsyncSession,
+        code: str,
+        tenant_id: str | None = None,
+    ) -> bool:
         """按 code 硬删除；不存在时返回 False，由 API 层转成 404。
 
         注意删除无法用版本号表达失效，调用方需记得清空 Agent 缓存。
         """
-        agent = await self.get_by_code(db, code)
+        agent = await self.get_by_code(db, code, tenant_id)
         if agent is None:
             return False
         await db.delete(agent)

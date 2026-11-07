@@ -97,7 +97,7 @@ Workflow 的 `definition` 包含 `entry`、`nodes`、`edges` 和可选 `inputTem
 | `lease.py` | Redis 归属租约与控制频道 |
 | `checkpoint.py` | SQLite / Redis 审批暂停点 |
 | `approval_timeout.py` | 会签超时巡检与原子收口 |
-| `admin.py` | 环境引导 Key、数据库管理员认证和角色校验 |
+| `admin_auth.py` / `admin_authz.py` | 客户端与 admin-web 共用后台 Session 解析、Casbin 授权和 CSRF 摘要校验 |
 | `trace.py` | W3C traceparent 校验、生成与上下文传播 |
 | `skill_*.py` | Skill 解析、导入、提示词注入和资源读取 |
 | `mcp/` | MCP 传输、连接管理和命名映射 |

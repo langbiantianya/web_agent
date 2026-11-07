@@ -350,7 +350,8 @@ h2 {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 42px;
   padding: 8px 10px;
@@ -359,6 +360,34 @@ select {
   background: var(--color-bg-surface);
   color: var(--color-text-primary);
   font: inherit;
+}
+
+textarea {
+  min-height: 160px;
+  resize: vertical;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  line-height: 1.5;
+}
+
+.row-actions {
+  display: flex;
+  margin: 8px 0 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+details {
+  margin-top: 8px;
+}
+
+details > summary {
+  cursor: pointer;
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+details[open] > summary {
+  margin-bottom: 12px;
 }
 
 .inline-edit {

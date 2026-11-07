@@ -46,9 +46,6 @@ os.environ["DATABASE_URL"] = (
 )
 os.environ["SECRET_KEY"] = "test-secret-key-0123456789"
 os.environ["DEBUG"] = "false"
-# 管理员门禁的密钥（V4）。测试里要能以管理员身份调写接口；「未配置即拒绝」那条
-# fail-closed 的行为由 tests/test_admin.py 用 monkeypatch 单独钉住。
-os.environ["ADMIN_KEY"] = "test-admin-key"
 # 测试 HTTP 客户端使用 http://127.0.0.1，不启用 Secure 才能携带本地会话 Cookie。
 os.environ["USER_SESSION_COOKIE_SECURE"] = "false"
 os.environ["ADMIN_SESSION_COOKIE_SECURE"] = "false"

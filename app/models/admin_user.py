@@ -13,19 +13,12 @@ from app.models.base import DATETIME3, PK, Base
 
 
 class AdminUser(Base):
-    """一个可登录管理 API 的用户。"""
+    """一个由 OAuth 身份激活的后台管理员。"""
 
     __tablename__ = "admin_user"
 
     id: Mapped[int] = mapped_column(PK, primary_key=True, autoincrement=True)
-    username: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
-    display_name: Mapped[str | None] = mapped_column(
-        sa.String(128), nullable=True, default=""
-    )
     tenant_id: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
-    role: Mapped[str | None] = mapped_column(sa.String(16), nullable=True)
-    api_key_hash: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
-    api_key_hint: Mapped[str | None] = mapped_column(sa.String(16), nullable=True)
     user_id: Mapped[str | None] = mapped_column(
         sa.String(36),
         sa.ForeignKey("app_user.id", name="fk_admin_user_app_user"),
@@ -55,15 +48,13 @@ class AdminUser(Base):
     )
 
     __table_args__ = (
-        sa.UniqueConstraint("username", name="uq_admin_user_username"),
-        sa.UniqueConstraint("api_key_hash", name="uq_admin_user_key_hash"),
-        sa.Index("idx_admin_user_tenant", "tenant_id", "role"),
+        sa.Index("idx_admin_user_tenant", "tenant_id"),
         sa.Index("idx_admin_user_oauth_status", "status", "provider_id"),
     )
 
     def __repr__(self) -> str:  # pragma: no cover
-        """调试摘要不包含密钥摘要。"""
+        """调试摘要不包含 OAuth token 或会话信息。"""
         return (
-            f"<AdminUser {self.username or self.user_id} "
+            f"<AdminUser {self.user_id} "
             f"tenant={self.tenant_id} status={self.status}>"
         )

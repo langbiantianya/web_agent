@@ -136,14 +136,6 @@ class Settings(BaseSettings):
     # 单次最多删除多少条过期记录，限制小内存机器上的瞬时开销。
     tool_audit_cleanup_scan_limit: int = 1000
 
-    # ---- 管理员门禁（V4，§22.10）----
-    # 写技能 / 注册 MCP 服务器这类「部署级」操作的凭证。**未配置 = 一律拒绝**
-    # （fail-closed）——默认开着等于没有门：技能正文会进 prompt，而 prompt 就是
-    # 模型的行为。
-    admin_key: str = ""
-    # 审计里记的调用方标识。
-    admin_author: str = "admin"
-
     # ---- MCP（V4，§21）----
     # **stdio 的命令白名单前缀**。为空 = 禁止注册 stdio 类型的 MCP 服务器
     # （fail-closed）：注册一台 stdio 服务器就是「允许执行某个程序」，默认开着
@@ -168,8 +160,9 @@ class Settings(BaseSettings):
     skill_prompt_budget: int = 4000
     # 一次最多注入几个技能。
     skill_max_count: int = 5
-    # 技能上传（导入 zip / 上传资源）的请求体上限。**只对带对管理员密钥的
-    # 请求生效**——没带密钥的调用方在同一条路径上仍受 max_request_bytes 约束，
+    # 技能上传（导入 zip / 上传资源）的请求体上限。**只对有效后台 Session 且
+    # 具备 skill.write 权限的
+    # 请求生效**——没有有效权限的调用方仍受 max_request_bytes 约束，
     # 免得加个功能就把未认证流量能撑的缓冲口放大了。
     # 8 MB 压缩后的技能包解压后能到 50 MB（见 skill_import 的上限）。
     skill_upload_max_bytes: int = 8 * 1024 * 1024

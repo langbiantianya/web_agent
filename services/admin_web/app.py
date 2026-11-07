@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import re
 import secrets
@@ -14,6 +15,7 @@ from urllib.parse import quote, parse_qsl, urlencode, urlsplit, urlunsplit
 
 import sqlalchemy as sa
 from ludic.web import LudicApp, Request
+from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import (
     HTMLResponse,
@@ -26,12 +28,24 @@ from starlette.staticfiles import StaticFiles
 
 from app.config.settings import settings
 from app.core.crypto import decrypt, encrypt
+from app.core.mcp.catalog import McpCatalogError, refresh_catalog
+from app.core.mcp.transport import (
+    McpTransportError,
+    check_command_allowed,
+    check_url_allowed,
+)
 from app.core.oidc import (
     OIDCError,
     exchange_code,
     resolve_provider_endpoints,
     verify_id_token,
 )
+from app.core.skill_names import (
+    SkillConfigError,
+    normalize_skill_codes,
+)
+from app.core.skill_pack import compute_content_hash
+from app.core.tools import normalize_tool_names
 from app.core.user_profile import normalize_email, normalize_phone
 from app.models.admin_control import (
     AdminComponentDefinition,
@@ -50,8 +64,23 @@ from app.models.admin_control import (
 from app.models.admin_user import AdminUser
 from app.models.base import utcnow
 from app.models.conversation import Conversation
+from app.models.llm_endpoint import LlmEndpoint
+from app.models.mcp_server import McpServer
 from app.models.oauth import OAuthLoginAttempt, OAuthProvider
 from app.models.run import Run
+from app.models.skill import Skill
+from app.models.workflow import Workflow
+from app.repo.agent_repo import agent_repo
+from app.repo.llm_endpoint_repo import llm_endpoint_repo
+from app.repo.mcp_repo import mcp_server_repo, mcp_tool_repo
+from app.repo.skill_repo import skill_repo
+from app.repo.tool_audit_repo import tool_audit_repo
+from app.repo.workflow_repo import workflow_repo
+from app.schemas.agent import AgentCreate, AgentUpdate
+from app.schemas.llm_endpoint import LlmEndpointCreate, LlmEndpointUpdate
+from app.schemas.mcp import McpServerCreate, McpServerUpdate
+from app.schemas.skill import SkillCreate, SkillUpdate
+from app.schemas.workflow import WorkflowCreate, WorkflowUpdate
 from services.admin_web.accounts import (
     AdminPrincipal,
     LoginError,
@@ -102,13 +131,19 @@ from services.admin_web.security import (
 from services.admin_web.views import (
     access_components_page,
     access_pages_page,
+    agents_page,
+    audit_page,
     dashboard,
     error_page,
+    llm_page,
     login_page,
     mappings_page,
+    mcp_page,
     platform_admins_page,
     preferences_page,
     roles_page,
+    skills_page,
+    workflows_page,
 )
 
 logger = logging.getLogger(__name__)
@@ -660,6 +695,101 @@ def _html_error(
     )
 
 
+def _tenant_id(principal: AdminPrincipal) -> str:
+    """返回后台主体当前操作的租户。"""
+    return principal.tenant_id or settings.auth_default_tenant or "default"
+
+
+def _flash_from_query(request: Request) -> tuple[str | None, str]:
+    """把固定的 notice/error 查询值转换为页面提示，绝不回显任意查询文本。"""
+    notices = {
+        "created": "Resource created.",
+        "updated": "Changes saved.",
+        "deleted": "Resource deleted.",
+        "toggled": "Resource state updated.",
+        "refreshed": "MCP tool catalog refreshed.",
+    }
+    errors = {
+        "invalid": "The submitted values are invalid.",
+        "duplicate": "A resource with that code already exists.",
+        "missing": "The requested resource no longer exists.",
+        "forbidden": "The operation is not permitted.",
+        "failed": "The operation could not be completed.",
+    }
+    notice = request.query_params.get("notice", "")
+    if notice in notices:
+        return notices[notice], "info"
+    error = request.query_params.get("error", "")
+    if error in errors:
+        return errors[error], "warn"
+    return None, "info"
+
+
+def _as_bool(value: object, default: bool = False) -> bool:
+    """把 HTML 表单值规范成布尔值。"""
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _csv(value: object) -> list[str]:
+    """解析逗号分隔的多值表单字段。"""
+    return [
+        item.strip()
+        for item in str(value or "").replace("\n", ",").split(",")
+        if item.strip()
+    ]
+
+
+def _json_object(value: object) -> dict:
+    """解析必须是 JSON object 的表单字段。"""
+    parsed = json.loads(str(value or "{}"))
+    if not isinstance(parsed, dict):
+        raise ValueError("json_object_required")
+    return parsed
+
+
+async def _can_edit_resource(
+    db,
+    principal: AdminPrincipal,
+    *,
+    page_code: str,
+    component_code: str,
+) -> bool:
+    """同时检查页面可见性与写组件权限。"""
+    return await can_access_page(db, principal, page_code) and await can_show_component(
+        db, principal, page_code, component_code
+    )
+
+
+async def _operation_authorized(
+    request: Request,
+    db,
+    principal: AdminPrincipal,
+    *,
+    page_code: str,
+    component_code: str,
+    form,
+) -> bool:
+    """校验写操作的同源、CSRF 和页面组件权限。"""
+    return (
+        _origin_ok(request)
+        and await _can_edit_resource(
+            db,
+            principal,
+            page_code=page_code,
+            component_code=component_code,
+        )
+        and await _require_csrf(db, request, principal, form)
+    )
+
+
+def _business_redirect(path: str, notice: str = "", error: str = "") -> RedirectResponse:
+    """返回业务页静态提示重定向。"""
+    suffix = f"?notice={notice}" if notice else f"?error={error}"
+    return RedirectResponse(f"{path}{suffix}", status_code=303)
+
+
 @app.get("/admin/")
 async def dashboard_get(request: Request):
     """后台总览。"""
@@ -719,6 +849,1239 @@ async def dashboard_get(request: Request):
             counts=counts,
             overview_visible=overview_visible,
             quick_actions_visible=quick_visible,
+        )
+    finally:
+        await db.close()
+
+
+@app.get("/admin/workflows")
+async def workflows_get(request: Request):
+    """渲染 Workflow 编排列表。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, pref, csrf = values
+    try:
+        if not await can_access_page(db, principal, "workflows"):
+            return _not_found()
+        flash, kind = _flash_from_query(request)
+        return workflows_page(
+            principal=principal,
+            csrf=csrf,
+            pages=await visible_pages(db, principal),
+            rows=await workflow_repo.list(db, limit=500),
+            theme=pref.theme,
+            color_mode=pref.color_mode,
+            density=pref.density,
+            can_write=await _can_edit_resource(
+                db,
+                principal,
+                page_code="workflows",
+                component_code="workflow_editor",
+            ),
+            flash=flash,
+        )
+    finally:
+        await db.close()
+
+
+@app.post("/admin/workflows")
+async def workflows_post(request: Request):
+    """通过共享 Workflow 仓储创建编排。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="workflows",
+            component_code="workflow_editor",
+            form=form,
+        ):
+            return _not_found()
+        try:
+            payload = WorkflowCreate(
+                code=str(form.get("code") or ""),
+                name=str(form.get("name") or ""),
+                description=str(form.get("description") or ""),
+                definition=_json_object(form.get("definition")),
+                enabled=_as_bool(form.get("enabled"), True),
+            )
+        except (ValidationError, ValueError):
+            return _business_redirect("/admin/workflows", error="invalid")
+        if await workflow_repo.get_by_code(db, payload.code):
+            return _business_redirect("/admin/workflows", error="duplicate")
+        row = await workflow_repo.create(
+            db,
+            code=payload.code,
+            name=payload.name,
+            description=payload.description,
+            definition=payload.definition.model_dump(
+                by_alias=True, exclude_none=True
+            ),
+            enabled=1 if payload.enabled else 0,
+        )
+        await audit_principal_action(
+            db,
+            principal,
+            action="workflow.create",
+            target_type="workflow",
+            target_id=row.code,
+            tenant_id=principal.tenant_id,
+        )
+        await db.commit()
+        return _business_redirect("/admin/workflows", notice="created")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/workflows/{code}/update")
+async def workflows_update(code: str, request: Request):
+    """更新 Workflow 名称、启用状态或图定义。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="workflows",
+            component_code="workflow_editor",
+            form=form,
+        ):
+            return _not_found()
+        if await workflow_repo.get_by_code(db, code) is None:
+            return _business_redirect("/admin/workflows", error="missing")
+        try:
+            payload = WorkflowUpdate(
+                name=str(form.get("name") or ""),
+                description=str(form.get("description") or ""),
+                definition=_json_object(form.get("definition")),
+                enabled=_as_bool(form.get("enabled"), True),
+            )
+        except (ValidationError, ValueError):
+            return _business_redirect("/admin/workflows", error="invalid")
+        fields = payload.model_dump(exclude_unset=True)
+        fields["definition"] = payload.definition.model_dump(
+            by_alias=True, exclude_none=True
+        )
+        fields["enabled"] = 1 if payload.enabled else 0
+        await workflow_repo.update(db, code, fields)
+        await audit_principal_action(
+            db,
+            principal,
+            action="workflow.update",
+            target_type="workflow",
+            target_id=code,
+            tenant_id=principal.tenant_id,
+        )
+        await db.commit()
+        return _business_redirect("/admin/workflows", notice="updated")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/workflows/{code}/toggle")
+async def workflows_toggle(code: str, request: Request):
+    """切换 Workflow 启用状态。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="workflows",
+            component_code="workflow_editor",
+            form=form,
+        ):
+            return _not_found()
+        row = await workflow_repo.update(
+            db,
+            code,
+            {"enabled": 1 if _as_bool(form.get("enabled")) else 0},
+        )
+        if row is None:
+            return _business_redirect("/admin/workflows", error="missing")
+        await audit_principal_action(
+            db,
+            principal,
+            action="workflow.toggle",
+            target_type="workflow",
+            target_id=code,
+            tenant_id=principal.tenant_id,
+            detail={"enabled": bool(row.enabled)},
+        )
+        await db.commit()
+        return _business_redirect("/admin/workflows", notice="toggled")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/workflows/{code}/delete")
+async def workflows_delete(code: str, request: Request):
+    """永久删除 Workflow。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="workflows",
+            component_code="workflow_editor",
+            form=form,
+        ):
+            return _not_found()
+        if not await workflow_repo.delete(db, code):
+            return _business_redirect("/admin/workflows", error="missing")
+        await audit_principal_action(
+            db,
+            principal,
+            action="workflow.delete",
+            target_type="workflow",
+            target_id=code,
+            tenant_id=principal.tenant_id,
+        )
+        await db.commit()
+        return _business_redirect("/admin/workflows", notice="deleted")
+    finally:
+        await db.close()
+
+
+async def _agent_form_values(db, tenant_id: str, form) -> dict:
+    """解析并校验 Agent 表单，同时过滤失效 Skill/MCP 绑定。"""
+    skills = [row.code for row in await skill_repo.list(
+        db, only_enabled=True, limit=1000, tenant_id=tenant_id
+    )]
+    mcp_names = await mcp_tool_repo.qualified_names(db, tenant_id=tenant_id)
+    tools = normalize_tool_names(_csv(form.get("tools")), mcp_names)
+    try:
+        normalized_skills = normalize_skill_codes(_csv(form.get("skills")), set(skills))
+    except SkillConfigError as exc:
+        raise ValueError("invalid_skill_binding") from exc
+    return {
+        "name": str(form.get("name") or ""),
+        "description": str(form.get("description") or ""),
+        "system_prompt": str(form.get("system_prompt") or ""),
+        "model": str(form.get("model") or ""),
+        "base_url": str(form.get("base_url") or ""),
+        "api_key": str(form.get("api_key") or ""),
+        "tools": tools,
+        "skills": [] if normalized_skills is None else normalized_skills,
+        "enabled": _as_bool(form.get("enabled"), True),
+    }
+
+
+@app.get("/admin/agents")
+async def agents_get(request: Request):
+    """渲染当前租户的 Agent 配置列表。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, pref, csrf = values
+    try:
+        if not await can_access_page(db, principal, "agents"):
+            return _not_found()
+        flash, _ = _flash_from_query(request)
+        return agents_page(
+            principal=principal,
+            csrf=csrf,
+            pages=await visible_pages(db, principal),
+            rows=await agent_repo.list(
+                db,
+                limit=500,
+                tenant_id=_tenant_id(principal),
+            ),
+            theme=pref.theme,
+            color_mode=pref.color_mode,
+            density=pref.density,
+            can_write=await _can_edit_resource(
+                db,
+                principal,
+                page_code="agents",
+                component_code="agent_editor",
+            ),
+            flash=flash,
+        )
+    finally:
+        await db.close()
+
+
+@app.post("/admin/agents")
+async def agents_post(request: Request):
+    """通过共享 Agent 仓储创建租户配置。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="agents",
+            component_code="agent_editor",
+            form=form,
+        ):
+            return _not_found()
+        try:
+            fields = await _agent_form_values(db, _tenant_id(principal), form)
+            payload = AgentCreate(
+                code=str(form.get("code") or ""),
+                **fields,
+            )
+        except (ValidationError, ValueError):
+            return _business_redirect("/admin/agents", error="invalid")
+        if await agent_repo.get_by_code(db, payload.code):
+            return _business_redirect("/admin/agents", error="duplicate")
+        row = await agent_repo.create(
+            db,
+            code=payload.code,
+            tenant_id=_tenant_id(principal),
+            name=payload.name,
+            description=payload.description,
+            system_prompt=payload.system_prompt,
+            model=payload.model,
+            base_url=payload.base_url,
+            api_key_cipher=encrypt(payload.api_key),
+            tools=payload.tools,
+            skills=payload.skills,
+            enabled=1 if payload.enabled else 0,
+        )
+        await audit_principal_action(
+            db,
+            principal,
+            action="agent.create",
+            target_type="agent",
+            target_id=row.code,
+            tenant_id=_tenant_id(principal),
+        )
+        await db.commit()
+        return _business_redirect("/admin/agents", notice="created")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/agents/{code}/update")
+async def agents_update(code: str, request: Request):
+    """更新当前租户的 Agent 配置。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="agents",
+            component_code="agent_editor",
+            form=form,
+        ):
+            return _not_found()
+        existing = await agent_repo.get_by_code(
+            db, code, tenant_id=_tenant_id(principal)
+        )
+        if existing is None:
+            return _business_redirect("/admin/agents", error="missing")
+        try:
+            raw = await _agent_form_values(db, _tenant_id(principal), form)
+            if not raw["api_key"]:
+                raw.pop("api_key")
+            payload = AgentUpdate(**raw)
+        except (ValidationError, ValueError):
+            return _business_redirect("/admin/agents", error="invalid")
+        fields = payload.model_dump(exclude_unset=True)
+        if "api_key" in fields:
+            fields["api_key_cipher"] = encrypt(fields.pop("api_key"))
+        if "enabled" in fields:
+            fields["enabled"] = 1 if fields["enabled"] else 0
+        await agent_repo.update(
+            db,
+            code,
+            fields,
+            tenant_id=_tenant_id(principal),
+        )
+        await audit_principal_action(
+            db,
+            principal,
+            action="agent.update",
+            target_type="agent",
+            target_id=code,
+            tenant_id=_tenant_id(principal),
+        )
+        await db.commit()
+        return _business_redirect("/admin/agents", notice="updated")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/agents/{code}/toggle")
+async def agents_toggle(code: str, request: Request):
+    """切换当前租户 Agent 的启用状态。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="agents",
+            component_code="agent_editor",
+            form=form,
+        ):
+            return _not_found()
+        row = await agent_repo.update(
+            db,
+            code,
+            {"enabled": 1 if _as_bool(form.get("enabled")) else 0},
+            tenant_id=_tenant_id(principal),
+        )
+        if row is None:
+            return _business_redirect("/admin/agents", error="missing")
+        await audit_principal_action(
+            db,
+            principal,
+            action="agent.toggle",
+            target_type="agent",
+            target_id=code,
+            tenant_id=_tenant_id(principal),
+            detail={"enabled": bool(row.enabled)},
+        )
+        await db.commit()
+        return _business_redirect("/admin/agents", notice="toggled")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/agents/{code}/delete")
+async def agents_delete(code: str, request: Request):
+    """删除当前租户的 Agent。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="agents",
+            component_code="agent_editor",
+            form=form,
+        ):
+            return _not_found()
+        if not await agent_repo.delete(
+            db, code, tenant_id=_tenant_id(principal)
+        ):
+            return _business_redirect("/admin/agents", error="missing")
+        await audit_principal_action(
+            db,
+            principal,
+            action="agent.delete",
+            target_type="agent",
+            target_id=code,
+            tenant_id=_tenant_id(principal),
+        )
+        await db.commit()
+        return _business_redirect("/admin/agents", notice="deleted")
+    finally:
+        await db.close()
+
+
+@app.get("/admin/skills")
+async def skills_get(request: Request):
+    """渲染当前租户的技能定义列表。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, pref, csrf = values
+    try:
+        if not await can_access_page(db, principal, "skills"):
+            return _not_found()
+        flash, _ = _flash_from_query(request)
+        return skills_page(
+            principal=principal,
+            csrf=csrf,
+            pages=await visible_pages(db, principal),
+            rows=await skill_repo.list(
+                db,
+                limit=500,
+                tenant_id=_tenant_id(principal),
+            ),
+            theme=pref.theme,
+            color_mode=pref.color_mode,
+            density=pref.density,
+            can_write=await _can_edit_resource(
+                db,
+                principal,
+                page_code="skills",
+                component_code="skill_editor",
+            ),
+            flash=flash,
+        )
+    finally:
+        await db.close()
+
+
+@app.post("/admin/skills")
+async def skills_post(request: Request):
+    """创建手动维护的技能定义。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="skills",
+            component_code="skill_editor",
+            form=form,
+        ):
+            return _not_found()
+        try:
+            payload = SkillCreate(
+                code=str(form.get("code") or ""),
+                description=str(form.get("description") or ""),
+                body=str(form.get("body") or ""),
+                status=str(form.get("status") or "published"),
+                enabled=_as_bool(form.get("enabled"), True),
+            )
+        except ValidationError:
+            return _business_redirect("/admin/skills", error="invalid")
+        tenant_id = _tenant_id(principal)
+        if await skill_repo.get_by_code(db, payload.code, tenant_id):
+            return _business_redirect("/admin/skills", error="duplicate")
+        row = await skill_repo.create(
+            db,
+            tenant_id=tenant_id,
+            code=payload.code,
+            name=payload.code,
+            description=payload.description,
+            body=payload.body,
+            status=payload.status,
+            enabled=1 if payload.enabled else 0,
+            origin="manual",
+            content_hash=compute_content_hash(payload.body, []),
+        )
+        await audit_principal_action(
+            db,
+            principal,
+            action="skill.create",
+            target_type="skill",
+            target_id=row.code,
+            tenant_id=tenant_id,
+        )
+        await db.commit()
+        return _business_redirect("/admin/skills", notice="created")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/skills/{code}/update")
+async def skills_update(code: str, request: Request):
+    """更新技能内容，并把变更写入可回滚的修订表。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="skills",
+            component_code="skill_editor",
+            form=form,
+        ):
+            return _not_found()
+        tenant_id = _tenant_id(principal)
+        existing = await skill_repo.get_by_code(db, code, tenant_id)
+        if existing is None:
+            return _business_redirect("/admin/skills", error="missing")
+        try:
+            payload = SkillUpdate(
+                description=str(form.get("description") or ""),
+                body=str(form.get("body") or ""),
+                status=str(form.get("status") or existing.status),
+                enabled=_as_bool(form.get("enabled"), bool(existing.enabled)),
+            )
+        except ValidationError:
+            return _business_redirect("/admin/skills", error="invalid")
+        resources = await skill_repo.list_resources(db, existing.id)
+        await skill_repo.add_revision(
+            db,
+            existing.id,
+            existing.version,
+            existing.body or "",
+            [
+                {
+                    "path": item.path,
+                    "sha256": hashlib.sha256(item.content).hexdigest(),
+                    "is_text": bool(item.is_text),
+                    "size_bytes": item.size_bytes,
+                }
+                for item in resources
+            ],
+            principal.username,
+            "admin web update",
+            resource_blobs=[
+                {
+                    "path": item.path,
+                    "mime_type": item.mime_type,
+                    "is_text": bool(item.is_text),
+                    "content": item.content,
+                }
+                for item in resources
+            ],
+        )
+        fields = payload.model_dump(exclude_unset=True)
+        fields["enabled"] = 1 if fields["enabled"] else 0
+        fields["content_hash"] = compute_content_hash(
+            payload.body or "",
+            [(item.path, item.content) for item in resources],
+        )
+        await skill_repo.update(
+            db,
+            code,
+            fields,
+            tenant_id=tenant_id,
+        )
+        await audit_principal_action(
+            db,
+            principal,
+            action="skill.update",
+            target_type="skill",
+            target_id=code,
+            tenant_id=tenant_id,
+        )
+        await db.commit()
+        return _business_redirect("/admin/skills", notice="updated")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/skills/{code}/archive")
+async def skills_archive(code: str, request: Request):
+    """归档技能，保留资源和修订以便恢复。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="skills",
+            component_code="skill_editor",
+            form=form,
+        ):
+            return _not_found()
+        tenant_id = _tenant_id(principal)
+        if not await skill_repo.soft_delete(db, code, tenant_id):
+            return _business_redirect("/admin/skills", error="missing")
+        await audit_principal_action(
+            db,
+            principal,
+            action="skill.archive",
+            target_type="skill",
+            target_id=code,
+            tenant_id=tenant_id,
+        )
+        await db.commit()
+        return _business_redirect("/admin/skills", notice="deleted")
+    finally:
+        await db.close()
+
+
+@app.get("/admin/mcp")
+async def mcp_get(request: Request):
+    """渲染当前租户的 MCP 服务器列表。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, pref, csrf = values
+    try:
+        if not await can_access_page(db, principal, "mcp"):
+            return _not_found()
+        flash, _ = _flash_from_query(request)
+        return mcp_page(
+            principal=principal,
+            csrf=csrf,
+            pages=await visible_pages(db, principal),
+            rows=await mcp_server_repo.list(
+                db,
+                limit=500,
+                tenant_id=_tenant_id(principal),
+            ),
+            theme=pref.theme,
+            color_mode=pref.color_mode,
+            density=pref.density,
+            can_write=await _can_edit_resource(
+                db,
+                principal,
+                page_code="mcp",
+                component_code="mcp_editor",
+            ),
+            can_refresh=await can_show_component(
+                db, principal, "mcp", "mcp_refresh"
+            ),
+            flash=flash,
+        )
+    finally:
+        await db.close()
+
+
+async def _validate_mcp_connection(
+    transport: str,
+    *,
+    command: str | None,
+    url: str | None,
+) -> None:
+    """在保存前执行 MCP 命令和 URL 的边界校验。"""
+    if transport == "stdio":
+        if not command:
+            raise ValueError("command_required")
+        if url:
+            raise ValueError("url_not_allowed_for_stdio")
+        check_command_allowed(command)
+    elif transport == "http":
+        if not url:
+            raise ValueError("url_required")
+        if command:
+            raise ValueError("command_not_allowed_for_http")
+        await check_url_allowed(url, require_dns=False)
+    else:
+        raise ValueError("invalid_transport")
+
+
+@app.post("/admin/mcp")
+async def mcp_post(request: Request):
+    """注册当前租户的 MCP 服务器。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="mcp",
+            component_code="mcp_editor",
+            form=form,
+        ):
+            return _not_found()
+        try:
+            payload = McpServerCreate(
+                code=str(form.get("code") or ""),
+                name=str(form.get("name") or ""),
+                transport=str(form.get("transport") or "http"),
+                url=str(form.get("url") or "") or None,
+                command=str(form.get("command") or "") or None,
+                timeout_sec=int(str(form.get("timeout_sec") or "30")),
+                enabled=True,
+            )
+            await _validate_mcp_connection(
+                payload.transport,
+                command=payload.command,
+                url=payload.url,
+            )
+        except (
+            McpTransportError,
+            TypeError,
+            ValueError,
+            ValidationError,
+        ):
+            return _business_redirect("/admin/mcp", error="invalid")
+        tenant_id = _tenant_id(principal)
+        if await mcp_server_repo.get_by_code(db, payload.code, tenant_id):
+            return _business_redirect("/admin/mcp", error="duplicate")
+        row = await mcp_server_repo.create(
+            db,
+            code=payload.code,
+            tenant_id=tenant_id,
+            name=payload.name or payload.code,
+            transport=payload.transport,
+            command=payload.command,
+            url=payload.url,
+            timeout_sec=payload.timeout_sec,
+            auth_type="none",
+            enabled=1,
+        )
+        await audit_principal_action(
+            db,
+            principal,
+            action="mcp.create",
+            target_type="mcp_server",
+            target_id=row.code,
+            tenant_id=tenant_id,
+        )
+        await db.commit()
+        return _business_redirect("/admin/mcp", notice="created")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/mcp/{code}/update")
+async def mcp_update(code: str, request: Request):
+    """更新 MCP 连接名称、端点、命令或超时。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="mcp",
+            component_code="mcp_editor",
+            form=form,
+        ):
+            return _not_found()
+        tenant_id = _tenant_id(principal)
+        existing = await mcp_server_repo.get_by_code(db, code, tenant_id)
+        if existing is None:
+            return _business_redirect("/admin/mcp", error="missing")
+        command = str(form.get("command") or "") or None
+        url = str(form.get("url") or "") or None
+        try:
+            payload = McpServerUpdate(
+                name=str(form.get("name") or code),
+                timeout_sec=int(str(form.get("timeout_sec") or "30")),
+                command=command,
+                url=url,
+            )
+            await _validate_mcp_connection(
+                existing.transport,
+                command=payload.command,
+                url=payload.url,
+            )
+        except (
+            McpTransportError,
+            TypeError,
+            ValueError,
+            ValidationError,
+        ):
+            return _business_redirect("/admin/mcp", error="invalid")
+        await mcp_server_repo.update(
+            db,
+            code,
+            payload.model_dump(exclude_unset=True),
+            tenant_id=tenant_id,
+        )
+        await mcp_tool_repo.replace_for_server(db, existing.id, [])
+        await audit_principal_action(
+            db,
+            principal,
+            action="mcp.update",
+            target_type="mcp_server",
+            target_id=code,
+            tenant_id=tenant_id,
+        )
+        await db.commit()
+        return _business_redirect("/admin/mcp", notice="updated")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/mcp/{code}/toggle")
+async def mcp_toggle(code: str, request: Request):
+    """切换 MCP 服务器启用状态。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="mcp",
+            component_code="mcp_editor",
+            form=form,
+        ):
+            return _not_found()
+        tenant_id = _tenant_id(principal)
+        row = await mcp_server_repo.update(
+            db,
+            code,
+            {"enabled": 1 if _as_bool(form.get("enabled")) else 0},
+            tenant_id=tenant_id,
+        )
+        if row is None:
+            return _business_redirect("/admin/mcp", error="missing")
+        await audit_principal_action(
+            db,
+            principal,
+            action="mcp.toggle",
+            target_type="mcp_server",
+            target_id=code,
+            tenant_id=tenant_id,
+            detail={"enabled": bool(row.enabled)},
+        )
+        await db.commit()
+        return _business_redirect("/admin/mcp", notice="toggled")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/mcp/{code}/delete")
+async def mcp_delete(code: str, request: Request):
+    """删除 MCP 服务器及其工具快照。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="mcp",
+            component_code="mcp_editor",
+            form=form,
+        ):
+            return _not_found()
+        tenant_id = _tenant_id(principal)
+        if not await mcp_server_repo.delete(db, code, tenant_id):
+            return _business_redirect("/admin/mcp", error="missing")
+        await audit_principal_action(
+            db,
+            principal,
+            action="mcp.delete",
+            target_type="mcp_server",
+            target_id=code,
+            tenant_id=tenant_id,
+        )
+        await db.commit()
+        return _business_redirect("/admin/mcp", notice="deleted")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/mcp/{code}/refresh")
+async def mcp_refresh(code: str, request: Request):
+    """刷新 MCP 工具目录快照。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="mcp",
+            component_code="mcp_refresh",
+            form=form,
+        ):
+            return _not_found()
+        tenant_id = _tenant_id(principal)
+        server = await mcp_server_repo.get_by_code(db, code, tenant_id)
+        if server is None:
+            return _business_redirect("/admin/mcp", error="missing")
+        try:
+            result = await refresh_catalog(db, server=server)
+        except McpCatalogError:
+            return _business_redirect("/admin/mcp", error="failed")
+        await audit_principal_action(
+            db,
+            principal,
+            action="mcp.refresh",
+            target_type="mcp_server",
+            target_id=code,
+            tenant_id=tenant_id,
+            detail={"imported": len(result.imported)},
+        )
+        await db.commit()
+        return _business_redirect("/admin/mcp", notice="refreshed")
+    finally:
+        await db.close()
+
+
+@app.get("/admin/llm")
+async def llm_get(request: Request):
+    """渲染 LLM 接口优先级配置页。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, pref, csrf = values
+    try:
+        if not await can_access_page(db, principal, "llm"):
+            return _not_found()
+        flash, _ = _flash_from_query(request)
+        return llm_page(
+            principal=principal,
+            csrf=csrf,
+            pages=await visible_pages(db, principal),
+            rows=await llm_endpoint_repo.list(db, limit=500),
+            theme=pref.theme,
+            color_mode=pref.color_mode,
+            density=pref.density,
+            can_write=await _can_edit_resource(
+                db,
+                principal,
+                page_code="llm",
+                component_code="llm_editor",
+            ),
+            flash=flash,
+        )
+    finally:
+        await db.close()
+
+
+@app.post("/admin/llm")
+async def llm_post(request: Request):
+    """新增一个 OpenAI 兼容接口配置。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="llm",
+            component_code="llm_editor",
+            form=form,
+        ):
+            return _not_found()
+        try:
+            payload = LlmEndpointCreate(
+                code=str(form.get("code") or ""),
+                name=str(form.get("name") or ""),
+                base_url=str(form.get("base_url") or ""),
+                api_key=str(form.get("api_key") or ""),
+                priority=int(str(form.get("priority") or "100")),
+            )
+        except (TypeError, ValueError, ValidationError):
+            return _business_redirect("/admin/llm", error="invalid")
+        if await llm_endpoint_repo.get_by_code(db, payload.code):
+            return _business_redirect("/admin/llm", error="duplicate")
+        row = await llm_endpoint_repo.create(
+            db,
+            code=payload.code,
+            name=payload.name or payload.code,
+            base_url=payload.base_url,
+            api_key_cipher=encrypt(payload.api_key),
+            priority=payload.priority,
+            enabled=1,
+        )
+        await audit_principal_action(
+            db,
+            principal,
+            action="llm.create",
+            target_type="llm_endpoint",
+            target_id=row.code,
+            tenant_id=principal.tenant_id,
+        )
+        await db.commit()
+        return _business_redirect("/admin/llm", notice="created")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/llm/{code}/update")
+async def llm_update(code: str, request: Request):
+    """更新 LLM 接口；空 API Key 表示保留旧密钥。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="llm",
+            component_code="llm_editor",
+            form=form,
+        ):
+            return _not_found()
+        if await llm_endpoint_repo.get_by_code(db, code) is None:
+            return _business_redirect("/admin/llm", error="missing")
+        api_key = str(form.get("api_key") or "")
+        try:
+            values = {
+                "name": str(form.get("name") or code),
+                "base_url": str(form.get("base_url") or ""),
+                "priority": int(str(form.get("priority") or "100")),
+            }
+            if api_key:
+                values["api_key"] = api_key
+            payload = LlmEndpointUpdate(
+                **values,
+            )
+        except (TypeError, ValueError, ValidationError):
+            return _business_redirect("/admin/llm", error="invalid")
+        fields = payload.model_dump(exclude_unset=True)
+        if "api_key" in fields:
+            fields["api_key_cipher"] = encrypt(fields.pop("api_key"))
+        await llm_endpoint_repo.update(db, code, fields)
+        await audit_principal_action(
+            db,
+            principal,
+            action="llm.update",
+            target_type="llm_endpoint",
+            target_id=code,
+            tenant_id=principal.tenant_id,
+        )
+        await db.commit()
+        return _business_redirect("/admin/llm", notice="updated")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/llm/{code}/toggle")
+async def llm_toggle(code: str, request: Request):
+    """切换 LLM 接口启用状态。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="llm",
+            component_code="llm_editor",
+            form=form,
+        ):
+            return _not_found()
+        row = await llm_endpoint_repo.update(
+            db,
+            code,
+            {"enabled": 1 if _as_bool(form.get("enabled")) else 0},
+        )
+        if row is None:
+            return _business_redirect("/admin/llm", error="missing")
+        await audit_principal_action(
+            db,
+            principal,
+            action="llm.toggle",
+            target_type="llm_endpoint",
+            target_id=code,
+            tenant_id=principal.tenant_id,
+            detail={"enabled": bool(row.enabled)},
+        )
+        await db.commit()
+        return _business_redirect("/admin/llm", notice="toggled")
+    finally:
+        await db.close()
+
+
+@app.post("/admin/llm/{code}/delete")
+async def llm_delete(code: str, request: Request):
+    """删除 LLM 接口配置。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _, _ = values
+    try:
+        form = await request.form()
+        if not await _operation_authorized(
+            request,
+            db,
+            principal,
+            page_code="llm",
+            component_code="llm_editor",
+            form=form,
+        ):
+            return _not_found()
+        if not await llm_endpoint_repo.delete(db, code):
+            return _business_redirect("/admin/llm", error="missing")
+        await audit_principal_action(
+            db,
+            principal,
+            action="llm.delete",
+            target_type="llm_endpoint",
+            target_id=code,
+            tenant_id=principal.tenant_id,
+        )
+        await db.commit()
+        return _business_redirect("/admin/llm", notice="deleted")
+    finally:
+        await db.close()
+
+
+@app.get("/admin/audit")
+async def audit_get(request: Request):
+    """按当前租户和固定筛选条件查询工具审计。"""
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, pref, csrf = values
+    try:
+        if not await can_access_page(db, principal, "audit"):
+            return _not_found()
+        raw_run_id = request.query_params.get("run_id", "").strip()
+        raw_ok = request.query_params.get("ok", "").strip().lower()
+        source = request.query_params.get("source", "").strip() or None
+        if source not in (None, "builtin", "skill", "mcp"):
+            source = None
+        ok = True if raw_ok == "true" else False if raw_ok == "false" else None
+        try:
+            run_id = int(raw_run_id) if raw_run_id else None
+        except ValueError:
+            run_id = None
+        rows, total = await tool_audit_repo.list(
+            db,
+            tenant_id=_tenant_id(principal),
+            run_id=run_id,
+            tool_name=request.query_params.get("tool_name", "").strip() or None,
+            source=source,
+            ok=ok,
+            limit=100,
+        )
+        flash, _ = _flash_from_query(request)
+        return audit_page(
+            principal=principal,
+            csrf=csrf,
+            pages=await visible_pages(db, principal),
+            rows=rows,
+            total=total,
+            theme=pref.theme,
+            color_mode=pref.color_mode,
+            density=pref.density,
+            flash=flash,
         )
     finally:
         await db.close()

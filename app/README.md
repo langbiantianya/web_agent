@@ -12,7 +12,7 @@ flowchart TB
     subgraph Access["接入层"]
         API["FastAPI REST API<br/>Agent · Workflow · Conversation · Run · Skill · MCP"]
         AUTH["User OIDC + Server Session<br/>PKCE · Cookie · CSRF"]
-        ADMIN["Admin / Tenant / Role<br/>环境引导 Key + 数据库管理员"]
+        ADMIN["Admin Session + Casbin<br/>OAuth 管理员 / 超级管理员"]
         TICKET["SSE Ticket<br/>user + tenant + run 绑定"]
     end
 
@@ -53,7 +53,8 @@ flowchart TB
     AUTH -->|"discovery / token / JWKS"| IDP
     Client -->|"SSE"| TICKET
     TICKET --> SSE
-    Client -->|"X-Admin-Key"| ADMIN
+    Client -->|"后台 Session Cookie"| ADMIN
+    ADMIN -->|"object / action"| Casbin["Casbin RBAC"]
     AUTH --> API
     ADMIN --> API
     API -->|"创建 run / 后台执行"| ORCH
@@ -101,8 +102,9 @@ flowchart TB
 
 ## 治理与运行期
 
-- `ADMIN_KEY` 只负责环境引导；日常管理员使用数据库账号、`viewer/operator/admin`
-  角色和租户隔离，Key 只存 HMAC 摘要并支持一次性轮换。
+- 客户端管理 API 只接受独立 admin-web 签发的 OAuth 管理员或平台超级管理员
+  Session。OAuth 管理员按 Casbin object/action 授权并固定租户；平台超级管理员
+  可切租户。旧 `X-Admin-Key`、数据库管理员 Key 和轮换接口均已退役。
 - Skill 使用草稿、发布、归档和恢复状态；修订资源保存原始字节，二进制也可逐字节回滚。
 - 审批支持会签、同一审批人去重、截止时间和 `reject/approve` 超时策略，默认 fail-closed。
 - Agent 可配置工具级启用、并发和超时；禁用工具不会进入模型工具清单，伪造调用会被拦截。

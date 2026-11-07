@@ -95,3 +95,30 @@ def test_oauth_admin_cannot_spoof_another_tenant():
     client.headers["X-Tenant-ID"] = "tenant-b"
     response = client.get("/api/agents")
     assert response.status_code == 403
+
+
+def test_agent_records_are_isolated_by_effective_tenant():
+    """平台超级管理员切换租户后，不能读取或删除另一租户的 Agent。"""
+    client = TestClient(create_app())
+    authenticate_admin_sync(client, tenant_id="tenant-a")
+    code = f"tenant-agent-{uuid4().hex[:8]}"
+    client.headers["X-Tenant-ID"] = "tenant-a"
+    created = client.post(
+        "/api/agents",
+        json={
+            "code": code,
+            "name": "Tenant A Agent",
+            "system_prompt": "tenant-a",
+            "model": "fake-model",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["code"] == code
+
+    client.headers["X-Tenant-ID"] = "tenant-b"
+    assert client.get(f"/api/agents/{code}").status_code == 404
+    assert code not in {item["code"] for item in client.get("/api/agents").json()}
+    assert client.delete(f"/api/agents/{code}").status_code == 404
+
+    client.headers["X-Tenant-ID"] = "tenant-a"
+    assert client.delete(f"/api/agents/{code}").status_code == 204

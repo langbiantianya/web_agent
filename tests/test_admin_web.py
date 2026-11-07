@@ -472,6 +472,19 @@ async def _create_logged_in_super_admin(
     return client, account_id, passwords
 
 
+async def _create_seeded_logged_in_super_admin() -> tuple[
+    httpx.AsyncClient, int, list[str], str
+]:
+    """建立 registry 已同步且持有合法平台 Session 的后台客户端。"""
+    async with AdminSessionLocal() as db:
+        await seed_registry(db)
+    # owner 用户名是全局单例；业务页验证不需要 owner 专属操作，使用独立平台账号
+    # 可避免测试顺序依赖，同时仍然验证“平台超级管理员不进入 Casbin”的路径。
+    client, account_id, passwords = await _create_logged_in_super_admin(owner=False)
+    csrf = client.cookies.get(super_csrf_cookie_name()) or ""
+    return client, account_id, passwords, csrf
+
+
 async def test_only_owner_can_create_and_delete_platform_admins(monkeypatch):
     """owner 专属路由对非 owner 返回 404，且 owner 不能删除自己。"""
     import services.admin_web.app as admin_web_app
@@ -534,6 +547,228 @@ async def test_only_owner_can_create_and_delete_platform_admins(monkeypatch):
     finally:
         await owner_client.aclose()
         await non_owner_client.aclose()
+
+
+async def test_business_pages_are_registered_for_platform_super_admin():
+    """六类业务管理页都通过独立 admin-web 的页面权限注册表访问。"""
+    client, _, _, _ = await _create_seeded_logged_in_super_admin()
+    paths = [
+        "/admin/workflows",
+        "/admin/agents",
+        "/admin/skills",
+        "/admin/mcp",
+        "/admin/llm",
+        "/admin/audit",
+    ]
+    try:
+        for path in paths:
+            response = await client.get(path)
+            assert response.status_code == 200, (path, response.text)
+            assert "Admin navigation" in response.text
+    finally:
+        await client.aclose()
+
+
+async def test_admin_web_manages_workflow_agent_and_llm_without_client_api():
+    """后台创建、修改和切换资源时直接使用共享仓储，不经过旧管理 API。"""
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    tag = uuid.uuid4().hex[:8]
+    agent_code = f"agent-{tag}"
+    workflow_code = f"workflow-{tag}"
+    llm_code = f"llm-{tag}"
+    try:
+        agent = await client.post(
+            "/admin/agents",
+            data={
+                "csrf_token": csrf,
+                "code": agent_code,
+                "name": "Admin Agent",
+                "model": "test-model",
+                "base_url": "https://llm.example.com/v1",
+                "api_key": "admin-web-secret",
+                "tools": "",
+                "skills": "",
+                "system_prompt": "Use the admin configuration.",
+                "enabled": "1",
+            },
+        )
+        assert agent.status_code == 303, agent.text
+        agent_page = await client.get("/admin/agents")
+        assert agent_code in agent_page.text
+        assert "admin-web-secret" not in agent_page.text
+
+        workflow = await client.post(
+            "/admin/workflows",
+            data={
+                "csrf_token": csrf,
+                "code": workflow_code,
+                "name": "Admin Workflow",
+                "description": "created by admin web",
+                "definition": (
+                    '{"entry":"node","nodes":[{"id":"node",'
+                    f'"agentCode":"{agent_code}"}}],"edges":[]}}'
+                ),
+                "enabled": "1",
+            },
+        )
+        assert workflow.status_code == 303, workflow.text
+        updated = await client.post(
+            f"/admin/workflows/{workflow_code}/update",
+            data={
+                "csrf_token": csrf,
+                "name": "Admin Workflow Updated",
+                "description": "updated",
+                "definition": (
+                    '{"entry":"node","nodes":[{"id":"node",'
+                    f'"agentCode":"{agent_code}"}}],"edges":[]}}'
+                ),
+                "enabled": "1",
+            },
+        )
+        assert updated.status_code == 303, updated.text
+
+        llm = await client.post(
+            "/admin/llm",
+            data={
+                "csrf_token": csrf,
+                "code": llm_code,
+                "name": "Primary",
+                "base_url": "https://llm.example.com/v1",
+                "api_key": "llm-admin-secret",
+                "priority": "5",
+            },
+        )
+        assert llm.status_code == 303, llm.text
+        toggled = await client.post(
+            f"/admin/llm/{llm_code}/toggle",
+            data={"csrf_token": csrf, "enabled": "0"},
+        )
+        assert toggled.status_code == 303, toggled.text
+
+        async with AdminSessionLocal() as db:
+            from app.models.agent import Agent
+            from app.models.llm_endpoint import LlmEndpoint
+            from app.models.workflow import Workflow
+
+            stored_agent = await db.scalar(
+                sa.select(Agent).where(Agent.code == agent_code)
+            )
+            stored_workflow = await db.scalar(
+                sa.select(Workflow).where(Workflow.code == workflow_code)
+            )
+            stored_llm = await db.scalar(
+                sa.select(LlmEndpoint).where(LlmEndpoint.code == llm_code)
+            )
+            assert stored_agent is not None
+            assert stored_agent.api_key_cipher != "admin-web-secret"
+            assert stored_workflow is not None
+            assert stored_workflow.name == "Admin Workflow Updated"
+            assert stored_llm is not None and not stored_llm.enabled
+            audit_actions = set(
+                await db.scalars(
+                    sa.select(AdminAuditEvent.action).where(
+                        AdminAuditEvent.target_id.in_(
+                            [agent_code, workflow_code, llm_code]
+                        )
+                    )
+                )
+            )
+            assert {
+                "agent.create",
+                "workflow.create",
+                "workflow.update",
+                "llm.create",
+                "llm.toggle",
+            } <= audit_actions
+    finally:
+        await client.aclose()
+
+
+async def test_admin_web_manages_skill_mcp_and_audit_views():
+    """Skill、MCP 与审计页通过共享仓储呈现，凭据不回显。"""
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    tag = uuid.uuid4().hex[:8]
+    skill_code = f"skill-{tag}"
+    mcp_code = f"mcp-{tag}"
+    try:
+        skill = await client.post(
+            "/admin/skills",
+            data={
+                "csrf_token": csrf,
+                "code": skill_code,
+                "description": "Admin managed skill",
+                "body": "Follow these instructions.",
+                "status": "draft",
+                "enabled": "0",
+            },
+        )
+        assert skill.status_code == 303, skill.text
+        skill_update = await client.post(
+            f"/admin/skills/{skill_code}/update",
+            data={
+                "csrf_token": csrf,
+                "description": "Published admin skill",
+                "body": "Updated instructions.",
+                "status": "published",
+                "enabled": "1",
+            },
+        )
+        assert skill_update.status_code == 303, skill_update.text
+
+        mcp = await client.post(
+            "/admin/mcp",
+            data={
+                "csrf_token": csrf,
+                "code": mcp_code,
+                "name": "Remote catalog",
+                "transport": "http",
+                "url": "https://mcp.example.com/mcp",
+                "command": "",
+                "timeout_sec": "30",
+            },
+        )
+        assert mcp.status_code == 303, mcp.text
+
+        async with AdminSessionLocal() as db:
+            from app.models.skill import Skill, SkillRevision
+            from app.models.tool_call_audit import ToolCallAudit
+            from app.models.mcp_server import McpServer
+
+            stored_skill = await db.scalar(
+                sa.select(Skill).where(Skill.code == skill_code)
+            )
+            stored_mcp = await db.scalar(
+                sa.select(McpServer).where(McpServer.code == mcp_code)
+            )
+            assert stored_skill is not None and stored_skill.status == "published"
+            revision_count = await db.scalar(
+                sa.select(sa.func.count())
+                .select_from(SkillRevision)
+                .where(SkillRevision.skill_id == stored_skill.id)
+            )
+            assert revision_count == 1
+            assert stored_mcp is not None
+            db.add(
+                ToolCallAudit(
+                    tenant_id="default",
+                    run_id=987654,
+                    node_id="node-a",
+                    tool_call_id="call-a",
+                    tool_name="safe_tool",
+                    source="builtin",
+                    ok=1,
+                    duration_ms=12,
+                    expires_at=utcnow() + timedelta(days=1),
+                )
+            )
+            await db.commit()
+
+        audit = await client.get("/admin/audit?run_id=987654")
+        assert audit.status_code == 200
+        assert "safe_tool" in audit.text
+        assert "987654" in audit.text
+    finally:
+        await client.aclose()
 
 
 async def test_session_cookie_names_are_isolated():
