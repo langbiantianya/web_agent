@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | web_agent 主服务 | V4.6 | 基础实现完成 |
 | 用户 OAuth 与会话历史归属 | V4.6 | OIDC、会话与所有权隔离已通过真 PostgreSQL 验证；真实 IdP/存量迁移待完成 |
+| 独立 admin-web 与管理员体系 | V4.7 | 设计完成；独立容器、OAuth 角色同步、账号密码超级管理员、Casbin 与 UI 权限配置待实现 |
 | 生产恢复与沙箱治理 | V4.5 | 已实现并完成真 PostgreSQL / Docker 验证 |
 | MCP 工具 | V4 | 已实现 |
 | Skill 指令包与资源工具 | V4 | 已实现 |
@@ -37,6 +38,7 @@
 | [V4.4：治理、审批与运行时收口](../../app/design/v4.4-governance-runtime.md) | 数据库管理员与租户、Skill 生命周期、会签超时、工具策略、MCP 动态资源、Trace、取消、配额与指标 |
 | [V4.5：备份恢复、沙箱准入与成本闭环](../../app/design/v4.5-recovery-governance.md) | PostgreSQL PITR、自定义 seccomp、跨 studio 准入、真实资源成本、MCP OAuth 机器身份 |
 | [V4.6：用户 OAuth 登录与会话历史归属](../../app/design/v4.6-user-oauth-conversation.md) | OIDC、服务端会话、用户身份绑定、conversation owner、越权防护与迁移 |
+| [V4.7：独立 admin-web、Casbin RBAC 与 Ludic SSR](../../app/design/v4.7-oauth-admin.md) | 独立容器、OAuth 管理员、账号密码超级管理员、Casbin、页面/组件权限与三主题 |
 
 ### studio 服务
 
@@ -80,6 +82,7 @@
 | V4.4 | 数据库管理员/角色/租户、Skill 草稿发布归档与二进制回滚、审批会签超时、工具级策略、MCP resources/prompts 与动态通知、W3C Trace、sandbox 取消/指标/技能配额/摘要校验 | 共享管理员 Key 替换为“环境引导 Key + 数据库用户”；Skill 硬删除改为软删除；二进制只存摘要改为可回滚快照；单审批人改为会签；MCP 只接 tools 扩展为 resources/prompts；取消从进程边界贯通到容器 | 已完成 |
 | V4.5 | PostgreSQL 全量/增量备份与 PITR、自定义 seccomp、共享 dispatcher 租约配额与预算、cgroup 真实 CPU/内存指标、MCP OAuth 机器身份 | `backup_label` 作为备份识别依据改为显式标记；seccomp 文件路径改为内联 JSON；实例内配额改为共享 dispatcher 准入；静态 MCP header 扩展为可刷新 OAuth | 已完成 |
 | V4.6 | 用户 OIDC 登录、本地 `app_user`、服务端 cookie session、PKCE/state/nonce、conversation owner 隔离 | 客户端提交 `user_id` 改为认证主体派生；OAuth token 不进入浏览器存储；消息、run、审批和 SSE 统一按会话 owner 授权 | 基础实现与真 PostgreSQL 验证完成；真实 IdP 与存量迁移待完成 |
+| V4.7 | 独立 `admin-web` 容器、OAuth `admin_user`、`super_admin_account`、Casbin RBAC、Ludic SSR、页面/组件权限、三主题、密码轮换与通知 | 后台不再挂载到客户端进程；服务、Session、镜像和发布独立；平台超级管理员不校验角色；密码只可随机重置并支持 30 天轮换 | 设计完成，待实现 |
 
 ## 已移除、已替换或明确不做
 
@@ -112,6 +115,11 @@
 | 镜像签名验证 | 明确不做；继续使用镜像目录白名单、最小基础镜像和生产 digest 固定 | 用户明确不需要签名体系，避免再把它列为 TODO |
 | 客户端提交 `user_id` 决定会话归属 | 会话只绑定服务端 session 派生的不可变 `app_user.id`，无匿名降级；越权统一 404 | 可伪造身份会直接破坏历史隔离与审批边界 |
 | 浏览器保存 OAuth access/refresh token | 登录只建立 HttpOnly 服务端会话，第三方 token 默认不落库、不下发浏览器 | 降低 XSS 泄漏面，并让会话可以服务端立即撤销 |
+| 所有管理员只走 OAuth，或所有管理员都使用本地密码 | OAuth 管理员使用 Casbin；另设独立 `super_admin_account` 提供内置及后续平台超级管理员 | 同时满足常规 OAuth 管理与平台级应急管理 |
+| 手工写死管理员 role | 使用 Casbin `p/g`、permission metadata 和 OAuth 角色映射 | 权限可审计、可组合，外部目录是人员角色的权威来源 |
+| 后端只提供固定管理页面 | Ludic SSR 注册页面/组件，数据库配置 permission binding 和租户覆盖 | 在不允许任意代码的前提下支持页面和组件级 UI 授权 |
+| 后台和客户端共用同一 Web 进程 | `/admin` 独立 admin-web 容器，客户端不注册管理页面；共享数据库和领域语义 | 隔离发布、Session、静态资源、依赖和运行故障 |
+| 用户名密码管理员登录 | 明确不做；OAuth 是唯一人员登录协议 | 不维护另一套密码、重置、锁定和高危本地账户体系 |
 
 ## 阅读路径
 
@@ -133,6 +141,7 @@
 | 管理员、租户、会签、MCP 资源、运行期治理 | [V4.4](../../app/design/v4.4-governance-runtime.md) |
 | 备份恢复、seccomp、共享配额、成本与 MCP OAuth | [V4.5](../../app/design/v4.5-recovery-governance.md) |
 | 用户登录、Cookie 会话和历史按用户隔离 | [V4.6](../../app/design/v4.6-user-oauth-conversation.md) |
+| 独立 admin-web、OAuth 管理员、账号密码超级管理员、Casbin 与 Ludic SSR | [V4.7](../../app/design/v4.7-oauth-admin.md) |
 | studio 协议、隔离、资源限制 | [studio V4](../../services/studio/design/v4-current.md) |
 | 下一步开发 | [TODO](TODO.md) |
 

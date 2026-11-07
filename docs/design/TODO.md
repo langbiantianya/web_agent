@@ -5,8 +5,8 @@
 
 优先级：`P0` 阻断生产采用，`P1` 重要缺口，`P2` 体验与扩展。
 
-截至 V4.6，OAuth/OIDC 主链路已经落地。尚未完成的生产 P1 项集中在真实 IdP
-联调、登录限频/过期 attempt 清理，以及存量会话归属处理。
+截至 V4.7 设计，OAuth/OIDC 主链路已经落地。尚未完成的生产 P1 项集中在真实 IdP
+联调、登录限频/过期 attempt 清理、存量会话归属处理，以及管理员体系迁移。
 
 ## 隔离执行与成本
 
@@ -25,6 +25,14 @@
   尚未把每次消耗持久化为可对账的累计账单，也未接入云厂商价格目录。
 
 ## 用户身份与会话
+
+- [ ] **P1：实现 V4.7 OAuth 管理员体系**
+  [V4.7 方案](../../app/design/v4.7-oauth-admin.md) 已明确用
+  独立 `admin_user + Casbin RBAC + OAuth role mapping` 替代管理员 API Key，并提供
+  独立 `super_admin_account` 账号密码超级管理员、8 位随机密码、30 天轮换及阿里云/
+  腾讯云短信通知。后台作为独立容器运行 Ludic SSR，并用三套主题实现管理员可配置的
+  页面/组件权限、深浅色和移动端。实现时需要移除普通管理接口的 `X-Admin-Key`、
+  按 Casbin permission 改造路由，并完成旧 `admin_user` 审计迁移。
 
 - [ ] **P1：OAuth 生产加固与真实 IdP 联调**
   [V4.6 方案](../../app/design/v4.6-user-oauth-conversation.md) 中的 OIDC、PKCE、
