@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from app.config.settings import settings
 from app.core.errors import redact_error_message
 from app.main import create_app
+from tests.conftest import authenticate_admin_sync
 
 
 @pytest.fixture
@@ -28,7 +29,9 @@ def client():
     这几个用例打的是「请求进来之后、碰业务之前」的那几道关，起停 checkpointer
     与敏感词模型对它们没有影响；跳过 lifespan 也让用例更快。
     """
-    return TestClient(create_app())
+    value = TestClient(create_app())
+    authenticate_admin_sync(value)
+    return value
 
 
 # --------------------------------------------------------------- 请求体上限
@@ -70,10 +73,10 @@ def test_normal_body_is_accepted(client: TestClient):
 # ------------------------------------------- 技能上传路径的放宽上限（V4）
 
 
-def test_skill_upload_path_keeps_global_limit_without_admin_key(
+def test_skill_upload_path_keeps_global_limit_without_admin_session(
     client: TestClient,
 ):
-    """技能上传路径**没带管理员密钥**时，仍受全局上限约束。
+    """技能上传路径**没有后台 Session**时，仍受全局上限约束。
 
     放宽是为了让「单资源 5 MB」这条领域约束在 HTTP 上够得着。但放宽不能
     无条件生效——那等于给未认证的调用方开了一个 8 MB 的缓冲口。
@@ -83,13 +86,13 @@ def test_skill_upload_path_keeps_global_limit_without_admin_key(
         "description": "太大",
         "body": "A" * (settings.max_request_bytes + 1024),
     }
-    r = client.post("/api/skills", json=payload)
+    r = TestClient(create_app()).post("/api/skills", json=payload)
     assert r.status_code == 413, f"应 413，实际 {r.status_code}：{r.text[:200]}"
     assert r.json()["code"] == "payload_too_large"
 
 
 def test_skill_upload_path_allows_admin_bigger_body(client: TestClient):
-    """带对管理员密钥时，技能上传路径用专属上限。
+    """有效后台 Session 且拥有 skill.write 时使用专属上限。
 
     技能正文本身有 20000 字符的领域上限，所以这里发一个**介于全局上限与
     技能上限之间**的请求体：它过得了全局上限（会 413），但在管理员路径上
@@ -100,49 +103,45 @@ def test_skill_upload_path_allows_admin_bigger_body(client: TestClient):
         "description": "太大",
         "body": "A" * (settings.max_request_bytes + 1024),
     }
-    r = client.post(
-        "/api/skills", json=payload, headers={"X-Admin-Key": settings.admin_key}
-    )
+    r = client.post("/api/skills", json=payload)
     # 过了请求体限制，撞上领域层的正文长度上限 → 400
     assert r.status_code == 400, f"应 400，实际 {r.status_code}：{r.text[:200]}"
 
 
-def test_skill_upload_path_with_wrong_key_keeps_global_limit(client: TestClient):
-    """密钥不对 → 拿不到放宽后的上限。"""
+def test_skill_upload_path_without_session_keeps_global_limit(
+    client: TestClient,
+):
+    """旧 X-Admin-Key 不能获得放宽后的上限。"""
     payload = {
         "code": "big-wrong",
         "description": "太大",
         "body": "A" * (settings.max_request_bytes + 1024),
     }
-    r = client.post("/api/skills", json=payload, headers={"X-Admin-Key": "wrong"})
+    r = TestClient(create_app()).post(
+        "/api/skills",
+        json=payload,
+        headers={"X-Admin-Key": "wrong"},
+    )
     assert r.status_code == 413, f"应 413，实际 {r.status_code}：{r.text[:200]}"
 
 
-def test_skill_upload_path_allows_database_admin_bigger_body(client: TestClient):
-    """数据库管理员也应获得技能路径的放宽上限，而不只认环境引导 Key。"""
-    username = f"uploader-{uuid4().hex[:8]}"
-    created = client.post(
-        "/api/admin-users",
-        headers={"X-Admin-Key": settings.admin_key},
-        json={
-            "username": username,
-            "display_name": "上传管理员",
-            "tenant_id": "default",
-            "role": "operator",
-        },
+def test_skill_upload_path_allows_casbin_operator_bigger_body(
+    client: TestClient,
+):
+    """OAuth operator 拥有 skill.write 时同样获得受限放宽。"""
+    client.cookies.clear()
+    client.headers.pop("X-CSRF-Token", None)
+    authenticate_admin_sync(
+        client,
+        platform_super=False,
+        roles=("operator",),
     )
-    assert created.status_code == 201, created.text
-    api_key = created.json()["api_key"]
     payload = {
         "code": "database-admin-big",
         "description": "太大",
         "body": "A" * (settings.max_request_bytes + 1024),
     }
-    r = client.post(
-        "/api/skills",
-        json=payload,
-        headers={"X-Admin-Key": api_key},
-    )
+    r = client.post("/api/skills", json=payload)
     assert r.status_code == 400, f"应 400，实际 {r.status_code}：{r.text[:200]}"
 
 

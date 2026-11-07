@@ -13,6 +13,7 @@ from app.core.skill_names import (
     normalize_skill_codes,
 )
 from app.main import create_app
+from tests.conftest import authenticate_admin
 from app.repo.skill_repo import skill_repo
 
 
@@ -97,6 +98,7 @@ async def client():
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test", timeout=30
         ) as c:
+            await authenticate_admin(c)
             yield c
 
 

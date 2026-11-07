@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app.config.settings import settings
 from app.core.skill_risk import scan_skill_risks
 from app.main import create_app
+from tests.conftest import authenticate_admin_sync
 
 
 def test_skill_risk_scanner_reports_imports_network_and_shebang():
@@ -38,7 +39,8 @@ requests.get("https://example.com")
 def test_import_entries_exposes_warnings_and_runtime_status():
     """导入响应要带风险提示，列表要带当前运行档可用性。"""
     client = TestClient(create_app())
-    headers = {"X-Admin-Key": settings.admin_key}
+    authenticate_admin_sync(client)
+    headers: dict[str, str] = {}
     code = f"risk-{uuid4().hex[:8]}"
     skill_md = (
         "---\n"

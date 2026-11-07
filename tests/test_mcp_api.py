@@ -18,9 +18,9 @@ import pytest
 
 from app.config.settings import settings
 from app.main import create_app
+from tests.conftest import authenticate_admin
 
-ADMIN_KEY = "test-admin-key"
-ADMIN_HEADERS = {"X-Admin-Key": ADMIN_KEY}
+ADMIN_HEADERS: dict[str, str] = {}
 
 
 @pytest.fixture
@@ -32,6 +32,7 @@ async def client():
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test", timeout=30
         ) as c:
+            await authenticate_admin(c)
             yield c
 
 
@@ -63,13 +64,17 @@ async def test_all_mcp_endpoints_require_admin(client, method, path):
     连只读的两条也要密钥：它们虽然不写，但也没有必要为「看看有哪些服务器」
     单独开一套鉴权——MCP 服务器列表本身就透露了部署的内部结构。
     """
+    client.cookies.clear()
+    client.headers.pop("X-CSRF-Token", None)
     resp = await getattr(client, method)(path)
     assert resp.status_code == 401, resp.text
     assert resp.json()["code"] == "unauthorized"
 
 
 async def test_wrong_admin_key_rejected(client):
-    """密钥不对 → 401。"""
+    """旧 X-Admin-Key 不能代替后台 Session。"""
+    client.cookies.clear()
+    client.headers.pop("X-CSRF-Token", None)
     resp = await client.post(
         "/api/mcp/servers",
         json={"code": "x", "transport": "http", "url": "https://a.example.com/mcp"},

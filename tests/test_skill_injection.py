@@ -27,7 +27,7 @@ import uvicorn
 from app.config.db import SessionLocal
 from app.main import create_app
 from app.repo.skill_repo import skill_repo
-from tests.conftest import authenticate_client
+from tests.conftest import authenticate_admin, authenticate_client
 from tests.fake_llm import FakeLLM
 
 
@@ -67,6 +67,7 @@ async def server():
 async def client(server: str):
     """真实 HTTP 客户端（真 socket，不是 ASGITransport）。"""
     async with httpx.AsyncClient(base_url=server, timeout=30) as c:
+        await authenticate_admin(c)
         await authenticate_client(c)
         yield c
 

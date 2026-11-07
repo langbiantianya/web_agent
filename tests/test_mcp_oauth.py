@@ -12,8 +12,9 @@ from app.core.mcp import oauth
 from app.core.mcp.transport import http_headers
 from app.main import create_app
 from app.repo.mcp_repo import mcp_server_repo
+from tests.conftest import authenticate_admin
 
-ADMIN_HEADERS = {"X-Admin-Key": "test-admin-key"}
+ADMIN_HEADERS: dict[str, str] = {}
 
 
 @pytest.fixture
@@ -25,6 +26,7 @@ async def client():
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test", timeout=30
         ) as value:
+            await authenticate_admin(value)
             yield value
 
 
@@ -147,33 +149,34 @@ async def test_oauth_requires_token_url_client_and_secret(client):
 async def test_mcp_servers_are_isolated_by_admin_tenant(client):
     """A MCP server created in one tenant is invisible to another tenant."""
     suffix = uuid4().hex[:8]
-    user = await client.post(
-        "/api/admin-users",
-        headers=ADMIN_HEADERS,
-        json={
-            "username": f"mcp_{suffix}",
-            "display_name": "MCP tenant",
-            "tenant_id": f"tenant-{suffix}",
-            "role": "operator",
-            "enabled": True,
-        },
+    tenant = f"tenant-{suffix}"
+    tenant_client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app()),
+        base_url="http://test",
+        timeout=30,
     )
-    assert user.status_code == 201, user.text
-    tenant_headers = {"X-Admin-Key": user.json()["api_key"]}
+    await authenticate_admin(
+        tenant_client,
+        tenant_id=tenant,
+        platform_super=False,
+        roles=("tenant_admin",),
+    )
     code = f"tenantmcp{suffix}"
-    created = await client.post(
-        "/api/mcp/servers",
-        headers=tenant_headers,
-        json={
-            "code": code,
-            "transport": "http",
-            "url": "https://mcp.example.com/mcp",
-        },
-    )
-    assert created.status_code == 201, created.text
-    assert created.json()["tenant_id"] == f"tenant-{suffix}"
-    assert (
-        await client.get(f"/api/mcp/servers/{code}", headers=ADMIN_HEADERS)
-    ).status_code == 404
-    listing = await client.get("/api/mcp/servers", headers=ADMIN_HEADERS)
-    assert code not in {item["code"] for item in listing.json()}
+    try:
+        created = await tenant_client.post(
+            "/api/mcp/servers",
+            json={
+                "code": code,
+                "transport": "http",
+                "url": "https://mcp.example.com/mcp",
+            },
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["tenant_id"] == tenant
+        assert (
+            await client.get(f"/api/mcp/servers/{code}")
+        ).status_code == 404
+        listing = await client.get("/api/mcp/servers")
+        assert code not in {item["code"] for item in listing.json()}
+    finally:
+        await tenant_client.aclose()

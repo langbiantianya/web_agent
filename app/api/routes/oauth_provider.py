@@ -5,7 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter
 from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import AdminDep, DbSession
+from app.api.deps import (
+    DbSession,
+    OAuthProviderManageDep,
+    OAuthProviderReadDep,
+)
 from app.core.errors import ConflictError, NotFoundError
 from app.models.oauth import OAuthProvider
 from app.repo.oauth_provider_repo import oauth_provider_repo
@@ -40,7 +44,7 @@ def _out(row: OAuthProvider) -> OAuthProviderAdminOut:
 
 @router.get("", response_model=list[OAuthProviderAdminOut])
 async def list_providers(
-    db: DbSession, admin: AdminDep
+    db: DbSession, admin: OAuthProviderReadDep
 ) -> list[OAuthProviderAdminOut]:
     """列出当前管理员租户的登录供应商。"""
     rows = await oauth_provider_repo.list(db, admin.tenant_id)
@@ -49,7 +53,9 @@ async def list_providers(
 
 @router.post("", response_model=OAuthProviderAdminOut, status_code=201)
 async def create_provider(
-    payload: OAuthProviderCreate, db: DbSession, admin: AdminDep
+    payload: OAuthProviderCreate,
+    db: DbSession,
+    admin: OAuthProviderManageDep,
 ) -> OAuthProviderAdminOut:
     """新增登录供应商；client secret 加密后落库。"""
     if await oauth_provider_repo.get(db, payload.code, admin.tenant_id):
@@ -69,7 +75,7 @@ async def create_provider(
 
 @router.get("/{code}", response_model=OAuthProviderAdminOut)
 async def get_provider(
-    code: str, db: DbSession, admin: AdminDep
+    code: str, db: DbSession, admin: OAuthProviderReadDep
 ) -> OAuthProviderAdminOut:
     """读取单个登录供应商。"""
     row = await oauth_provider_repo.get(db, code, admin.tenant_id)
@@ -83,7 +89,7 @@ async def update_provider(
     code: str,
     payload: OAuthProviderUpdate,
     db: DbSession,
-    admin: AdminDep,
+    admin: OAuthProviderManageDep,
 ) -> OAuthProviderAdminOut:
     """局部更新供应商；未传 secret 时保持已加密原值。"""
     row = await oauth_provider_repo.get(db, code, admin.tenant_id)
@@ -108,7 +114,11 @@ async def update_provider(
 
 
 @router.delete("/{code}", status_code=204)
-async def delete_provider(code: str, db: DbSession, admin: AdminDep) -> None:
+async def delete_provider(
+    code: str,
+    db: DbSession,
+    admin: OAuthProviderManageDep,
+) -> None:
     """删除尚未被任何身份绑定的供应商配置。"""
     row = await oauth_provider_repo.get(db, code, admin.tenant_id)
     if row is None:

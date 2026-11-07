@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import re
 import secrets
@@ -15,19 +14,27 @@ from fastapi import Request
 from starlette.responses import Response
 
 from app.config.settings import settings
+from app.core.admin_auth import (
+    ADMIN_CSRF_COOKIE_INSECURE,
+    ADMIN_CSRF_COOKIE_SECURE,
+    ADMIN_OAUTH_COOKIE_INSECURE,
+    ADMIN_OAUTH_COOKIE_SECURE,
+    ADMIN_SESSION_COOKIE_INSECURE,
+    ADMIN_SESSION_COOKIE_SECURE,
+    SUPER_CSRF_COOKIE_INSECURE,
+    SUPER_CSRF_COOKIE_SECURE,
+    SUPER_SESSION_COOKIE_INSECURE,
+    SUPER_SESSION_COOKIE_SECURE,
+    admin_csrf_cookie_name,
+    admin_oauth_cookie_name,
+    admin_session_cookie_name,
+    request_csrf_cookie,
+    request_session_token,
+    super_csrf_cookie_name,
+    super_session_cookie_name,
+    token_hash,
+)
 from app.models.base import utcnow
-
-ADMIN_SESSION_COOKIE_SECURE = "__Host-wa_admin_session"
-ADMIN_CSRF_COOKIE_SECURE = "__Host-wa_admin_csrf"
-ADMIN_OAUTH_COOKIE_SECURE = "__Host-wa_admin_oauth_state"
-ADMIN_SESSION_COOKIE_INSECURE = "wa_admin_session"
-ADMIN_CSRF_COOKIE_INSECURE = "wa_admin_csrf"
-ADMIN_OAUTH_COOKIE_INSECURE = "wa_admin_oauth_state"
-
-SUPER_SESSION_COOKIE_SECURE = "__Host-wa_super_admin_session"
-SUPER_CSRF_COOKIE_SECURE = "__Host-wa_super_admin_csrf"
-SUPER_SESSION_COOKIE_INSECURE = "wa_super_admin_session"
-SUPER_CSRF_COOKIE_INSECURE = "wa_super_admin_csrf"
 
 _PASSWORD_ALPHABET = (
     string.ascii_uppercase + string.ascii_lowercase + string.digits + "_@"
@@ -40,11 +47,6 @@ _PASSWORD_HASHER = PasswordHasher(
     salt_len=16,
 )
 _SUPER_ADMIN_USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$")
-
-
-def token_hash(token: str) -> str:
-    """计算 Cookie/一次性 token 的 SHA-256。"""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def new_token() -> str:
@@ -93,36 +95,6 @@ def normalize_super_admin_username(value: object) -> str | None:
 def _cookie_secure() -> bool:
     """当前部署是否使用 Secure Cookie。"""
     return settings.admin_session_cookie_secure
-
-
-def _cookie_name(secure: str, insecure: str) -> str:
-    """按 Secure 设置返回 Cookie 名。"""
-    return secure if _cookie_secure() else insecure
-
-
-def admin_session_cookie_name() -> str:
-    """OAuth 后台管理员 Session Cookie 名。"""
-    return _cookie_name(ADMIN_SESSION_COOKIE_SECURE, ADMIN_SESSION_COOKIE_INSECURE)
-
-
-def admin_csrf_cookie_name() -> str:
-    """OAuth 后台管理员 CSRF Cookie 名。"""
-    return _cookie_name(ADMIN_CSRF_COOKIE_SECURE, ADMIN_CSRF_COOKIE_INSECURE)
-
-
-def admin_oauth_cookie_name() -> str:
-    """OAuth 登录状态绑定 Cookie 名。"""
-    return _cookie_name(ADMIN_OAUTH_COOKIE_SECURE, ADMIN_OAUTH_COOKIE_INSECURE)
-
-
-def super_session_cookie_name() -> str:
-    """平台超级管理员 Session Cookie 名。"""
-    return _cookie_name(SUPER_SESSION_COOKIE_SECURE, SUPER_SESSION_COOKIE_INSECURE)
-
-
-def super_csrf_cookie_name() -> str:
-    """平台超级管理员 CSRF Cookie 名。"""
-    return _cookie_name(SUPER_CSRF_COOKIE_SECURE, SUPER_CSRF_COOKIE_INSECURE)
 
 
 def _set_cookie(
@@ -264,17 +236,18 @@ def session_expiries() -> tuple[datetime, datetime]:
     return idle, absolute
 
 
-def request_session_token(request: Request, *, super_admin: bool = False) -> str | None:
-    """从请求读取对应管理员 Session Cookie。"""
-    name = (
-        super_session_cookie_name()
-        if super_admin
-        else admin_session_cookie_name()
-    )
-    return request.cookies.get(name)
-
-
-def request_csrf_cookie(request: Request, *, super_admin: bool = False) -> str | None:
-    """从请求读取对应管理员 CSRF Cookie。"""
-    name = super_csrf_cookie_name() if super_admin else admin_csrf_cookie_name()
-    return request.cookies.get(name)
+__all__ = [
+    "clear_admin_cookies",
+    "clear_oauth_binding_cookie",
+    "clear_super_admin_cookies",
+    "csrf_matches",
+    "generate_password",
+    "hash_password",
+    "new_token",
+    "normalize_super_admin_username",
+    "session_expiries",
+    "set_admin_session_cookies",
+    "set_oauth_binding_cookie",
+    "set_super_session_cookies",
+    "verify_password",
+]

@@ -12,6 +12,7 @@ import pytest
 import app.core.agent_runner as runner_mod
 from app.core.agent_runner import AgentRunner
 from app.main import create_app
+from tests.conftest import authenticate_admin
 from app.models.agent import Agent
 
 
@@ -160,6 +161,7 @@ async def test_agent_api_validates_tool_policy():
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test", timeout=30
         ) as client:
+            await authenticate_admin(client)
             code = f"policy-{uuid4().hex[:8]}"
             invalid = await client.post(
                 "/api/agents",

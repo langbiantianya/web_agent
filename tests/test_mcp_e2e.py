@@ -39,11 +39,10 @@ from app.core.tools import build_openai_tools, execute_tool
 from app.main import create_app
 from app.repo.mcp_repo import mcp_server_repo, mcp_tool_repo
 from app.repo.run_repo import run_repo
-from tests.conftest import authenticate_client
+from tests.conftest import authenticate_admin, authenticate_client
 from tests.fake_llm import FakeLLM
 
-ADMIN_KEY = "test-admin-key"
-ADMIN_HEADERS = {"X-Admin-Key": ADMIN_KEY}
+ADMIN_HEADERS: dict[str, str] = {}
 
 # 真实 MCP 服务器脚本（用官方 SDK 起的 stdio 服务器）。
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mcp_server_stdio.py"
@@ -109,6 +108,7 @@ async def server():
 async def client(server: str):
     """真实 HTTP 客户端（真 socket，不是 ASGITransport）。"""
     async with httpx.AsyncClient(base_url=server, timeout=60) as c:
+        await authenticate_admin(c)
         await authenticate_client(c)
         yield c
 

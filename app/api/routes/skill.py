@@ -3,7 +3,7 @@
 分两套：
 
 - **只读**（``GET``）——普通运营可用：看技能、看资源、导出、查变更历史；
-- **写入**——**operator / admin 专属**（:data:`app.api.deps.OperatorDep`）。技能正文会进
+- **写入**——需要 `skill.write` Casbin 权限（:data:`app.api.deps.SkillWriteDep`）。技能正文会进
   prompt，而 prompt 就是模型的行为，所以「谁能写技能」≈「谁能改模型的行为」。
 
 ## 为什么资源路径这么难搞
@@ -21,8 +21,8 @@ import hashlib
 
 from fastapi import APIRouter, Body, File, Header, Query, Response, UploadFile
 
-from app.api.deps import DbSession, OperatorDep, OptionalAdminDep
-from app.core.admin import AdminPrincipal
+from app.api.deps import DbSession, SkillReadDep, SkillWriteDep
+from app.core.admin_auth import AdminPrincipal
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.skill_import import (
     SKILL_MD_NAME,
@@ -283,7 +283,7 @@ def _frontmatter_of(skill) -> SkillFrontmatter:
 @router.get("", response_model=list[SkillSummaryOut])
 async def list_skills(
     db: DbSession,
-    admin: OptionalAdminDep,
+    admin: SkillReadDep,
     only_enabled: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -325,7 +325,7 @@ async def list_skills(
 
 @router.get("/{code}", response_model=SkillOut)
 async def get_skill(
-    code: str, db: DbSession, admin: OptionalAdminDep
+    code: str, db: DbSession, admin: SkillReadDep
 ) -> SkillOut:
     """技能详情（含正文与 frontmatter 字段）。不存在返回 404。"""
     tenant_id = _tenant_of(admin)
@@ -338,7 +338,7 @@ async def get_skill(
 
 @router.get("/{code}/resources", response_model=list[SkillResourceOut])
 async def list_skill_resources(
-    code: str, db: DbSession, admin: OptionalAdminDep
+    code: str, db: DbSession, admin: SkillReadDep
 ) -> list[SkillResourceOut]:
     """资源清单（path / 大小 / mime / sha256）。"""
     skill = await skill_repo.get_by_code(db, code, _tenant_of(admin))
@@ -359,7 +359,7 @@ async def list_skill_resources(
 
 @router.get("/{code}/resources/{path:path}")
 async def get_skill_resource(
-    code: str, path: str, db: DbSession, admin: OptionalAdminDep
+    code: str, path: str, db: DbSession, admin: SkillReadDep
 ) -> Response:
     """单个资源的内容。
 
@@ -394,7 +394,7 @@ async def get_skill_resource(
 async def export_skill(
     code: str,
     db: DbSession,
-    admin: OptionalAdminDep,
+    admin: SkillReadDep,
     format: str = Query("zip", pattern="^(zip|md)$"),
 ) -> Response:
     """导出标准技能包。
@@ -423,7 +423,7 @@ async def export_skill(
 
 @router.get("/{code}/revisions", response_model=list[SkillRevisionOut])
 async def list_skill_revisions(
-    code: str, db: DbSession, admin: OptionalAdminDep
+    code: str, db: DbSession, admin: SkillReadDep
 ) -> list[SkillRevisionOut]:
     """变更历史（版本 / 作者 / 说明 / 时间），最近的在前。"""
     skill = await skill_repo.get_by_code(db, code, _tenant_of(admin))
@@ -452,7 +452,7 @@ async def list_skill_revisions(
 
 @router.post("", response_model=SkillOut, status_code=201)
 async def create_skill(
-    payload: SkillCreate, db: DbSession, author: OperatorDep
+    payload: SkillCreate, db: DbSession, author: SkillWriteDep
 ) -> SkillOut:
     """创建技能。``origin='manual'``，并写一条审计快照。"""
     tenant_id = author.tenant_id
@@ -491,7 +491,7 @@ async def create_skill(
 
 @router.put("/{code}", response_model=SkillOut)
 async def update_skill(
-    code: str, payload: SkillUpdate, db: DbSession, author: OperatorDep
+    code: str, payload: SkillUpdate, db: DbSession, author: SkillWriteDep
 ) -> SkillOut:
     """更新技能：``version+1``，重算指纹，写审计。"""
     tenant_id = author.tenant_id
@@ -525,7 +525,11 @@ async def update_skill(
 
 
 @router.delete("/{code}", status_code=204)
-async def delete_skill(code: str, db: DbSession, author: OperatorDep) -> None:
+async def delete_skill(
+    code: str,
+    db: DbSession,
+    author: SkillWriteDep,
+) -> None:
     """归档技能并保留资源与修订历史。
 
     删除是软删除。绑着它的 Agent 仍视为冲突，避免模型行为静默变化；解绑后可
@@ -548,7 +552,7 @@ async def delete_skill(code: str, db: DbSession, author: OperatorDep) -> None:
 
 @router.post("/{code}/restore", response_model=SkillOut)
 async def restore_skill(
-    code: str, db: DbSession, author: OperatorDep
+    code: str, db: DbSession, author: SkillWriteDep
 ) -> SkillOut:
     """恢复归档技能为草稿；再次发布前不会注入任何 Agent。"""
     skill = await skill_repo.restore(db, code, author.tenant_id)
@@ -563,7 +567,7 @@ async def publish_skill(
     code: str,
     payload: SkillPublishIn,
     db: DbSession,
-    author: OperatorDep,
+    author: SkillWriteDep,
 ) -> SkillOut:
     """把草稿发布为可注入版本；可显式发布但不启用。"""
     skill = await skill_repo.update(
@@ -590,7 +594,7 @@ async def publish_skill(
 async def put_skill_resource(
     code: str,
     db: DbSession,
-    author: OperatorDep,
+    author: SkillWriteDep,
     body: bytes = Body(
         ...,
         media_type="application/octet-stream",
@@ -658,7 +662,7 @@ async def put_skill_resource(
 
 @router.delete("/{code}/resources/{path:path}", status_code=204)
 async def delete_skill_resource(
-    code: str, path: str, db: DbSession, author: OperatorDep
+    code: str, path: str, db: DbSession, author: SkillWriteDep
 ) -> None:
     """删除一个资源文件。"""
     tenant_id = author.tenant_id
@@ -686,7 +690,7 @@ async def delete_skill_resource(
 @router.post("/import", response_model=SkillOut, status_code=201)
 async def import_skill(
     db: DbSession,
-    author: OperatorDep,
+    author: SkillWriteDep,
     file: UploadFile = File(..., description="技能包 zip"),
 ) -> SkillOut:
     """从 zip 导入一个技能。
@@ -757,7 +761,7 @@ async def import_skill(
 
 @router.post("/import/entries", response_model=SkillOut, status_code=201)
 async def import_skill_entries(
-    payload: SkillImportIn, db: DbSession, author: OperatorDep
+    payload: SkillImportIn, db: DbSession, author: SkillWriteDep
 ) -> SkillOut:
     """从**目录结构**（JSON）导入一个技能。
 
@@ -850,7 +854,7 @@ async def import_skill_entries(
 
 @router.post("/{code}/rollback", response_model=SkillOut)
 async def rollback_skill(
-    code: str, payload: SkillRollbackIn, db: DbSession, author: OperatorDep
+    code: str, payload: SkillRollbackIn, db: DbSession, author: SkillWriteDep
 ) -> SkillOut:
     """回滚到指定历史版本。
 

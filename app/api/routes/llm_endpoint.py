@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from app.api.deps import AdminDep, DbSession
+from app.api.deps import DbSession, LlmReadDep, LlmWriteDep
 from app.core.crypto import encrypt
 from app.core.errors import ConflictError, NotFoundError
 from app.repo.llm_endpoint_repo import llm_endpoint_repo
@@ -36,7 +36,7 @@ def _to_out(row) -> LlmEndpointOut:
 @router.get("", response_model=list[LlmEndpointOut])
 async def list_endpoints(
     db: DbSession,
-    _admin: AdminDep,
+    _admin: LlmReadDep,
     only_enabled: bool = Query(False),
     limit: int = Query(200, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -52,7 +52,7 @@ async def list_endpoints(
 async def create_endpoint(
     payload: LlmEndpointCreate,
     db: DbSession,
-    _admin: AdminDep,
+    _admin: LlmWriteDep,
 ) -> LlmEndpointOut:
     """新增接口配置。code 是稳定标识，密钥加密后落库。"""
     if await llm_endpoint_repo.get_by_code(db, payload.code):
@@ -73,7 +73,7 @@ async def create_endpoint(
 async def get_endpoint(
     code: str,
     db: DbSession,
-    _admin: AdminDep,
+    _admin: LlmReadDep,
 ) -> LlmEndpointOut:
     """查询单个接口配置。"""
     row = await llm_endpoint_repo.get_by_code(db, code)
@@ -87,7 +87,7 @@ async def update_endpoint(
     code: str,
     payload: LlmEndpointUpdate,
     db: DbSession,
-    _admin: AdminDep,
+    _admin: LlmWriteDep,
 ) -> LlmEndpointOut:
     """更新接口配置；省略 api_key 保持密钥，显式传空串则清除。"""
     fields = payload.model_dump(exclude_unset=True)
@@ -102,7 +102,11 @@ async def update_endpoint(
 
 
 @router.delete("/{code}", status_code=204)
-async def delete_endpoint(code: str, db: DbSession, _admin: AdminDep) -> None:
+async def delete_endpoint(
+    code: str,
+    db: DbSession,
+    _admin: LlmWriteDep,
+) -> None:
     """删除接口配置。"""
     if not await llm_endpoint_repo.delete(db, code):
         raise NotFoundError(f"LLM 接口不存在：{code}")

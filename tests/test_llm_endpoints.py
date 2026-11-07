@@ -19,6 +19,7 @@ from app.main import create_app
 from app.models.agent import Agent
 from app.models.llm_endpoint import LlmEndpoint
 from app.repo.llm_endpoint_repo import llm_endpoint_repo
+from tests.conftest import authenticate_admin_sync
 
 
 class _FakeStream:
@@ -231,14 +232,13 @@ async def test_all_disabled_configs_do_not_fall_back_to_legacy(monkeypatch):
 def test_endpoint_api_crud_masks_key_and_orders_results():
     """管理接口加密保存 Key、永不回显，并按优先级排序。"""
     client = TestClient(create_app())
-    headers = {"X-Admin-Key": settings.admin_key}
+    authenticate_admin_sync(client)
     suffix = uuid4().hex[:8]
     low = f"low-{suffix}"
     high = f"high-{suffix}"
 
     first = client.post(
         "/api/llm-endpoints",
-        headers=headers,
         json={
             "code": low,
             "name": "低优先级",
@@ -255,7 +255,6 @@ def test_endpoint_api_crud_masks_key_and_orders_results():
 
     second = client.post(
         "/api/llm-endpoints",
-        headers=headers,
         json={
             "code": high,
             "name": "高优先级",
@@ -266,7 +265,7 @@ def test_endpoint_api_crud_masks_key_and_orders_results():
     )
     assert second.status_code == 201, second.text
 
-    listed = client.get("/api/llm-endpoints", headers=headers)
+    listed = client.get("/api/llm-endpoints")
     assert listed.status_code == 200, listed.text
     rows = listed.json()
     assert [(row["priority"], row["id"]) for row in rows] == sorted(
@@ -277,7 +276,6 @@ def test_endpoint_api_crud_masks_key_and_orders_results():
 
     updated = client.put(
         f"/api/llm-endpoints/{low}",
-        headers=headers,
         json={"api_key": "", "enabled": False},
     )
     assert updated.status_code == 200, updated.text
@@ -286,25 +284,22 @@ def test_endpoint_api_crud_masks_key_and_orders_results():
     assert updated.json()["version"] == first.json()["version"] + 1
 
     enabled_only = client.get(
-        "/api/llm-endpoints?only_enabled=true", headers=headers
+        "/api/llm-endpoints?only_enabled=true"
     )
     assert enabled_only.status_code == 200, enabled_only.text
     enabled_codes = {row["code"] for row in enabled_only.json()}
     assert low not in enabled_codes
     assert high in enabled_codes
 
-    assert client.get("/api/llm-endpoints").status_code == 401
-    assert client.delete(
-        f"/api/llm-endpoints/{low}", headers=headers
-    ).status_code == 204
-    assert client.delete(
-        f"/api/llm-endpoints/{high}", headers=headers
-    ).status_code == 204
+    assert TestClient(create_app()).get("/api/llm-endpoints").status_code == 401
+    assert client.delete(f"/api/llm-endpoints/{low}").status_code == 204
+    assert client.delete(f"/api/llm-endpoints/{high}").status_code == 204
 
 
 def test_agent_can_use_database_endpoint_without_legacy_fields():
     """新 Agent 不必再复制地址与 Key，接口由全局配置提供。"""
     client = TestClient(create_app())
+    authenticate_admin_sync(client)
     code = f"db-agent-{uuid4().hex[:8]}"
     created = client.post(
         "/api/agents",
@@ -340,9 +335,9 @@ def test_client_service_does_not_serve_legacy_admin_page():
 def test_endpoint_api_rejects_unsafe_or_invalid_url(base_url):
     """接口地址只接受不内嵌凭据的 HTTP(S) URL。"""
     client = TestClient(create_app())
+    authenticate_admin_sync(client)
     response = client.post(
         "/api/llm-endpoints",
-        headers={"X-Admin-Key": settings.admin_key},
         json={
             "code": f"bad-{uuid4().hex[:8]}",
             "name": "bad",

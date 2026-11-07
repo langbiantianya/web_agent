@@ -71,24 +71,28 @@ logger = logging.getLogger(__name__)
 
 
 async def _admin_elevated(scope) -> bool:
-    """这个请求是否可以享受「按路径放宽」的请求体上限。
-
-    判据是**管理员密钥正确**——同时接受环境引导 Key 和数据库管理员 Key。
-    认证失败或数据库暂时不可用时一律回退到全局上限，不把中间件变成新的
-    错误面。
-    """
+    """请求是否拥有可上传 Skill 的后台 Session 与权限。"""
     from app.config.db import SessionLocal
-    from app.core.admin import admin_key_matches, resolve_admin
+    from app.core.admin_auth import resolve_admin_request
+    from app.core.admin_authz import casbin_service
+    from starlette.requests import Request
 
-    key = scope_header(scope, "x-admin-key")
-    if admin_key_matches(key):
-        return True
-    if not key:
+    if not scope_header(scope, "cookie"):
         return False
     try:
         async with SessionLocal() as db:
-            principal = await resolve_admin(db, key)
-        return principal.role in ("operator", "admin")
+            principal = await resolve_admin_request(db, Request(scope))
+            if principal is None:
+                return False
+            if principal.is_platform_super_admin:
+                return True
+            return await casbin_service.can(
+                db,
+                user_id=principal.user_id or "",
+                tenant_id=principal.tenant_id or settings.auth_default_tenant,
+                object_name="skill",
+                action="write",
+            )
     except Exception:  # noqa: BLE001 - 请求体限制必须 fail-closed
         return False
 

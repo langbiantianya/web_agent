@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
@@ -126,6 +127,129 @@ async def authenticate_client(
     # 测试客户端统一自动带 CSRF header；浏览器前端仍从非 HttpOnly Cookie 读取。
     client.headers["X-CSRF-Token"] = csrf
     return csrf
+
+
+async def authenticate_admin(
+    client,
+    *,
+    tenant_id: str = "default",
+    platform_super: bool = True,
+    roles: tuple[str, ...] = ("tenant_admin",),
+) -> str:
+    """给测试客户端安装真实后台 Session，返回 CSRF token。
+
+    默认使用平台超级管理员以覆盖全权限路径；需要验证 Casbin 时传
+    ``platform_super=False`` 和具体 roles。Cookie、Session 和 CSRF 都走正式表。
+    """
+    from app.config.db import SessionLocal
+    from app.core.admin_auth import (
+        admin_csrf_cookie_name,
+        admin_session_cookie_name,
+        super_csrf_cookie_name,
+        super_session_cookie_name,
+    )
+    from app.models.admin_user import AdminUser
+    from app.models.base import utcnow
+    from app.models.oauth import OAuthProvider
+    from app.models.user import AppUser
+    from app.models.admin_control import SuperAdminAccount
+    from services.admin_web.accounts import (
+        create_admin_session,
+        create_super_admin_session,
+    )
+    from services.admin_web.rbac import casbin_service
+
+    tag = uuid.uuid4().hex[:12]
+    async with SessionLocal() as db:
+        if platform_super:
+            from datetime import timedelta
+
+            account = SuperAdminAccount(
+                username=f"test_super_{tag}",
+                password_hash="not-used-in-session-tests",
+                email=f"super-{tag}@example.com",
+                status="active",
+                password_rotated_at=utcnow(),
+                password_expires_at=utcnow() + timedelta(days=1),
+                password_version=1,
+            )
+            db.add(account)
+            await db.flush()
+            token, csrf = await create_super_admin_session(db, account)
+            await db.commit()
+            session_cookie = super_session_cookie_name()
+            csrf_cookie = super_csrf_cookie_name()
+        else:
+            provider = OAuthProvider(
+                tenant_id=tenant_id,
+                code=f"test-idp-{tag}",
+                display_name="Test Admin IdP",
+                issuer=f"https://admin-{tag}.example",
+                client_id=f"client-{tag}",
+                role_sync_max_age_seconds=1800,
+                enabled=1,
+            )
+            user = AppUser(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant_id,
+                username=f"admin_{tag}",
+                status="active",
+            )
+            db.add_all([provider, user])
+            await db.flush()
+            admin = AdminUser(
+                user_id=user.id,
+                provider_id=provider.id,
+                tenant_id=tenant_id,
+                status="active",
+                enabled=1,
+                last_role_sync_at=utcnow(),
+                version=1,
+            )
+            db.add(admin)
+            await db.flush()
+            await casbin_service.seed_defaults(db)
+            await casbin_service.replace_user_roles(
+                db,
+                user_id=user.id,
+                tenant_id=tenant_id,
+                role_codes=list(roles),
+            )
+            token, csrf = await create_admin_session(
+                db,
+                admin_user_id=admin.id,
+                role_sync_version=1,
+            )
+            await db.commit()
+            session_cookie = admin_session_cookie_name()
+            csrf_cookie = admin_csrf_cookie_name()
+
+    client.cookies.set(session_cookie, token)
+    client.cookies.set(csrf_cookie, csrf)
+    client.headers["X-CSRF-Token"] = csrf
+    client.headers["X-Admin-CSRF-Token"] = csrf
+    client.headers["X-Tenant-ID"] = tenant_id
+    return csrf
+
+
+def authenticate_admin_sync(
+    client,
+    *,
+    tenant_id: str = "default",
+    platform_super: bool = True,
+    roles: tuple[str, ...] = ("tenant_admin",),
+) -> str:
+    """同步测试客户端的后台 Session 安装器。"""
+    import asyncio
+
+    return asyncio.run(
+        authenticate_admin(
+            client,
+            tenant_id=tenant_id,
+            platform_super=platform_super,
+            roles=roles,
+        )
+    )
 
 
 def sa_select_user(username: str, tenant_id: str):

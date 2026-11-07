@@ -26,7 +26,7 @@ from app.models.enums import RunStatus
 from app.repo.run_approval_repo import run_approval_repo
 from app.repo.run_repo import run_repo
 from tests.fake_llm import FakeLLM
-from tests.conftest import authenticate_client
+from tests.conftest import authenticate_admin, authenticate_client
 
 
 def _free_port() -> int:
@@ -101,6 +101,7 @@ async def client(server: str):
     async with httpx.AsyncClient(
         base_url=server, timeout=httpx.Timeout(30, read=60)
     ) as c:
+        await authenticate_admin(c)
         await authenticate_client(c)
         yield c
 

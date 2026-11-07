@@ -18,9 +18,9 @@ import httpx
 import pytest
 
 from app.main import create_app
+from tests.conftest import authenticate_admin
 
-ADMIN_KEY = "test-admin-key"
-ADMIN_HEADERS = {"X-Admin-Key": ADMIN_KEY}
+ADMIN_HEADERS: dict[str, str] = {}
 
 
 @pytest.fixture
@@ -32,6 +32,7 @@ async def client():
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test", timeout=30
         ) as c:
+            await authenticate_admin(c)
             yield c
 
 
@@ -53,7 +54,9 @@ def _skill_md(name: str = "demo", description: str = "演示技能") -> bytes:
 
 
 async def test_create_requires_admin(client):
-    """没带 admin key → 401（fail-closed）。"""
+    """没有后台 Session → 401（fail-closed）。"""
+    client.cookies.clear()
+    client.headers.pop("X-CSRF-Token", None)
     resp = await client.post(
         "/api/skills",
         json={"code": "demo", "description": "演示", "body": "正文"},
@@ -63,7 +66,9 @@ async def test_create_requires_admin(client):
 
 
 async def test_create_with_wrong_admin_key_rejected(client):
-    """密钥不对 → 401。"""
+    """旧 X-Admin-Key 不能代替后台 Session。"""
+    client.cookies.clear()
+    client.headers.pop("X-CSRF-Token", None)
     resp = await client.post(
         "/api/skills",
         json={"code": "demo", "description": "演示", "body": "正文"},
@@ -84,6 +89,9 @@ async def test_create_with_wrong_admin_key_rejected(client):
 )
 async def test_all_write_endpoints_require_admin(client, method, path, kwargs):
     """所有写接口都要过管理员门禁——漏一个就是一条后门。"""
+    client.cookies.clear()
+    client.headers.pop("X-CSRF-Token", None)
+    client.headers.pop("X-Admin-CSRF-Token", None)
     resp = await getattr(client, method)(path, **kwargs)
     assert resp.status_code == 401, f"{method} {path} → {resp.status_code}"
 

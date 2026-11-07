@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+from dataclasses import replace
 from typing import Annotated
 
 from fastapi import Depends, Header, Query, Request
@@ -10,7 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.db import get_db
 from app.config.settings import settings
-from app.core.admin import AdminPrincipal, require_min_role, resolve_admin
+from app.core.admin_auth import (
+    AdminPrincipal,
+    has_admin_session_cookie,
+    request_csrf_cookie,
+    resolve_admin_request,
+    verify_admin_csrf,
+)
+from app.core.admin_authz import casbin_service
 from app.core.errors import ForbiddenError, UnauthorizedError
 from app.core.ticket import verify_ticket
 from app.core.user_auth import (
@@ -106,76 +114,182 @@ def resume_from_seq(
 ResumeFrom = Annotated[int, Depends(resume_from_seq)]
 
 
-async def admin_key(
+async def admin_session(
+    request: Request,
     db: DbSession,
-    key: Annotated[
-        str | None, Header(alias="X-Admin-Key", description="管理员密钥")
+    csrf_header: Annotated[
+        str | None,
+        Header(alias="X-CSRF-Token", description="后台 Session CSRF token"),
+    ] = None,
+    tenant_header: Annotated[
+        str | None,
+        Header(alias="X-Tenant-ID", description="平台超级管理员选择的租户"),
     ] = None,
 ) -> AdminPrincipal:
-    """管理员门禁依赖。
+    """要求有效 OAuth 管理员或平台超级管理员 Session。"""
+    principal = await resolve_admin_request(db, request)
+    if principal is None:
+        raise UnauthorizedError("请先登录独立管理后台")
+    await db.commit()
+    if principal.is_platform_super_admin:
+        effective_tenant = (tenant_header or settings.auth_default_tenant).strip()
+        if not effective_tenant:
+            raise ForbiddenError("平台管理员必须指定租户")
+        principal = replace(principal, tenant_id=effective_tenant)
+    elif tenant_header and tenant_header != principal.tenant_id:
+        raise ForbiddenError("OAuth 管理员不能跨租户操作")
 
-    未配置 ``ADMIN_KEY`` 时一律 401（fail-closed）——这道门后面是「谁能改模型的
-    行为」，默认开着等于没有门。
+    if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
+        _validate_origin(request)
+        # 管理后台和普通用户可能在同一个浏览器域内同时持有 Session。
+        # 浏览器给后台 API 显式发送该头时，优先按后台 Session 校验，避免
+        # 与普通用户写入共用 X-CSRF-Token 时互相覆盖。
+        effective_csrf = request.headers.get("X-Admin-CSRF-Token") or csrf_header
+        csrf_cookie = request_csrf_cookie(
+            request, super_admin=principal.is_platform_super_admin
+        )
+        if (
+            not csrf_cookie
+            or not effective_csrf
+            or not hmac.compare_digest(csrf_cookie, effective_csrf)
+            or not await verify_admin_csrf(principal, effective_csrf)
+        ):
+            raise ForbiddenError("CSRF 校验失败")
+    return principal
 
-    Returns:
-        管理员标识，写进审计的 ``author``。
-    """
-    return await resolve_admin(db, key)
+
+AdminDep = Annotated[AdminPrincipal, Depends(admin_session)]
 
 
-AdminDep = Annotated[AdminPrincipal, Depends(admin_key)]
-
-
-async def optional_admin_key(
+async def optional_admin_session(
+    request: Request,
     db: DbSession,
-    key: Annotated[
-        str | None, Header(alias="X-Admin-Key", description="管理员密钥")
+    tenant_header: Annotated[
+        str | None,
+        Header(alias="X-Tenant-ID", description="平台超级管理员选择的租户"),
     ] = None,
 ) -> AdminPrincipal | None:
-    """可选管理员身份。
-
-    公开读接口在未携带 Key 时使用默认租户；携带 Key 时按该管理员的租户读取。
-    一旦携带了 Key，非法 Key 仍返回 401，不能借“可选”绕过鉴权。
-    """
-    if not key:
+    """可选后台身份；Cookie 存在但无效时仍返回 401。"""
+    if not has_admin_session_cookie(request):
         return None
-    return await resolve_admin(db, key)
+    principal = await resolve_admin_request(db, request)
+    if principal is None:
+        raise UnauthorizedError("后台会话无效或已过期")
+    await db.commit()
+    if principal.is_platform_super_admin:
+        return replace(
+            principal,
+            tenant_id=(tenant_header or settings.auth_default_tenant).strip(),
+        )
+    if tenant_header and tenant_header != principal.tenant_id:
+        raise ForbiddenError("OAuth 管理员不能跨租户读取")
+    return principal
 
 
 OptionalAdminDep = Annotated[
     AdminPrincipal | None,
-    Depends(optional_admin_key),
+    Depends(optional_admin_session),
 ]
 
 
-async def operator_key(admin: AdminDep) -> AdminPrincipal:
-    """要求 operator 或 admin 角色。"""
-    return require_min_role(admin, "operator")
+def permission_dependency(object_name: str, action: str):
+    """构造一个 Casbin object/action 权限依赖。"""
+
+    async def dependency(
+        db: DbSession,
+        principal: AdminDep,
+    ) -> AdminPrincipal:
+        """平台超级管理员直接放行，OAuth 管理员执行 Casbin。"""
+        if principal.is_platform_super_admin:
+            return principal
+        if not await casbin_service.can(
+            db,
+            user_id=principal.user_id or "",
+            tenant_id=principal.tenant_id or settings.auth_default_tenant,
+            object_name=object_name,
+            action=action,
+        ):
+            raise ForbiddenError(
+                f"缺少权限 {object_name}.{action}"
+            )
+        return principal
+
+    return dependency
 
 
-async def super_admin_key(admin: AdminDep) -> AdminPrincipal:
-    """要求 admin 角色。"""
-    return require_min_role(admin, "admin")
-
-
-OperatorDep = Annotated[AdminPrincipal, Depends(operator_key)]
-SuperAdminDep = Annotated[AdminPrincipal, Depends(super_admin_key)]
+WorkflowReadDep = Annotated[
+    AdminPrincipal, Depends(permission_dependency("workflow", "read"))
+]
+WorkflowWriteDep = Annotated[
+    AdminPrincipal, Depends(permission_dependency("workflow", "write"))
+]
+AgentReadDep = Annotated[
+    AdminPrincipal, Depends(permission_dependency("agent", "read"))
+]
+AgentWriteDep = Annotated[
+    AdminPrincipal, Depends(permission_dependency("agent", "write"))
+]
+SkillReadDep = Annotated[
+    AdminPrincipal, Depends(permission_dependency("skill", "read"))
+]
+SkillWriteDep = Annotated[
+    AdminPrincipal, Depends(permission_dependency("skill", "write"))
+]
+McpReadDep = Annotated[
+    AdminPrincipal, Depends(permission_dependency("mcp", "read"))
+]
+McpWriteDep = Annotated[
+    AdminPrincipal, Depends(permission_dependency("mcp", "write"))
+]
+McpRefreshDep = Annotated[
+    AdminPrincipal, Depends(permission_dependency("mcp", "refresh"))
+]
+LlmReadDep = Annotated[
+    AdminPrincipal, Depends(permission_dependency("llm", "read"))
+]
+LlmWriteDep = Annotated[
+    AdminPrincipal, Depends(permission_dependency("llm", "write"))
+]
+AuditReadDep = Annotated[
+    AdminPrincipal, Depends(permission_dependency("audit", "read"))
+]
+OAuthProviderReadDep = Annotated[
+    AdminPrincipal,
+    Depends(permission_dependency("oauth_provider", "read")),
+]
+OAuthProviderManageDep = Annotated[
+    AdminPrincipal,
+    Depends(permission_dependency("oauth_provider", "manage")),
+]
 
 
 __all__ = [
     "AdminDep",
     "CurrentUserDep",
     "DbSession",
-    "OperatorDep",
+    "AgentReadDep",
+    "AgentWriteDep",
+    "AuditReadDep",
+    "LlmReadDep",
+    "LlmWriteDep",
+    "McpReadDep",
+    "McpRefreshDep",
+    "McpWriteDep",
+    "OAuthProviderManageDep",
+    "OAuthProviderReadDep",
     "OptionalAdminDep",
     "ResumeFrom",
-    "SuperAdminDep",
+    "SkillReadDep",
+    "SkillWriteDep",
     "TicketDep",
     "UnauthorizedError",
-    "admin_key",
+    "WorkflowReadDep",
+    "WorkflowWriteDep",
+    "admin_session",
     "current_user",
     "get_db",
-    "optional_admin_key",
+    "optional_admin_session",
+    "permission_dependency",
     "resume_from_seq",
     "sse_ticket",
 ]

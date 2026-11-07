@@ -8,8 +8,9 @@ import httpx
 import pytest
 
 from app.main import create_app
+from tests.conftest import authenticate_admin
 
-ADMIN = {"X-Admin-Key": "test-admin-key"}
+ADMIN: dict[str, str] = {}
 
 
 @pytest.fixture
@@ -21,6 +22,7 @@ async def client():
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test", timeout=30
         ) as value:
+            await authenticate_admin(value)
             yield value
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from app.api.deps import DbSession
+from app.api.deps import AgentReadDep, AgentWriteDep, DbSession
 from app.core.crypto import encrypt
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.skill_names import SkillConfigError, known_skill_codes, normalize_skill_codes
@@ -90,7 +90,11 @@ def _to_out(
 
 
 @router.post("", response_model=AgentOut, status_code=201)
-async def create_agent(payload: AgentCreate, db: DbSession) -> AgentOut:
+async def create_agent(
+    payload: AgentCreate,
+    db: DbSession,
+    _admin: AgentWriteDep,
+) -> AgentOut:
     """创建 Agent。配置即数据——新增 Agent 无需改代码、无需发版。
 
     ``tools`` 存的是**工具名**，未注册的名字在这里就拒（400）——配置根本进不了
@@ -131,6 +135,7 @@ async def create_agent(payload: AgentCreate, db: DbSession) -> AgentOut:
 @router.get("", response_model=list[AgentOut])
 async def list_agents(
     db: DbSession,
+    _admin: AgentReadDep,
     only_enabled: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -148,7 +153,11 @@ async def list_agents(
 
 
 @router.get("/{code}", response_model=AgentOut)
-async def get_agent(code: str, db: DbSession) -> AgentOut:
+async def get_agent(
+    code: str,
+    db: DbSession,
+    _admin: AgentReadDep,
+) -> AgentOut:
     """按 code 查询单个 Agent 配置，不存在返回 404。
 
     code 是业务主键（Workflow 节点引用它），不是自增 id。
@@ -162,7 +171,12 @@ async def get_agent(code: str, db: DbSession) -> AgentOut:
 
 
 @router.put("/{code}", response_model=AgentOut)
-async def update_agent(code: str, payload: AgentUpdate, db: DbSession) -> AgentOut:
+async def update_agent(
+    code: str,
+    payload: AgentUpdate,
+    db: DbSession,
+    _admin: AgentWriteDep,
+) -> AgentOut:
     """更新 Agent：version+1，缓存键随之失效，下个 run 自动用新配置。
 
     ``tools`` 传了就校验（未注册的工具名 → 400），传 ``null`` 则清空工具。
@@ -205,7 +219,11 @@ async def update_agent(code: str, payload: AgentUpdate, db: DbSession) -> AgentO
 
 
 @router.get("/{code}/prompt-preview", response_model=SkillPromptPreviewOut)
-async def preview_agent_prompt(code: str, db: DbSession) -> SkillPromptPreviewOut:
+async def preview_agent_prompt(
+    code: str,
+    db: DbSession,
+    _admin: AgentReadDep,
+) -> SkillPromptPreviewOut:
     """生效提示词预览：system_prompt + 各技能正文，与实际发给模型的逐字一致。
 
     存在的意义是「后台看到的」必须等于「模型收到的」：技能正文是**独立的一条**
@@ -249,7 +267,11 @@ async def preview_agent_prompt(code: str, db: DbSession) -> SkillPromptPreviewOu
 
 
 @router.delete("/{code}", status_code=204)
-async def delete_agent(code: str, db: DbSession) -> None:
+async def delete_agent(
+    code: str,
+    db: DbSession,
+    _admin: AgentWriteDep,
+) -> None:
     """删除 Agent。若已被 workflow 引用，建议改用 PUT enabled=false 停用。"""
     ok = await agent_repo.delete(db, code)
     if not ok:

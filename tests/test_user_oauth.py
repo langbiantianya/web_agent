@@ -31,6 +31,7 @@ from app.models.oauth import OAuthProvider
 from app.models.run import Run
 from app.models.user import AppUser
 from app.models.workflow import Workflow
+from tests.conftest import authenticate_admin
 
 
 @pytest.fixture(autouse=True)
@@ -508,9 +509,9 @@ async def test_admin_can_configure_provider_without_secret_echo():
     """供应商管理员接口只回显 secret 是否已配置，落库必须是密文。"""
     code = f"admin-{uuid.uuid4().hex[:8]}"
     async with await _client() as client:
+        await authenticate_admin(client)
         created = await client.post(
             "/api/oauth-providers",
-            headers={"X-Admin-Key": "test-admin-key"},
             json={
                 "code": code,
                 "display_name": "Admin OIDC",

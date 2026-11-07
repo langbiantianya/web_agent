@@ -839,9 +839,10 @@ async function loadPendingApproval(runId) {
 
 // ---------------------------------------------------------------- 加载
 async function loadConfig(authenticated) {
-  const [agents, wfs, health] = await Promise.all([
-    api('/api/agents'), api('/api/workflows'), api('/api/health'),
+  const [catalog, health] = await Promise.all([
+    api('/api/catalog'), api('/api/health'),
   ]);
+  const { agents, workflows: wfs } = catalog;
   $('healthDot').className = 'dot on';
   $('healthDot').title = `${health.app} ${health.version} · db ${health.db}`;
 
@@ -850,7 +851,7 @@ async function loadConfig(authenticated) {
   ).join('') || '<div class="muted">暂无</div>';
 
   $('wfList').innerHTML = wfs.map(w => {
-    const ids = (w.definition.nodes || []).map(n => n.id).join(' → ');
+    const ids = (w.nodes || []).join(' → ');
     return `<div><span>${w.code}</span><span class="tag">${ids}</span></div>`;
   }).join('') || '<div class="muted">暂无</div>';
 

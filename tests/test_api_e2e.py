@@ -18,7 +18,7 @@ from app.core.run_hub import get_hub
 from app.main import create_app
 from app.repo.run_event_repo import run_event_repo
 from app.repo.run_repo import run_repo
-from tests.conftest import authenticate_client
+from tests.conftest import authenticate_admin, authenticate_client
 from tests.fake_llm import FakeLLM
 
 
@@ -48,6 +48,7 @@ async def client(llm: FakeLLM):
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test", timeout=30
         ) as c:
+            await authenticate_admin(c)
             await authenticate_client(c)
             yield c
 

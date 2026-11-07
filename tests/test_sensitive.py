@@ -30,7 +30,7 @@ from app.core.sensitive import (
     screen_text,
 )
 from app.main import create_app
-from tests.conftest import authenticate_client
+from tests.conftest import authenticate_admin, authenticate_client
 from app.models.agent import Agent
 from app.repo.message_repo import message_repo
 from app.repo.run_repo import run_repo
@@ -88,6 +88,7 @@ async def client(llm: FakeLLM):
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test", timeout=30
         ) as c:
+            await authenticate_admin(c)
             await authenticate_client(c)
             yield c
 

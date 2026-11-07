@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from app.api.deps import AdminDep, DbSession
+from app.api.deps import AuditReadDep, DbSession
 from app.core.errors import NotFoundError
 from app.repo.tool_audit_repo import tool_audit_repo
 from app.schemas.tool_audit import (
@@ -52,7 +52,7 @@ def _to_detail(row) -> ToolAuditDetailOut:
 @router.get("", response_model=ToolAuditListOut)
 async def list_tool_audits(
     db: DbSession,
-    _admin: AdminDep,
+    _admin: AuditReadDep,
     run_id: int | None = Query(None, ge=1),
     node_id: str | None = Query(None, max_length=64),
     tool_name: str | None = Query(None, max_length=255),
@@ -85,7 +85,7 @@ async def list_tool_audits(
 async def get_tool_audit(
     audit_id: int,
     db: DbSession,
-    _admin: AdminDep,
+    _admin: AuditReadDep,
 ) -> ToolAuditDetailOut:
     """查询单条工具审计，包括脱敏参数和受上限约束的结果。"""
     row = await tool_audit_repo.get_for_tenant(db, audit_id, _admin.tenant_id)

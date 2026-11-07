@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from app.api.deps import DbSession
+from app.api.deps import DbSession, WorkflowReadDep, WorkflowWriteDep
 from app.core.errors import ConflictError, NotFoundError
 from app.repo.workflow_repo import workflow_repo
 from app.schemas.workflow import WorkflowCreate, WorkflowOut, WorkflowUpdate
@@ -13,7 +13,11 @@ router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
 
 @router.post("", response_model=WorkflowOut, status_code=201)
-async def create_workflow(payload: WorkflowCreate, db: DbSession) -> WorkflowOut:
+async def create_workflow(
+    payload: WorkflowCreate,
+    db: DbSession,
+    _admin: WorkflowWriteDep,
+) -> WorkflowOut:
     """创建 Workflow。definition 已由 Pydantic 校验过图结构，非法定义在这里就被拒。"""
     if await workflow_repo.get_by_code(db, payload.code):
         raise ConflictError(f"Workflow code 已存在：{payload.code}")
@@ -31,6 +35,7 @@ async def create_workflow(payload: WorkflowCreate, db: DbSession) -> WorkflowOut
 @router.get("", response_model=list[WorkflowOut])
 async def list_workflows(
     db: DbSession,
+    _admin: WorkflowReadDep,
     only_enabled: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -46,7 +51,11 @@ async def list_workflows(
 
 
 @router.get("/{code}", response_model=WorkflowOut)
-async def get_workflow(code: str, db: DbSession) -> WorkflowOut:
+async def get_workflow(
+    code: str,
+    db: DbSession,
+    _admin: WorkflowReadDep,
+) -> WorkflowOut:
     """按 code 查询 Workflow 编排定义，不存在返回 404。
 
     返回的 definition 即「节点执行顺序 + 每个节点绑定哪个 Agent」，可直接喂给
@@ -59,7 +68,12 @@ async def get_workflow(code: str, db: DbSession) -> WorkflowOut:
 
 
 @router.put("/{code}", response_model=WorkflowOut)
-async def update_workflow(code: str, payload: WorkflowUpdate, db: DbSession) -> WorkflowOut:
+async def update_workflow(
+    code: str,
+    payload: WorkflowUpdate,
+    db: DbSession,
+    _admin: WorkflowWriteDep,
+) -> WorkflowOut:
     """更新 Workflow 编排定义，不存在返回 404。
 
     两个要点：
@@ -89,7 +103,11 @@ async def update_workflow(code: str, payload: WorkflowUpdate, db: DbSession) -> 
 
 
 @router.delete("/{code}", status_code=204)
-async def delete_workflow(code: str, db: DbSession) -> None:
+async def delete_workflow(
+    code: str,
+    db: DbSession,
+    _admin: WorkflowWriteDep,
+) -> None:
     """删除 Workflow 编排定义（204），不存在返回 404。
 
     这是**硬删除**：已存在的会话仍然指向它，但后续发消息会以

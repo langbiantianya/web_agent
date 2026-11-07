@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hmac
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import sqlalchemy as sa
@@ -11,6 +10,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import settings
+from app.core.admin_auth import (
+    AdminPrincipal,
+    resolve_admin_session,
+    resolve_super_admin_session,
+    verify_admin_csrf,
+)
 from app.core.user_profile import normalize_email, normalize_phone
 from app.models.admin_control import (
     AdminSession,
@@ -18,10 +23,7 @@ from app.models.admin_control import (
     SuperAdminPasswordReset,
     SuperAdminSession,
 )
-from app.models.admin_user import AdminUser
 from app.models.base import utcnow
-from app.models.oauth import OAuthProvider
-from app.models.user import AppUser
 from services.admin_web.notifications import DeliveryResult, notify_password
 from services.admin_web.security import (
     generate_password,
@@ -32,24 +34,6 @@ from services.admin_web.security import (
     token_hash,
     verify_password,
 )
-
-
-@dataclass(frozen=True)
-class AdminPrincipal:
-    """一次请求已经验证过的后台主体。"""
-
-    kind: str
-    principal_id: int
-    user_id: str | None
-    tenant_id: str | None
-    username: str
-    session_id: int
-    is_owner: bool = False
-
-    @property
-    def is_platform_super_admin(self) -> bool:
-        """平台超级管理员不进入 Casbin。"""
-        return self.kind == "platform_super_admin"
 
 
 class LoginError(Exception):
@@ -86,64 +70,6 @@ async def create_admin_session(
     return token, csrf
 
 
-async def resolve_admin_session(
-    db: AsyncSession, raw_token: str | None
-) -> AdminPrincipal | None:
-    """解析 OAuth 管理员 Session，并强制执行角色同步版本与时效。"""
-    if not raw_token:
-        return None
-    row = (
-        await db.execute(
-            sa.select(AdminSession, AdminUser, AppUser, OAuthProvider)
-            .join(AdminUser, AdminUser.id == AdminSession.admin_user_id)
-            .join(AppUser, AppUser.id == AdminUser.user_id)
-            .outerjoin(OAuthProvider, OAuthProvider.id == AdminUser.provider_id)
-            .where(AdminSession.token_hash == token_hash(raw_token))
-        )
-    ).first()
-    if row is None:
-        return None
-    session, admin, user, provider = row
-    now = utcnow()
-    sync_age = (
-        (now - _naive(admin.last_role_sync_at)).total_seconds()
-        if admin.last_role_sync_at is not None
-        else None
-    )
-    max_sync_age = (
-        int(provider.role_sync_max_age_seconds)
-        if provider is not None
-        else 0
-    )
-    if (
-        session.revoked_at is not None
-        or _naive(session.absolute_expires_at) <= now
-        or _naive(session.idle_expires_at) <= now
-        or session.role_sync_version != admin.version
-        or admin.status != "active"
-        or user.status != "active"
-        or provider is None
-        or provider.enabled != 1
-        or max_sync_age <= 0
-        or sync_age is None
-        or sync_age > max_sync_age
-    ):
-        return None
-    session.last_seen_at = now
-    session.idle_expires_at = min(
-        now + timedelta(minutes=settings.admin_session_idle_minutes),
-        _naive(session.absolute_expires_at),
-    )
-    return AdminPrincipal(
-        kind="oauth_admin",
-        principal_id=admin.id,
-        user_id=user.id,
-        tenant_id=user.tenant_id,
-        username=user.username,
-        session_id=session.id,
-    )
-
-
 async def create_super_admin_session(
     db: AsyncSession, account: SuperAdminAccount
 ) -> tuple[str, str]:
@@ -164,56 +90,6 @@ async def create_super_admin_session(
     )
     await db.flush()
     return token, csrf
-
-
-async def resolve_super_admin_session(
-    db: AsyncSession, raw_token: str | None
-) -> AdminPrincipal | None:
-    """解析平台超级管理员 Session，并检查密码版本和到期宽限。"""
-    if not raw_token:
-        return None
-    row = (
-        await db.execute(
-            sa.select(SuperAdminSession, SuperAdminAccount)
-            .join(
-                SuperAdminAccount,
-                SuperAdminAccount.id == SuperAdminSession.account_id,
-            )
-            .where(SuperAdminSession.token_hash == token_hash(raw_token))
-        )
-    ).first()
-    if row is None:
-        return None
-    session, account = row
-    now = utcnow()
-    grace_end = (
-        _naive(account.password_expires_at)
-        + timedelta(hours=settings.super_admin_rotation_grace_hours)
-        if account.password_expires_at is not None
-        else now
-    )
-    if (
-        session.revoked_at is not None
-        or _naive(session.absolute_expires_at) <= now
-        or _naive(session.idle_expires_at) <= now
-        or session.password_version != account.password_version
-        or account.status != "active"
-        or grace_end <= now
-    ):
-        return None
-    session.idle_expires_at = min(
-        now + timedelta(minutes=settings.admin_session_idle_minutes),
-        _naive(session.absolute_expires_at),
-    )
-    return AdminPrincipal(
-        kind="platform_super_admin",
-        principal_id=account.id,
-        user_id=None,
-        tenant_id=None,
-        username=account.username,
-        session_id=session.id,
-        is_owner=account.owner_slot == "superAdmin",
-    )
 
 
 async def authenticate_super_admin(
@@ -284,20 +160,7 @@ async def verify_session_csrf(
     raw_token: str | None,
 ) -> bool:
     """校验 CSRF 原值同时匹配 Cookie 与数据库中的 Session 摘要。"""
-    if not raw_token:
-        return False
-    model = (
-        SuperAdminSession
-        if principal.is_platform_super_admin
-        else AdminSession
-    )
-    expected = await db.scalar(
-        sa.select(model.csrf_hash).where(model.id == principal.session_id)
-    )
-    return bool(
-        expected
-        and hmac.compare_digest(expected, token_hash(raw_token))
-    )
+    return await verify_admin_csrf(principal, raw_token)
 
 
 def _expiry_for_new_password(now: datetime) -> datetime:

@@ -25,6 +25,7 @@ from app.models.agent import Agent
 from app.models.base import utcnow
 from app.models.tool_call_audit import ToolCallAudit
 from app.repo.tool_audit_repo import tool_audit_repo
+from tests.conftest import authenticate_admin_sync
 
 
 def _run_id() -> int:
@@ -266,21 +267,16 @@ def test_tool_audit_api_requires_admin_and_hides_result_in_list():
     try:
         client = TestClient(create_app())
         assert client.get(f"/api/tool-audits?run_id={run_id}").status_code == 401
+        authenticate_admin_sync(client)
 
-        listed = client.get(
-            f"/api/tool-audits?run_id={run_id}",
-            headers={"X-Admin-Key": settings.admin_key},
-        )
+        listed = client.get(f"/api/tool-audits?run_id={run_id}")
         assert listed.status_code == 200, listed.text
         body = listed.json()
         assert body["total"] == 1
         assert body["items"][0]["source"] == "skill"
         assert "result" not in body["items"][0]
 
-        detail = client.get(
-            f"/api/tool-audits/{audit_id}",
-            headers={"X-Admin-Key": settings.admin_key},
-        )
+        detail = client.get(f"/api/tool-audits/{audit_id}")
         assert detail.status_code == 200, detail.text
         assert detail.json()["result"] == "可读结果"
         assert detail.json()["arguments"]["script"] == "scripts/run.py"

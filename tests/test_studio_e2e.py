@@ -42,11 +42,11 @@ from app.main import create_app
 from app.repo.run_repo import run_repo
 from services.studio.config import StudioConfig
 from services.studio.server import StudioService
-from tests.conftest import authenticate_client
+from tests.conftest import authenticate_admin, authenticate_client
 from tests.fake_llm import FakeLLM
 from webagent.studio.v1 import studio_pb2_grpc
 
-ADMIN_HEADERS = {"X-Admin-Key": "test-admin-key"}
+ADMIN_HEADERS: dict[str, str] = {}
 
 # 本文件所有 code 都带这个前缀：pytest 的库是 session 级建表、用例之间**不清理**，
 # 撞 code 会变成「上一个用例的残留」。
@@ -194,6 +194,7 @@ async def app_server(studio, monkeypatch):
 async def client(app_server: str):
     """真实 HTTP 客户端（真 socket，不是 ASGITransport）。"""
     async with httpx.AsyncClient(base_url=app_server, timeout=60) as c:
+        await authenticate_admin(c)
         await authenticate_client(c)
         yield c
 

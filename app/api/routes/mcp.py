@@ -13,7 +13,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.deps import AdminDep, DbSession
+from app.api.deps import (
+    DbSession,
+    McpReadDep,
+    McpRefreshDep,
+    McpWriteDep,
+)
 from app.core.crypto import encrypt
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.mcp.catalog import McpCatalogError, refresh_catalog
@@ -147,7 +152,7 @@ def _check_transport_fields(transport: str, fields: dict) -> None:
 
 
 @router.get("", response_model=list[McpServerOut])
-async def list_servers(db: DbSession, admin: AdminDep) -> list[McpServerOut]:
+async def list_servers(db: DbSession, admin: McpReadDep) -> list[McpServerOut]:
     """列出全部 MCP 服务器 + 在线状态 + 工具数。"""
     servers = await mcp_server_repo.list(
         db, tenant_id=admin.tenant_id, limit=500
@@ -161,7 +166,7 @@ async def list_servers(db: DbSession, admin: AdminDep) -> list[McpServerOut]:
 
 @router.post("", response_model=McpServerOut, status_code=201)
 async def create_server(
-    payload: McpServerCreate, db: DbSession, admin: AdminDep
+    payload: McpServerCreate, db: DbSession, admin: McpWriteDep
 ) -> McpServerOut:
     """注册一台 MCP 服务器。
 
@@ -239,7 +244,9 @@ async def create_server(
 
 
 @router.get("/{code}", response_model=McpServerOut)
-async def get_server(code: str, db: DbSession, admin: AdminDep) -> McpServerOut:
+async def get_server(
+    code: str, db: DbSession, admin: McpReadDep
+) -> McpServerOut:
     """查一台服务器。"""
     server = await mcp_server_repo.get_by_code(db, code, admin.tenant_id)
     if server is None:
@@ -250,7 +257,7 @@ async def get_server(code: str, db: DbSession, admin: AdminDep) -> McpServerOut:
 
 @router.put("/{code}", response_model=McpServerOut)
 async def update_server(
-    code: str, payload: McpServerUpdate, db: DbSession, admin: AdminDep
+    code: str, payload: McpServerUpdate, db: DbSession, admin: McpWriteDep
 ) -> McpServerOut:
     """更新服务器：``version+1``，并**失效连接与快照**。
 
@@ -318,7 +325,11 @@ async def update_server(
 
 
 @router.delete("/{code}", status_code=204)
-async def delete_server(code: str, db: DbSession, admin: AdminDep) -> None:
+async def delete_server(
+    code: str,
+    db: DbSession,
+    admin: McpWriteDep,
+) -> None:
     """删除服务器（连带删掉它的工具快照）。"""
     ok = await mcp_server_repo.delete(db, code, admin.tenant_id)
     if not ok:
@@ -327,7 +338,11 @@ async def delete_server(code: str, db: DbSession, admin: AdminDep) -> None:
 
 
 @router.post("/{code}/refresh", response_model=McpRefreshOut)
-async def refresh_server(code: str, db: DbSession, admin: AdminDep) -> McpRefreshOut:
+async def refresh_server(
+    code: str,
+    db: DbSession,
+    admin: McpRefreshDep,
+) -> McpRefreshOut:
     """重连并刷新工具快照。
 
     这是「MCP 服务器从来没连过 → 保存期校验直接 400」那条提示的解法：先刷新
@@ -347,7 +362,7 @@ async def refresh_server(code: str, db: DbSession, admin: AdminDep) -> McpRefres
 
 @router.post("/{code}/oauth/revoke", response_model=McpOAuthRevokeOut)
 async def revoke_server_oauth(
-    code: str, db: DbSession, admin: AdminDep
+    code: str, db: DbSession, admin: McpWriteDep
 ) -> McpOAuthRevokeOut:
     """撤销 OAuth token：清本地密文，并尽力通知远端撤销端点。"""
     server = await mcp_server_repo.get_by_code(db, code, admin.tenant_id)
@@ -368,7 +383,9 @@ async def revoke_server_oauth(
 
 
 @router.get("/{code}/tools", response_model=list[McpToolOut])
-async def list_server_tools(code: str, db: DbSession, admin: AdminDep) -> list[McpToolOut]:
+async def list_server_tools(
+    code: str, db: DbSession, admin: McpReadDep
+) -> list[McpToolOut]:
     """该服务器**已发现**的工具（快照，不是实时）。"""
     server = await mcp_server_repo.get_by_code(db, code, admin.tenant_id)
     if server is None:
@@ -395,7 +412,7 @@ def _model_json(value) -> dict:
     return dict(value or {})
 
 
-async def _server_or_404(db, code: str, admin: AdminDep):
+async def _server_or_404(db, code: str, admin: McpReadDep):
     """读取启用的 MCP 服务器配置。"""
     server = await mcp_server_repo.get_by_code(db, code, admin.tenant_id)
     if server is None:
@@ -407,7 +424,7 @@ async def _server_or_404(db, code: str, admin: AdminDep):
 
 @router.get("/{code}/resources", response_model=list[McpResourceOut])
 async def list_server_resources(
-    code: str, db: DbSession, admin: AdminDep
+    code: str, db: DbSession, admin: McpReadDep
 ) -> list[McpResourceOut]:
     """实时列出 MCP 资源；该接口受管理员门禁保护。"""
     server = await _server_or_404(db, code, admin)
@@ -431,7 +448,7 @@ async def list_server_resources(
     "/{code}/resource-templates", response_model=list[McpResourceOut]
 )
 async def list_server_resource_templates(
-    code: str, db: DbSession, admin: AdminDep
+    code: str, db: DbSession, admin: McpReadDep
 ) -> list[McpResourceOut]:
     """实时列出 MCP 资源模板。"""
     server = await _server_or_404(db, code, admin)
@@ -456,7 +473,7 @@ async def list_server_resource_templates(
 async def read_server_resource(
     code: str,
     db: DbSession,
-    admin: AdminDep,
+    admin: McpReadDep,
     uri: str,
 ) -> list[McpResourceContentOut]:
     """读取资源 URI；文本和 base64 二进制分别返回。"""
@@ -480,7 +497,7 @@ async def read_server_resource(
 
 @router.get("/{code}/prompts", response_model=list[McpPromptOut])
 async def list_server_prompts(
-    code: str, db: DbSession, admin: AdminDep
+    code: str, db: DbSession, admin: McpReadDep
 ) -> list[McpPromptOut]:
     """实时列出 MCP prompts。"""
     server = await _server_or_404(db, code, admin)
@@ -507,7 +524,7 @@ async def get_server_prompt(
     prompt: str,
     body: McpPromptGetIn,
     db: DbSession,
-    admin: AdminDep,
+    admin: McpReadDep,
 ) -> McpPromptGetOut:
     """获取 prompt；参数只传字符串，符合 MCP 规范。"""
     server = await _server_or_404(db, code, admin)
