@@ -137,6 +137,48 @@ async def _seed_and_create_oauth_admin(
         return principal, provider
 
 
+def test_admin_login_slides_password_panel_over_oauth_view():
+    """账号密码登录默认隐藏，并由独立入口切换到密码重置界面。"""
+    from pathlib import Path
+
+    from services.admin_web.views import login_page
+
+    rendered = login_page(providers=[]).to_html()
+
+    def opening_tag(element_id: str) -> str:
+        marker = f'id="{element_id}"'
+        position = rendered.index(marker)
+        start = rendered.rfind("<", 0, position)
+        end = rendered.index(">", position)
+        return rendered[start : end + 1]
+
+    assert " hidden" in opening_tag("super-admin-login-panel")
+    assert " hidden" in opening_tag("super-admin-password-reset-view")
+    assert 'class="login-methods login-stage"' in rendered
+    assert 'class="login-card primary-login-card"' in rendered
+    assert 'class="login-card super-admin-login-card"' in rendered
+    assert 'id="toggle-super-admin-login"' in rendered
+    assert 'class="btn btn-oauth login-disclosure-button"' in rendered
+    assert 'data-admin-login-toggle="super-admin-login-panel"' in rendered
+    assert ">Back to OAuth</button>" in rendered
+    assert 'data-admin-view-show="super-admin-password-reset-view"' in rendered
+    assert 'action="/admin/login/super-admin"' in rendered
+    assert rendered.count('action="/admin/super-admin/forgot-password"') == 1
+
+    script = (
+        Path(__file__).parents[1]
+        / "services"
+        / "admin_web"
+        / "static"
+        / "admin-ui.js"
+    ).read_text(encoding="utf-8")
+    assert "function bindLoginControls()" in script
+    assert 'panel.classList.add("is-active");' in script
+    assert 'primaryCard?.classList.add("is-replaced");' in script
+    assert 'panel.classList.remove("is-active");' in script
+    assert "panel.hidden = true;" in script
+    assert "showLoginView(showView, hideView)" in script
+
 def test_eight_character_password_contract_and_argon2id():
     """密码固定 8 位、字符集受限且只保存 Argon2id 摘要。"""
     alphabet = set(string.ascii_letters + string.digits + "_@")
@@ -622,7 +664,18 @@ async def test_admin_appearance_exposes_three_persisted_cloud_themes():
         page = await client.get("/admin/preferences")
         assert page.status_code == 200
         assert 'role="radiogroup"' in page.text
-        assert "/admin/static/admin.css?v=cloud-themes-20261107-2" in page.text
+        assert "/admin/static/admin.css?v=login-slide-20261107-3" in page.text
+        assert "/admin/static/admin-ui.js?v=login-slide-20261107-3" in page.text
+        assert 'data-admin-locale="zh-CN"' in page.text
+        assert 'data-admin-locale="en"' in page.text
+        assert "brand-mark" not in page.text
+        assert "nav-icon" not in page.text
+        assert "nav-group-title" in page.text
+        assert "Access control" in page.text
+        script = await client.get("/admin/static/admin-ui.js")
+        assert script.status_code == 200
+        assert "web_agent.admin.appearance.v1" in script.text
+        assert "web_agent.admin.locale" in script.text
         assert page.text.count('class="theme-preview"') == 3
         assert page.text.count("theme-option theme-option-") == 3
         for theme in ("fluent", "cloudscape", "material"):

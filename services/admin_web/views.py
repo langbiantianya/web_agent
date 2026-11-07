@@ -29,6 +29,7 @@ from ludic.html import (
     p,
     section,
     select,
+    script,
     small,
     span,
     summary,
@@ -56,7 +57,15 @@ from app.models.oauth import OAuthProvider
 from services.admin_web.accounts import AdminPrincipal
 
 
-ADMIN_STYLESHEET = "/admin/static/admin.css?v=cloud-themes-20261107-2"
+ADMIN_STYLESHEET = "/admin/static/admin.css?v=login-slide-20261107-3"
+ADMIN_UI_SCRIPT = "/admin/static/admin-ui.js?v=login-slide-20261107-3"
+NAV_GROUP_ORDER = {
+    "Overview": 0,
+    "Access control": 10,
+    "Resources": 20,
+    "Security": 30,
+    "Settings": 40,
+}
 
 
 def _flash(message: str | None, kind: str = "info") -> Any:
@@ -66,25 +75,63 @@ def _flash(message: str | None, kind: str = "info") -> Any:
     return div(message, class_=f"flash {kind}", role="status")
 
 
+def _locale_switch() -> Any:
+    """渲染浏览器语言切换器。"""
+    return div(
+        button(
+            "EN",
+            type="button",
+            class_="locale-button",
+            data_admin_locale="en",
+            aria_pressed="true",
+        ),
+        button(
+            "简中",
+            type="button",
+            class_="locale-button",
+            data_admin_locale="zh-CN",
+            aria_pressed="false",
+        ),
+        class_="locale-switch",
+        role="group",
+        aria_label="Language",
+    )
+
+
 def _nav(pages: Iterable[AdminPageDefinition]) -> Any:
     """生成桌面侧栏和移动端 details 导航。"""
-    items = [
-        li(
+    grouped: dict[str, list[Any]] = {}
+    for page in pages:
+        link = li(
             a(
-                page.title,
+                span(page.title),
                 href=page.route_key,
                 class_="nav-link",
+                data_page=page.code,
             )
         )
-        for page in pages
+        grouped.setdefault(page.nav_group, []).append(link)
+    sections = [
+        div(
+            span(group, class_="nav-group-title"),
+            ul(*items, class_="nav-list"),
+            class_="nav-group",
+        )
+        for group, items in sorted(
+            grouped.items(),
+            key=lambda item: (
+                NAV_GROUP_ORDER.get(item[0], 100),
+                item[0],
+            ),
+        )
     ]
     return nav(
         details(
             summary("Menu", class_="mobile-menu-summary"),
-            ul(*items, class_="nav-list"),
+            div(*sections, class_="nav-groups"),
             class_="mobile-nav",
         ),
-        ul(*items, class_="nav-list desktop-nav"),
+        div(*sections, class_="nav-groups desktop-nav"),
         class_="sidebar",
         aria_label="Admin navigation",
     )
@@ -127,17 +174,23 @@ def shell(
             ),
             title(f"{title_text} · web_agent Admin"),
             link(rel="stylesheet", href=ADMIN_STYLESHEET),
+            script(src=ADMIN_UI_SCRIPT),
         ),
         body(
             header(
                 div(
-                    a("web_agent", href="/admin/", class_="brand"),
+                    a(
+                        span("web_agent", class_="brand-name"),
+                        href="/admin/",
+                        class_="brand",
+                    ),
                     span("Cloud Control Plane", class_="brand-subtitle"),
                     class_="brand-group",
                 ),
                 div(
                     span(role_label, class_="user-role"),
                     span(principal.username, class_="user-name"),
+                    _locale_switch(),
                     a(
                         "Preferences",
                         href="/admin/preferences",
@@ -192,10 +245,12 @@ def login_page(
             meta(name="viewport", content="width=device-width, initial-scale=1"),
             title("Sign in · web_agent Admin"),
             link(rel="stylesheet", href=ADMIN_STYLESHEET),
+            script(src=ADMIN_UI_SCRIPT),
         ),
         body(
             main(
                 section(
+                    div(_locale_switch(), class_="login-toolbar"),
                     p("WEB_AGENT CLOUD", class_="eyebrow"),
                     h1("Administration"),
                     p(
@@ -212,70 +267,142 @@ def login_page(
                                 class_="muted",
                             ),
                             *oauth_buttons,
-                            class_="login-card",
+                            div(
+                                button(
+                                    "Use username and password",
+                                    type="button",
+                                    id="toggle-super-admin-login",
+                                    class_="btn btn-oauth login-disclosure-button",
+                                    aria_controls="super-admin-login-panel",
+                                    aria_expanded="false",
+                                    data_admin_login_toggle="super-admin-login-panel",
+                                ),
+                                class_="login-disclosure",
+                            ),
+                            class_="login-card primary-login-card",
                         ),
                         section(
-                            h2("Platform super admin"),
-                            p(
-                                "Reserved for the built-in emergency and platform owner "
-                                "accounts.",
-                                class_="muted",
-                            ),
-                            form(
-                                label(
-                                    span("Username"),
-                                    input_(
-                                        name="username",
-                                        autocomplete="username",
-                                        required=True,
-                                    ),
-                                ),
-                                label(
-                                    span("Password"),
-                                    input_(
-                                        name="password",
-                                        type="password",
-                                        autocomplete="current-password",
-                                        minlength=8,
-                                        maxlength=8,
-                                        required=True,
-                                    ),
-                                ),
-                                input_(
-                                    type="hidden",
-                                    name="next",
-                                    value="/admin/",
+                            div(
+                                h2(
+                                    "Platform super admin",
+                                    id="super-admin-sign-in-title",
                                 ),
                                 button(
-                                    "Sign in",
-                                    type="submit",
-                                    class_="btn btn-primary",
+                                    "Back to OAuth",
+                                    type="button",
+                                    class_="btn btn-link login-panel-back",
+                                    aria_controls="super-admin-login-panel",
+                                    aria_expanded="true",
+                                    data_admin_login_toggle="super-admin-login-panel",
                                 ),
-                                action="/admin/login/super-admin",
-                                method="post",
-                                class_="stack",
+                                class_="login-panel-header",
                             ),
-                            form(
-                                label(
-                                    span("Username"),
-                                    input_(
-                                        name="username",
-                                        autocomplete="username",
-                                        required=True,
+                            div(
+                                p(
+                                    "Reserved for the built-in emergency and platform "
+                                    "owner accounts.",
+                                    class_="muted",
+                                ),
+                                form(
+                                    label(
+                                        span("Username"),
+                                        input_(
+                                            name="username",
+                                            autocomplete="username",
+                                            required=True,
+                                        ),
                                     ),
+                                    label(
+                                        span("Password"),
+                                        input_(
+                                            name="password",
+                                            type="password",
+                                            autocomplete="current-password",
+                                            minlength=8,
+                                            maxlength=8,
+                                            required=True,
+                                        ),
+                                    ),
+                                    input_(
+                                        type="hidden",
+                                        name="next",
+                                        value="/admin/",
+                                    ),
+                                    button(
+                                        "Sign in",
+                                        type="submit",
+                                        class_="btn btn-primary",
+                                    ),
+                                    action="/admin/login/super-admin",
+                                    method="post",
+                                    class_="stack",
                                 ),
-                                button(
-                                    "Forgot password",
-                                    type="submit",
-                                    class_="btn btn-link",
+                                div(
+                                    button(
+                                        "Reset password",
+                                        type="button",
+                                        class_="btn btn-link",
+                                        aria_controls="super-admin-password-reset-view",
+                                        aria_expanded="false",
+                                        data_admin_view_show=(
+                                            "super-admin-password-reset-view"
+                                        ),
+                                        data_admin_view_hide="super-admin-sign-in-view",
+                                    ),
+                                    class_="login-view-actions",
                                 ),
-                                action="/admin/super-admin/forgot-password",
-                                method="post",
-                                class_="password-reset-form",
+                                id="super-admin-sign-in-view",
+                                class_="login-view",
                             ),
-                            class_="login-card",
+                            div(
+                                h2(
+                                    "Reset password",
+                                    id="super-admin-password-reset-title",
+                                ),
+                                p(
+                                    "Enter your username and we will send a new password "
+                                    "to the registered contact channel.",
+                                    class_="muted",
+                                ),
+                                form(
+                                    label(
+                                        span("Username"),
+                                        input_(
+                                            name="username",
+                                            autocomplete="username",
+                                            required=True,
+                                        ),
+                                    ),
+                                    button(
+                                        "Send new password",
+                                        type="submit",
+                                        class_="btn btn-primary",
+                                    ),
+                                    action="/admin/super-admin/forgot-password",
+                                    method="post",
+                                    class_="password-reset-form",
+                                ),
+                                div(
+                                    button(
+                                        "Back to sign in",
+                                        type="button",
+                                        class_="btn btn-secondary",
+                                        data_admin_view_show="super-admin-sign-in-view",
+                                        data_admin_view_hide=(
+                                            "super-admin-password-reset-view"
+                                        ),
+                                    ),
+                                    class_="login-view-actions",
+                                ),
+                                id="super-admin-password-reset-view",
+                                class_="login-view password-reset-view",
+                                hidden=True,
+                            ),
+                            id="super-admin-login-panel",
+                            class_="login-card super-admin-login-card",
+                            hidden=True,
                         ),
-                        class_="login-grid",
+                        class_="login-methods login-stage",
                     ),
                     class_="login-shell",
                 ),
@@ -286,7 +413,6 @@ def login_page(
         data_theme="fluent",
         data_color_mode="system",
     )
-
 
 def dashboard(
     *,
@@ -2012,10 +2138,12 @@ def error_page(
             meta(name="viewport", content="width=device-width, initial-scale=1"),
             title(f"{title_text} · web_agent Admin"),
             link(rel="stylesheet", href=ADMIN_STYLESHEET),
+            script(src=ADMIN_UI_SCRIPT),
         ),
         body(
             main(
                 section(
+                    div(_locale_switch(), class_="login-toolbar"),
                     p(f"HTTP {status_hint}", class_="eyebrow"),
                     h1(title_text),
                     p(message, class_="lead"),
