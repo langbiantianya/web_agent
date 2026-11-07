@@ -56,6 +56,9 @@ from app.models.oauth import OAuthProvider
 from services.admin_web.accounts import AdminPrincipal
 
 
+ADMIN_STYLESHEET = "/admin/static/admin.css?v=cloud-themes-20261107-2"
+
+
 def _flash(message: str | None, kind: str = "info") -> Any:
     """返回可选提示条。"""
     if not message:
@@ -80,7 +83,6 @@ def _nav(pages: Iterable[AdminPageDefinition]) -> Any:
             summary("Menu", class_="mobile-menu-summary"),
             ul(*items, class_="nav-list"),
             class_="mobile-nav",
-            open=True,
         ),
         ul(*items, class_="nav-list desktop-nav"),
         class_="sidebar",
@@ -124,7 +126,7 @@ def shell(
                 content="width=device-width, initial-scale=1",
             ),
             title(f"{title_text} · web_agent Admin"),
-            link(rel="stylesheet", href="/admin/static/admin.css"),
+            link(rel="stylesheet", href=ADMIN_STYLESHEET),
         ),
         body(
             header(
@@ -189,7 +191,7 @@ def login_page(
             meta(charset="utf-8"),
             meta(name="viewport", content="width=device-width, initial-scale=1"),
             title("Sign in · web_agent Admin"),
-            link(rel="stylesheet", href="/admin/static/admin.css"),
+            link(rel="stylesheet", href=ADMIN_STYLESHEET),
         ),
         body(
             main(
@@ -1885,6 +1887,51 @@ def preferences_page(
     flash: str | None = None,
 ) -> Any:
     """渲染主题、色温和密度设置。"""
+    theme_options = [
+        (
+            "fluent",
+            "Fluent Design",
+            "Layered surfaces, acrylic accents, and Segoe-inspired controls.",
+        ),
+        (
+            "cloudscape",
+            "AWS Cloudscape",
+            "Dense operations layout, flat panels, and a dark command bar.",
+        ),
+        (
+            "material",
+            "Google Material",
+            "Soft elevation, expressive shapes, and Google blue actions.",
+        ),
+    ]
+    theme_previews = [
+        label(
+            input_(
+                type="radio",
+                name="theme",
+                value=value,
+                checked=theme == value,
+                required=True,
+            ),
+            div(
+                div(class_="theme-preview-sidebar"),
+                div(
+                    div(class_="theme-preview-bar"),
+                    div(class_="theme-preview-card"),
+                    class_="theme-preview-main",
+                ),
+                class_="theme-preview",
+                aria_hidden="true",
+            ),
+            div(
+                span(label_text),
+                small(description),
+                class_="theme-copy",
+            ),
+            class_=f"theme-option theme-option-{value}",
+        )
+        for value, label_text, description in theme_options
+    ]
     return shell(
         title_text="Appearance",
         principal=principal,
@@ -1905,20 +1952,13 @@ def preferences_page(
                 input_(type="hidden", name="csrf_token", value=csrf),
                 label(
                     span("Theme"),
-                    select(
-                        option("Fluent", value="fluent", selected=theme == "fluent"),
-                        option(
-                            "Cloudscape",
-                            value="cloudscape",
-                            selected=theme == "cloudscape",
-                        ),
-                        option(
-                            "Material",
-                            value="material",
-                            selected=theme == "material",
-                        ),
-                        name="theme",
+                    div(
+                        *theme_previews,
+                        class_="theme-previews",
+                        role="radiogroup",
+                        aria_label="Admin visual theme",
                     ),
+                    class_="theme-field",
                 ),
                 label(
                     span("Color mode"),
@@ -1971,7 +2011,7 @@ def error_page(
             meta(charset="utf-8"),
             meta(name="viewport", content="width=device-width, initial-scale=1"),
             title(f"{title_text} · web_agent Admin"),
-            link(rel="stylesheet", href="/admin/static/admin.css"),
+            link(rel="stylesheet", href=ADMIN_STYLESHEET),
         ),
         body(
             main(

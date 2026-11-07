@@ -615,6 +615,40 @@ async def test_business_pages_are_registered_for_platform_super_admin():
         await client.aclose()
 
 
+async def test_admin_appearance_exposes_three_persisted_cloud_themes():
+    """外观页提供三套可辨识主题，并持久化主题与明暗模式。"""
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    try:
+        page = await client.get("/admin/preferences")
+        assert page.status_code == 200
+        assert 'role="radiogroup"' in page.text
+        assert "/admin/static/admin.css?v=cloud-themes-20261107-2" in page.text
+        assert page.text.count('class="theme-preview"') == 3
+        assert page.text.count("theme-option theme-option-") == 3
+        for theme in ("fluent", "cloudscape", "material"):
+            assert f'value="{theme}"' in page.text
+
+        for theme in ("fluent", "cloudscape", "material"):
+            for color_mode in ("light", "dark", "system"):
+                saved = await client.post(
+                    "/admin/preferences",
+                    data={
+                        "csrf_token": csrf,
+                        "theme": theme,
+                        "color_mode": color_mode,
+                        "density": "compact",
+                    },
+                )
+                assert saved.status_code == 303
+                stored = await client.get("/admin/preferences")
+                assert stored.status_code == 200
+                assert f'data-theme="{theme}"' in stored.text
+                assert f'data-color-mode="{color_mode}"' in stored.text
+                assert 'data-density="compact"' in stored.text
+    finally:
+        await client.aclose()
+
+
 async def test_admin_web_dynamically_scopes_providers_for_client_and_admin():
     """Provider 在后台配置后分别驱动客户端和管理端登录入口。"""
     from app.main import create_app
