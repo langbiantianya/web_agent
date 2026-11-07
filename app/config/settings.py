@@ -64,6 +64,44 @@ class Settings(BaseSettings):
     # 测试或内网 IdP 可以显式放行；生产保持 false，防 SSRF。
     oauth_allow_private_networks: bool = False
 
+    # ---- 独立 admin-web（V4.7）----
+    admin_database_url: str = ""
+    admin_public_base_url: str = ""
+    admin_session_cookie_secure: bool = True
+    admin_session_idle_minutes: int = 30
+    admin_session_absolute_hours: int = 12
+    admin_ui_default_theme: str = "fluent"
+    super_admin_rotation_days: int = 30
+    super_admin_rotation_grace_hours: int = 24
+    super_admin_reset_cooldown_seconds: int = 600
+    super_admin_password_notify_timeout_seconds: float = 15.0
+
+    # 通知渠道只从环境变量读取；空值表示未启用。
+    mail_enabled: bool = False
+    mail_provider: str = "smtp"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_use_tls: bool = True
+
+    sms_enabled: bool = False
+    sms_provider: str = ""
+    aliyun_sms_access_key_id: str = ""
+    aliyun_sms_access_key_secret: str = ""
+    aliyun_sms_sign_name: str = ""
+    aliyun_sms_template_code: str = ""
+    aliyun_sms_region: str = "cn-hangzhou"
+    tencent_sms_secret_id: str = ""
+    tencent_sms_secret_key: str = ""
+    tencent_sms_sdk_app_id: str = ""
+    tencent_sms_sign_name: str = ""
+    tencent_sms_template_id: str = ""
+    tencent_sms_region: str = "ap-guangzhou"
+
+    casbin_policy_refresh_seconds: float = 2.0
+
     # ---- 事件流 ----
     event_batch_size: int = 20       # 累积多少条 flush 一次（设计 §4.5）
     event_flush_interval: float = 0.05  # 或每 50ms flush 一次

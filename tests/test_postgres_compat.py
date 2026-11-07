@@ -77,6 +77,20 @@ _EXPECTED_TABLES = {
     "app_user",
     "user_identity",
     "user_session",
+    # V4.7：独立后台、Casbin、UI 策略与平台超级管理员
+    "admin_audit_event",
+    "admin_session",
+    "admin_ui_preference",
+    "admin_page_definition",
+    "admin_component_definition",
+    "admin_page_permission",
+    "admin_component_permission",
+    "authz_policy_version",
+    "casbin_rule",
+    "oauth_role_mapping",
+    "super_admin_account",
+    "super_admin_session",
+    "super_admin_password_reset",
 }
 
 

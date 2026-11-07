@@ -1,0 +1,26 @@
+# ---- V4.7 独立 admin-web ----
+# 只安装独立后台实际需要的依赖；不把编排、MCP、studio 和客户端工具链塞进
+# admin 镜像。
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic-settings>=2.4
+SQLAlchemy[asyncio]>=2.0
+alembic>=1.13
+aiosqlite>=0.20
+asyncmy>=0.2.9
+aiomysql>=0.2
+psycopg[binary]>=3.2
+
+ludic[full]>=1.0,<2
+casbin>=1.43,<2
+argon2-cffi>=25.1
+
+# OIDC 验签、discovery 与 Fernet client-secret 解密。
+httpx>=0.27
+PyJWT[crypto]>=2.9
+cryptography>=42.0
+
+# 短信只兼容阿里云和腾讯云官方 SDK。
+aliyun-python-sdk-core>=2.16
+aliyun-python-sdk-dysmsapi>=2.0
+tencentcloud-sdk-python-sms>=3.0

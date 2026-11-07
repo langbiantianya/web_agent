@@ -26,13 +26,19 @@
 
 ## 用户身份与会话
 
-- [ ] **P1：实现 V4.7 OAuth 管理员体系**
-  [V4.7 方案](../../app/design/v4.7-oauth-admin.md) 已明确用
-  独立 `admin_user + Casbin RBAC + OAuth role mapping` 替代管理员 API Key，并提供
-  独立 `super_admin_account` 账号密码超级管理员、8 位随机密码、30 天轮换及阿里云/
-  腾讯云短信通知。后台作为独立容器运行 Ludic SSR，并用三套主题实现管理员可配置的
-  页面/组件权限、深浅色和移动端。实现时需要移除普通管理接口的 `X-Admin-Key`、
-  按 Casbin permission 改造路由，并完成旧 `admin_user` 审计迁移。
+- [ ] **P1：完成 V4.7 业务管理页与旧管理接口退役**
+  [V4.7 方案](../../app/design/v4.7-oauth-admin.md) 的第一阶段已经落地：独立
+  `admin_web` 容器、OAuth 管理员、Casbin、两套管理员 Session、平台超级管理员、
+  8 位随机密码、30 天轮换、邮件/短信通知、页面/组件权限、三主题和脱敏审计。
+  仍需把 Workflow、Agent、Skill、MCP、LLM 与工具审计页面接入共享领域 service，
+  随后删除 `/api/admin-users`、管理员 API Key 和客户端 `X-Admin-Key` 依赖；在页面
+  完整前不能提前关闭现有管理入口。
+
+- [ ] **P1：把客户端管理 API 切到 Casbin/管理员 Session**
+  新后台已经可以独立认证，但客户端现有资源管理路由仍兼容旧 `X-Admin-Key` 和
+  `AdminPrincipal.role`。需要增加共享的 OAuth admin/platform super admin 依赖，
+  按 object/action 调用 Casbin，并为既有审计补 `actor_kind + actor_id`，完成后再将
+  旧协议统一返回 `410`。
 
 - [ ] **P1：OAuth 生产加固与真实 IdP 联调**
   [V4.6 方案](../../app/design/v4.6-user-oauth-conversation.md) 中的 OIDC、PKCE、

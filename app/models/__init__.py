@@ -1,6 +1,21 @@
 """ORM 模型汇总导出。"""
 
 from app.models.agent import Agent
+from app.models.admin_control import (
+    AdminAuditEvent,
+    AdminComponentDefinition,
+    AdminComponentPermission,
+    AdminPageDefinition,
+    AdminPagePermission,
+    AdminSession,
+    AdminUiPreference,
+    AuthzPolicyVersion,
+    CasbinRule,
+    OAuthRoleMapping,
+    SuperAdminAccount,
+    SuperAdminPasswordReset,
+    SuperAdminSession,
+)
 from app.models.admin_user import AdminUser
 from app.models.base import Base
 from app.models.conversation import Conversation
@@ -27,10 +42,19 @@ from app.models.workflow import Workflow
 
 __all__ = [
     "Agent",
+    "AdminAuditEvent",
+    "AdminComponentDefinition",
+    "AdminComponentPermission",
+    "AdminPageDefinition",
+    "AdminPagePermission",
+    "AdminSession",
+    "AdminUiPreference",
     "AdminUser",
+    "AuthzPolicyVersion",
     "Base",
     "Conversation",
     "ConversationStatus",
+    "CasbinRule",
     "EventType",
     "Message",
     "MessageRole",
@@ -40,6 +64,7 @@ __all__ = [
     "McpTool",
     "OAuthLoginAttempt",
     "OAuthProvider",
+    "OAuthRoleMapping",
     "Run",
     "RunApproval",
     "RunApprovalVote",
@@ -51,6 +76,9 @@ __all__ = [
     "SkillRevision",
     "SkillRevisionResource",
     "StepStatus",
+    "SuperAdminAccount",
+    "SuperAdminPasswordReset",
+    "SuperAdminSession",
     "ToolCallAudit",
     "AppUser",
     "UserIdentity",

@@ -38,6 +38,15 @@ class OAuthProvider(Base):
     username_claim: Mapped[str] = mapped_column(
         sa.String(64), nullable=False, default="preferred_username"
     )
+    role_claim: Mapped[str] = mapped_column(
+        sa.String(64), nullable=False, default="groups"
+    )
+    role_claim_required: Mapped[int] = mapped_column(
+        sa.SmallInteger, nullable=False, default=1
+    )
+    role_sync_max_age_seconds: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=1800
+    )
     auto_create: Mapped[int] = mapped_column(sa.SmallInteger, nullable=False, default=1)
     enabled: Mapped[int] = mapped_column(sa.SmallInteger, nullable=False, default=1)
     created_at: Mapped[object] = mapped_column(

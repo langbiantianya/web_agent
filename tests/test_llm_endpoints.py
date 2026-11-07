@@ -321,16 +321,12 @@ def test_agent_can_use_database_endpoint_without_legacy_fields():
     assert client.delete(f"/api/agents/{code}").status_code == 204
 
 
-def test_admin_page_exposes_llm_endpoint_management():
-    """后台必须能发现数据库接口管理入口，而不是继续只编辑 Agent 单端点。"""
+def test_client_service_does_not_serve_legacy_admin_page():
+    """V4.7 后 /admin 由独立 admin-web 容器承载。"""
     client = TestClient(create_app())
     page = client.get("/admin")
 
-    assert page.status_code == 200
-    assert "LLM 接口" in page.text
-    assert "/api/llm-endpoints" in page.text
-    assert 'id="a_base"' not in page.text
-    assert 'id="a_key"' not in page.text
+    assert page.status_code == 404
 
 
 @pytest.mark.parametrize(

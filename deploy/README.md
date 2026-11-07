@@ -32,6 +32,23 @@ studio 自身也会在 isolated 启动预算内重试，覆盖慢启动竞态。
 
 如需在容器内运行 isolated 档，先构建 sandbox 镜像，再启动实验栈。具体环境变量和构建顺序见 compose 文件头部说明。
 
+## 独立管理后台
+
+后台与客户端分开部署，使用不同的 ASGI 入口、Cookie 和容器：
+
+```bash
+docker compose -f deploy/docker-compose.admin.yml up -d --build
+```
+
+`admin-web` 默认只绑定 `127.0.0.1:8001`，所有 `/admin/*` 请求应由反向代理转发。
+容器默认限制为 768 MiB、1 CPU、256 PIDs。上线前需要：
+
+- 运行迁移并执行 `python -m scripts.bootstrap_superadmin` 创建固定 owner；
+- 配置 `ADMIN_PUBLIC_BASE_URL`、OAuth callback、邮件和短信环境变量；
+- 使用 HTTPS 并保持 `ADMIN_SESSION_COOKIE_SECURE=true`；
+- 为 admin 与客户端配置独立数据库账号，限制客户端读取超级管理员密码摘要；
+- 不在客户端镜像中安装 Ludic、Argon2 管理页或短信 SDK。
+
 ## 安全要求
 
 - studio 不注入数据库口令、模型 Key、`SECRET_KEY` 或任何 secret。

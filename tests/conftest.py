@@ -50,6 +50,9 @@ os.environ["DEBUG"] = "false"
 os.environ["ADMIN_KEY"] = "test-admin-key"
 # 测试 HTTP 客户端使用 http://127.0.0.1，不启用 Secure 才能携带本地会话 Cookie。
 os.environ["USER_SESSION_COOKIE_SECURE"] = "false"
+os.environ["ADMIN_SESSION_COOKIE_SECURE"] = "false"
+os.environ["MAIL_ENABLED"] = "false"
+os.environ["SMS_ENABLED"] = "false"
 # 让批量落库在测试里几乎立即发生，但不关掉批量逻辑本身
 os.environ["EVENT_BATCH_SIZE"] = "5"
 os.environ["EVENT_FLUSH_INTERVAL"] = "0.02"

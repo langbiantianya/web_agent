@@ -1,0 +1,31 @@
+# 独立 admin-web 容器。默认仅绑定本机回环，由反向代理把 /admin/* 转发过来。
+services:
+  admin-web:
+    build:
+      context: ..
+      dockerfile: Dockerfile.admin
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: webagent/admin-web:0.1.0
+    container_name: webagent-admin
+    restart: unless-stopped
+    # 小内存测试机默认上限；正式环境按容量另行配置。
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 256
+    ports:
+      - "127.0.0.1:8001:8001"
+    env_file:
+      - ../.env
+    environment:
+      ADMIN_DATABASE_URL: ${ADMIN_DATABASE_URL:-}
+      ADMIN_PUBLIC_BASE_URL: ${ADMIN_PUBLIC_BASE_URL:-http://127.0.0.1:8001}
+      ADMIN_SESSION_COOKIE_SECURE: ${ADMIN_SESSION_COOKIE_SECURE:-false}
+      ADMIN_WEB_PORT: "8001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

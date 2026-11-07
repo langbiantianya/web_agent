@@ -13,8 +13,9 @@
 | 核心运行时 | [app/core/README.md](app/core/README.md) | Workflow、LangGraph、审批、工具、Redis 和敏感内容过滤 |
 | 设计总目录 | [docs/design/README.md](docs/design/README.md) | V1–V4.7 版本、迭代记录和设计入口 |
 | 设计 TODO | [docs/design/TODO.md](docs/design/TODO.md) | 尚未完成的工作与优先级 |
-| Web 页面 | [web/README.md](web/README.md) | 功能验证台与后台管理 |
+| Web 页面 | [web/README.md](web/README.md) | 客户端功能验证台 |
 | 独立服务 | [services/README.md](services/README.md) | studio、dispatcher、sandbox 的拓扑与信任边界 |
+| admin-web | [services/admin_web/README.md](services/admin_web/README.md) | 独立 Ludic 后台、Casbin、平台超级管理员与管理页面 |
 | studio | [services/studio/README.md](services/studio/README.md) | 脚本执行、档位、资源限制和运维入口 |
 | studio 设计 | [services/studio/design/README.md](services/studio/design/README.md) | gRPC 契约、进程隔离、沙箱和部署设计 |
 | dispatcher | [services/dispatcher/README.md](services/dispatcher/README.md) | isolated 档控制面、HTTP 接口和环境变量 |
@@ -53,6 +54,10 @@ flowchart LR
         Runtime["LangGraph + AgentRunner"]
     end
 
+    subgraph Admin["独立管理面"]
+        AdminWeb["admin-web<br/>Ludic SSR · Casbin"]
+    end
+
     DB[("数据库")]
     Redis[("Redis（可选）")]
     LLM["OpenAI 兼容模型"]
@@ -64,6 +69,8 @@ flowchart LR
     end
 
     Client --> API
+    Client -->|"/admin/*"| AdminWeb
+    AdminWeb --> DB
     API --> Runtime
     Runtime --> DB
     Runtime <--> Redis
@@ -85,7 +92,7 @@ python run.py
 启动后访问：
 
 - 功能验证台：<http://127.0.0.1:8000/>
-- 后台管理：<http://127.0.0.1:8000/admin>
+- 后台管理（独立服务）：<http://127.0.0.1:8001/admin/>
 - OpenAPI：<http://127.0.0.1:8000/docs>
 
 ## 文档维护约定

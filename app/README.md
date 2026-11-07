@@ -146,7 +146,7 @@ uvicorn app.main:app --reload
 服务启动后可以访问：
 
 - 功能验证台：<http://127.0.0.1:8000/>
-- 后台管理：<http://127.0.0.1:8000/admin>
+- 后台管理（独立 admin-web）：<http://127.0.0.1:8001/admin/>
 - OpenAPI：<http://127.0.0.1:8000/docs>
 - 健康检查：<http://127.0.0.1:8000/api/health>
 

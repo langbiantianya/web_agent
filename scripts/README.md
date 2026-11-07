@@ -15,6 +15,15 @@ python -m scripts.seed
 `seed.py` 创建数据库 LLM 接口 `default`、`planner / researcher / writer`
 三个 Agent 和 `default_pipeline`。`.env` 只提供首次灌入的接口地址与 Key。
 
+独立后台首次启动还需要创建固定 owner `superAdmin`：
+
+```bash
+python -m scripts.bootstrap_superadmin --email ops@example.com --phone +8613800138000
+```
+
+密码由服务端随机生成并通过邮件/短信发送。只有受控本机初始化允许
+`--stdout` 一次性输出明文；生产轮换和忘记密码流程不得使用。
+
 ## 敏感内容模型
 
 ```bash

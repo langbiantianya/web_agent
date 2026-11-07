@@ -87,15 +87,9 @@ def test_import_entries_exposes_warnings_and_runtime_status():
     ).status_code == 204
 
 
-def test_admin_page_exposes_skill_management_workflow():
-    """后台必须覆盖导入、绑定、资源、导出与回滚入口。"""
+def test_client_service_does_not_serve_legacy_admin_page():
+    """Skill 管理页改由独立 Ludic admin-web 提供。"""
     client = TestClient(create_app())
     page = client.get("/admin")
 
-    assert page.status_code == 200
-    assert "Skill 管理" in page.text
-    assert "导入 ZIP" in page.text
-    assert "data-skill" in page.text
-    assert "/rollback" in page.text
-    assert "/export" in page.text
-    assert 'method: "PUT"' in page.text
+    assert page.status_code == 404

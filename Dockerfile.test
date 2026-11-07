@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7
 #
 # 全量测试镜像。生产镜像不携带 tests/，本地宿主 Python 版本又可能与
-# langgraph-checkpoint-sqlite 的二进制依赖不匹配；该镜像把两者固定到 Python 3.11。
+# langgraph-checkpoint-sqlite 的二进制依赖不匹配；同时独立 admin-web 使用的
+# Ludic 1.x 要求 Python >= 3.14，因此测试镜像固定到 Python 3.14。
 #
 # docker build -f Dockerfile.test -t webagent/tests:local .
 # docker run --rm --memory=1200m --cpus=1 \
@@ -14,7 +15,7 @@
 
 FROM node:20.18.1-bookworm-slim AS node
 
-FROM python:3.11.9-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 ARG PIP_INDEX_URL=https://pypi.org/simple
 
@@ -25,8 +26,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" -r requirements.txt "docker>=7"
+COPY requirements.txt requirements.admin.txt ./
+RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" \
+    -r requirements.txt -r requirements.admin.txt "docker>=7"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends bash libstdc++6 \

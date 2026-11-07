@@ -1,6 +1,8 @@
 # 测试
 
-推荐用固定 Python 3.11 的测试镜像运行全量测试，避免宿主解释器与二进制依赖不匹配：
+推荐用固定 Python 3.14 的测试镜像运行全量测试，避免宿主解释器与二进制依赖不匹配。
+独立 admin-web 使用的 Ludic 1.x 要求 Python >= 3.14，客户端生产镜像仍保持自己的
+运行时版本：
 
 ```bash
 docker build -f Dockerfile.test -t webagent/tests:local .
@@ -36,6 +38,27 @@ docker run --rm --network host \
 [pgbouncer]
 pool_mode = transaction
 ignore_startup_parameters = extra_float_digits,options
+```
+
+后台 PostgreSQL 用例可以复用标准 `postgres` 容器环境文件。测试脚本只从进程环境
+拼装 URL，不输出密码：
+
+```bash
+docker run --rm --network postgres-db_default \
+  --env-file /docker/postgres/.env \
+  -e TEST_DATABASE_NAME=webagent_v47_admin_test \
+  -v "$PWD:/app:ro" webagent/tests:v47 \
+  sh /app/tests/run_admin_pg.sh
+```
+
+空库迁移使用同一组变量，脚本不会回显连接串：
+
+```bash
+docker run --rm --network postgres-db_default \
+  --env-file /docker/postgres/.env \
+  -e TEST_DATABASE_NAME=webagent_v47_migration_test \
+  -v "$PWD:/app:ro" webagent/tests:v47 \
+  sh /app/tests/run_migrations_pg.sh
 ```
 
 2026-11-05 在 PostgreSQL 18.6 + PgBouncer 1.18 上运行全量测试，结果为

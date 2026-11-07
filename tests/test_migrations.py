@@ -57,8 +57,21 @@ EXPECTED_TABLES = {
     "llm_endpoint",
     "tool_call_audit",
     "admin_user",
+    "admin_audit_event",
+    "admin_session",
+    "admin_ui_preference",
+    "admin_page_definition",
+    "admin_component_definition",
+    "admin_page_permission",
+    "admin_component_permission",
+    "authz_policy_version",
+    "casbin_rule",
+    "oauth_role_mapping",
     "oauth_provider",
     "oauth_login_attempt",
+    "super_admin_account",
+    "super_admin_session",
+    "super_admin_password_reset",
     "app_user",
     "user_identity",
     "user_session",
@@ -170,7 +183,12 @@ def test_primary_keys_are_rowid_aliases(migrated_db: Path):
     INTEGER 都算成 "INTEGER"，主键到底能不能自增被抹平了。
     """
     for table in sorted(EXPECTED_TABLES):
-        if table == "app_user":
+        if table in {
+            "app_user",
+            "admin_page_definition",
+            "admin_component_definition",
+            "admin_ui_preference",
+        }:
             continue
         pk = [
             r for r in _query(migrated_db, f"PRAGMA table_info({table})")
