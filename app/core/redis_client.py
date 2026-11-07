@@ -143,9 +143,15 @@ async def redis_search_available(client: Redis | None = None) -> bool:
         )
     except (RedisError, OSError, ValueError):
         return False
-    if not result or result[0] is None:
+    if isinstance(result, dict):
+        # redis-py 8 / RESP3 会把 ``COMMAND INFO`` 的顶层结果解码成
+        # ``{command_name: metadata}``；旧版本则返回列表。
+        command_info = next(iter(result.values()), None)
+    else:
+        command_info = result[0] if result else None
+    if command_info is None:
         return False
-    return isinstance(result[0], dict) or bool(result[0])
+    return isinstance(command_info, dict) or bool(command_info)
 
 
 async def connect_redis(attempts: int = 3, backoff: float = 0.5) -> Redis:

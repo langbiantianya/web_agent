@@ -39,6 +39,20 @@ async def test_redis_search_probe_accepts_known_command():
 
 
 @pytest.mark.asyncio
+async def test_redis_search_probe_accepts_mapping_result():
+    """redis-py 8 / RESP3 返回以命令名为键的映射。"""
+    client = _Client(
+        {
+            "ft.create": {
+                "name": "ft.create",
+                "arity": -2,
+            }
+        }
+    )
+    assert await redis_search_available(client) is True
+
+
+@pytest.mark.asyncio
 async def test_redis_search_probe_rejects_unknown_or_denied_command():
     """普通 Redis 与 ACL 拒绝都返回 False，启动层可给出可操作提示。"""
     assert await redis_search_available(_Client([None])) is False
