@@ -59,6 +59,46 @@ class FakeElement {
     this.listeners = new Map();
     this.classList = new FakeClassList(this);
     this.rect = { left: 0, top: 0, width: 800, height: 600 };
+    // 普通属性：表单控件用。
+    this.type = "";
+    this.rows = 0;
+    this.disabled = false;
+    this.selected = false;
+    // 光标位置：null 表示「跟随 value 的长度」。
+    this._selectionStart = null;
+    this._selectionEnd = null;
+  }
+
+  /** className 与 class 属性保持同步。 */
+  get className() {
+    return this.getAttribute("class") || "";
+  }
+
+  set className(value) {
+    this.setAttribute("class", String(value));
+  }
+
+  /** 光标位置：没显式设置过时取文本长度。 */
+  get selectionStart() {
+    if (this._selectionStart === null) {
+      return String(this.value).length;
+    }
+    return this._selectionStart;
+  }
+
+  set selectionStart(value) {
+    this._selectionStart = Number(value);
+  }
+
+  get selectionEnd() {
+    if (this._selectionEnd === null) {
+      return this.selectionStart;
+    }
+    return this._selectionEnd;
+  }
+
+  set selectionEnd(value) {
+    this._selectionEnd = Number(value);
   }
 
   setAttribute(name, value) {
@@ -72,6 +112,14 @@ class FakeElement {
   hasAttribute(name) {
     return this.attributes.has(name);
   }
+
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
+
+  focus() {}
+
+  blur() {}
 
   appendChild(child) {
     child.parentNode = this;
@@ -115,6 +163,8 @@ class FakeElement {
       preventDefault() {
         this.defaultPrevented = true;
       },
+      stopPropagation() {},
+      stopImmediatePropagation() {},
     };
     (this.listeners.get(type) || []).forEach((handler) => handler(event));
     return event;
@@ -161,11 +211,13 @@ class FakeElement {
 }
 
 /**
- * 造一套最小页面：画布容器 + 初始状态 textarea + 隐藏 definition input。
+ * 造一套最小页面：画布容器 + 调色板 + 检查器 + 提示条 +
+ * 初始状态 textarea + 隐藏 definition input。
  */
 export function createDom({ state, definition = "" } = {}) {
   const registry = new Map();
   const documentListeners = new Map();
+  const root = new FakeElement("div");
 
   const document = {
     readyState: "complete",
@@ -178,6 +230,16 @@ export function createDom({ state, definition = "" } = {}) {
     getElementById(id) {
       return registry.get(id) || null;
     },
+    /** 只支持 ".class" 选择器，返回数组。 */
+    querySelectorAll(selector) {
+      const hits = [];
+      root.walk((node) => {
+        if (node.matches && node.matches(selector)) {
+          hits.push(node);
+        }
+      });
+      return hits;
+    },
     addEventListener(type, handler) {
       if (!documentListeners.has(type)) {
         documentListeners.set(type, []);
@@ -189,7 +251,7 @@ export function createDom({ state, definition = "" } = {}) {
     dispatch(type, init = {}) {
       const event = {
         type,
-        target: document,
+        target: init.target || document,
         code: init.code || "",
         key: init.key || "",
         defaultPrevented: false,
@@ -206,17 +268,62 @@ export function createDom({ state, definition = "" } = {}) {
   canvas.setAttribute("id", "workflow-editor-canvas");
   canvas.setAttribute("class", "workflow-editor-canvas");
   registry.set("workflow-editor-canvas", canvas);
+  root.appendChild(canvas);
+
+  const paletteAgent = new FakeElement("button");
+  paletteAgent.setAttribute("class", "btn btn-secondary workflow-palette-item");
+  paletteAgent.setAttribute("data-node-type", "agent");
+  root.appendChild(paletteAgent);
+
+  const paletteApproval = new FakeElement("button");
+  paletteApproval.setAttribute(
+    "class",
+    "btn btn-secondary workflow-palette-item",
+  );
+  paletteApproval.setAttribute("data-node-type", "approval");
+  root.appendChild(paletteApproval);
+
+  const inspector = new FakeElement("div");
+  inspector.setAttribute("id", "workflow-editor-inspector");
+  inspector.setAttribute("class", "workflow-editor-inspector");
+  registry.set("workflow-editor-inspector", inspector);
+  root.appendChild(inspector);
+
+  const errorList = new FakeElement("ul");
+  errorList.setAttribute("id", "workflow-editor-errors");
+  errorList.setAttribute("class", "workflow-editor-errors");
+  const errorBar = new FakeElement("div");
+  errorBar.setAttribute("id", "workflow-editor-errorbar");
+  errorBar.setAttribute("class", "workflow-editor-errorbar");
+  errorBar.setAttribute("hidden", "hidden");
+  errorBar.appendChild(errorList);
+  registry.set("workflow-editor-errorbar", errorBar);
+  registry.set("workflow-editor-errors", errorList);
+  root.appendChild(errorBar);
 
   const stateBox = new FakeElement("textarea");
   stateBox.setAttribute("id", "workflow-editor-state");
   stateBox.value = JSON.stringify(state || {});
   registry.set("workflow-editor-state", stateBox);
+  root.appendChild(stateBox);
 
   const definitionBox = new FakeElement("input");
   definitionBox.setAttribute("id", "workflow-editor-definition");
   definitionBox.value = definition;
   registry.set("workflow-editor-definition", definitionBox);
+  root.appendChild(definitionBox);
 
   const window = {};
-  return { document, window, canvas, stateBox, definitionBox, registry };
+  return {
+    document,
+    window,
+    canvas,
+    stateBox,
+    definitionBox,
+    inspector,
+    errorBar,
+    errorList,
+    registry,
+    root,
+  };
 }

@@ -5,6 +5,9 @@
  * 把 model 变更同步回隐藏表单字段。所有业务判断都委托给
  * globalThis.WorkflowEditorCore。
  *
+ * 连线的合法性（自环、重复边、端点不存在）由 core.connectNodes 判定，
+ * 本文件只做 reason → 文案的映射，不写第二份实现。
+ *
  * 图规则校验（环检测、孤立节点、条件边混用、表达式语法）不在本文件实现，
  * 那是服务端 app/core/workflow_def.py 的唯一实现。
  */
@@ -26,6 +29,22 @@
     viewport: { x: 0, y: 0, scale: 1 },
     issues: [],
     dirty: false,
+    // 检查器当前渲染的结构签名；签名没变就不重建检查器（避免焦点丢失）。
+    inspectorSignature: null,
+    // 检查器重建次数，供测试断言「没有重建」。
+    inspectorBuilds: 0,
+  };
+
+  /**
+   * 连线被拒绝的原因 → 中文提示。
+   *
+   * 判定本身**全部**来自 core.connectNodes 返回的 reason，
+   * 这里只做文案映射，前端不再写第二份判断。
+   */
+  const REASON_TEXT = {
+    self_loop: "不能连到自己",
+    duplicate: "这条边已经存在",
+    unknown_node: "目标节点不存在",
   };
 
   /**
@@ -33,6 +52,12 @@
    * 拖拽过程中不写回隐藏字段，结束时统一写一次。
    */
   let drag = null;
+
+  /**
+   * 当前正在拉出的连线：{ fromId }。
+   * 从节点的输出端口按下时开始，落到目标节点上松手才建边。
+   */
+  let portDrag = null;
 
   /** 建一个 SVG 元素。 */
   function el(tag, attrs, text) {
@@ -70,20 +95,20 @@
      所以这里一律用 hasOwnProperty 判存在、用 defineProperty 写。
      ------------------------------------------------------------------ */
 
-  /** 拿到布局坐标表；没有就建一张无原型的表。 */
-  function layoutNodes() {
-    if (!state.model || !state.model.layout) {
+  /** 拿到指定 model 的布局坐标表；没有就建一张无原型的表。 */
+  function layoutNodesIn(model) {
+    if (!model || !model.layout) {
       return null;
     }
-    if (!state.model.layout.nodes) {
-      state.model.layout.nodes = Object.create(null);
+    if (!model.layout.nodes) {
+      model.layout.nodes = Object.create(null);
     }
-    return state.model.layout.nodes;
+    return model.layout.nodes;
   }
 
-  /** 读某个节点的坐标；没有就返回 null。 */
-  function getLayoutPoint(nodeId) {
-    const nodes = layoutNodes();
+  /** 在指定 model 上读某个节点的坐标；没有就返回 null。 */
+  function getLayoutPointIn(model, nodeId) {
+    const nodes = layoutNodesIn(model);
     if (!nodes || !Object.prototype.hasOwnProperty.call(nodes, nodeId)) {
       return null;
     }
@@ -91,9 +116,9 @@
     return point && typeof point === "object" ? point : null;
   }
 
-  /** 写某个节点的坐标。 */
-  function setLayoutPoint(nodeId, point) {
-    const nodes = layoutNodes();
+  /** 在指定 model 上写某个节点的坐标。 */
+  function setLayoutPointIn(model, nodeId, point) {
+    const nodes = layoutNodesIn(model);
     if (!nodes) {
       return;
     }
@@ -104,6 +129,16 @@
       enumerable: true,
       configurable: true,
     });
+  }
+
+  /** 读当前 model 里的节点坐标（Task 6 的原接口，保持不变）。 */
+  function getLayoutPoint(nodeId) {
+    return getLayoutPointIn(state.model, nodeId);
+  }
+
+  /** 写当前 model 里的节点坐标（Task 6 的原接口，保持不变）。 */
+  function setLayoutPoint(nodeId, point) {
+    setLayoutPointIn(state.model, nodeId, point);
   }
 
   /**
@@ -366,18 +401,25 @@
     }
   }
 
-  /** 选中一个节点或一条边。 */
+  /** 选中一个节点或一条边。选中对象变了 → 检查器必须重建。 */
   function select(kind, id) {
     state.selection = kind ? { kind, id } : null;
     render();
+    renderInspector(true);
   }
 
-  /** 提交一份新 model（记一步撤销）。 */
+  /**
+   * 提交一份新 model（记一步撤销）。
+   *
+   * 检查器**不强制重建**：只有结构变了（签名变了）才重建，
+   * 单纯的字段值修改不会动检查器 DOM，用户的输入焦点得以保留。
+   */
   function commit(nextModel) {
     state.stack.push(nextModel);
     state.model = nextModel;
     state.dirty = true;
     render();
+    renderInspector();
   }
 
   /** 把当前视角写回 model —— 视角要跟着定义一起存。 */
@@ -394,7 +436,7 @@
   }
 
   /**
-   * 绑定画布交互：节点拖拽、画布平移、滚轮缩放。
+   * 绑定画布交互：节点拖拽、画布平移、滚轮缩放、从输出点拉边。
    */
   function bindCanvasInteractions(canvas) {
     let spaceDown = false;
@@ -409,6 +451,19 @@
     }
 
     canvas.addEventListener("pointerdown", (event) => {
+      // 输出端口要先于节点本身判断：端口就在节点卡片里面。
+      const port = event.target.closest
+        ? event.target.closest(".port-out")
+        : null;
+      if (port && state.canWrite) {
+        const portGroup = port.closest(".workflow-node");
+        if (portGroup) {
+          portDrag = { fromId: portGroup.getAttribute("data-node-id") };
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+      }
       const nodeGroup = event.target.closest
         ? event.target.closest(".workflow-node")
         : null;
@@ -426,6 +481,10 @@
           nodeId,
           offsetX: point.x - position.x,
           offsetY: point.y - position.y,
+          // 起点坐标：只有真的挪动了才记一步撤销（设计文档 :199）。
+          startX: position.x,
+          startY: position.y,
+          hadStoredPoint: Boolean(getLayoutPoint(nodeId)),
         };
         canvas.setPointerCapture(event.pointerId);
         select("node", nodeId);
@@ -434,6 +493,8 @@
       }
       // 空白处：中键，或按住空格，才平移。左键空白不做任何事。
       if (event.button !== 1 && !spaceDown) {
+        // 左键点空白：取消选中，检查器回到画布态。
+        select(null, null);
         return;
       }
       drag = {
@@ -476,8 +537,8 @@
       if (!drag) {
         return;
       }
-      if (drag.kind === "node") {
-        // 拖动过程中不记撤销，拖动结束才记一步。
+      if (drag.kind === "node" && movedDuringDrag()) {
+        // 拖动过程中不记撤销，拖动结束且坐标真的变了才记一步。
         state.stack.push(state.model);
         state.dirty = true;
       }
@@ -494,8 +555,73 @@
       }
     }
 
-    canvas.addEventListener("pointerup", endDrag);
-    canvas.addEventListener("pointercancel", endDrag);
+    /** 这次拖动是不是真的挪动了位置。 */
+    function movedDuringDrag() {
+      const point = getLayoutPoint(drag.nodeId);
+      if (!point) {
+        return false;
+      }
+      return point.x !== drag.startX || point.y !== drag.startY;
+    }
+
+    /**
+     * 指针被取消（系统手势、触点丢失）：不算拖动完成。
+     *
+     * 不压撤销栈、不写脏标记，并把坐标还原到起点 ——
+     * 取消就是取消，画布不该留下半截改动。
+     */
+    function cancelPointer() {
+      if (portDrag) {
+        portDrag = null;
+        return;
+      }
+      if (!drag) {
+        return;
+      }
+      if (drag.kind === "node") {
+        if (drag.hadStoredPoint) {
+          setLayoutPoint(drag.nodeId, { x: drag.startX, y: drag.startY });
+        } else {
+          const nodes = layoutNodesIn(state.model);
+          if (nodes) {
+            delete nodes[drag.nodeId];
+          }
+        }
+      }
+      drag = null;
+      canvas.classList.remove("is-panning");
+      render();
+    }
+
+    /**
+     * 松手时的收尾：先看是不是在拉边，是的话按落点建边；
+     * 否则走节点拖拽 / 画布平移的收尾。
+     */
+    function endPointer(event) {
+      if (portDrag) {
+        const fromId = portDrag.fromId;
+        portDrag = null;
+        const group =
+          event && event.target && event.target.closest
+            ? event.target.closest(".workflow-node")
+            : null;
+        const toId = group ? group.getAttribute("data-node-id") : null;
+        if (toId) {
+          // 拖到空白处松手 → 落点没有节点 → 不建边、不提示。
+          connectNodesSafely(fromId, toId);
+        }
+        return;
+      }
+      endDrag(event);
+    }
+
+    canvas.addEventListener("pointerup", endPointer);
+    canvas.addEventListener("pointercancel", cancelPointer);
+
+    // 指针在画布外松手时也要把待连的边作废。
+    document.addEventListener("pointerup", () => {
+      portDrag = null;
+    });
 
     canvas.addEventListener(
       "wheel",
@@ -524,8 +650,15 @@
       { passive: false },
     );
 
-    // 空格 + 拖拽 = 平移。
+    // 空格 + 拖拽 = 平移。在输入框里打字时不要把空格当成平移键，
+    // 否则在检查器里按空格会把画布拖跑（页面还会跟着空格滚动）。
     document.addEventListener("keydown", (event) => {
+      const tag = String(
+        (event.target && event.target.tagName) || "",
+      ).toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") {
+        return;
+      }
       if (event.code === "Space" || event.key === " ") {
         spaceDown = true;
       }
@@ -535,6 +668,671 @@
         spaceDown = false;
       }
     });
+  }
+
+  /* ------------------------------------------------------------------
+     提示条
+
+     页面上有 #workflow-editor-errorbar（默认 hidden）和它里面的
+     ul#workflow-editor-errors。Task 8 会复用 showNotice 显示服务端的
+     校验结果。
+     ------------------------------------------------------------------ */
+
+  /** 在页面上显示一条提示。空消息则清空提示区。 */
+  function showNotice(message) {
+    const list = document.getElementById("workflow-editor-errors");
+    const bar = document.getElementById("workflow-editor-errorbar");
+    if (!list) {
+      return;
+    }
+    list.innerHTML = "";
+    if (!message) {
+      if (bar) {
+        bar.setAttribute("hidden", "hidden");
+      }
+      return;
+    }
+    const item = document.createElement("li");
+    item.textContent = message;
+    list.appendChild(item);
+    if (bar) {
+      bar.removeAttribute("hidden");
+    }
+  }
+
+  /** reason → 中文提示文案。 */
+  function reasonText(reason) {
+    if (Object.prototype.hasOwnProperty.call(REASON_TEXT, reason)) {
+      return REASON_TEXT[reason];
+    }
+    return "连边失败";
+  }
+
+  /* ------------------------------------------------------------------
+     调色板与连线
+     ------------------------------------------------------------------ */
+
+  /** 调色板：点一下加一个节点。 */
+  function bindPalette() {
+    const buttons = document.querySelectorAll
+      ? document.querySelectorAll(".workflow-palette-item")
+      : [];
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => {
+        if (!state.canWrite) {
+          return;
+        }
+        const type =
+          button.getAttribute("data-node-type") === "approval"
+            ? "approval"
+            : "agent";
+        const next = core.cloneModel(state.model);
+        // nextNodeId 是纯函数：它不改 model，返回一个不与现有 id 冲突的新 id。
+        const id = core.nextNodeId(next, type);
+        next.nodes.push({
+          id,
+          type,
+          label: "",
+          agentCode: "",
+          outputKey: "",
+          prompt: "",
+          requiredApprovals: 1,
+          approvalTimeoutSec: 0,
+          approvalTimeoutAction: "reject",
+        });
+        // 必须用安全的写入（defineProperty），不能用普通赋值：
+        // 节点 id 用户可控，可能是 __proto__。
+        setLayoutPointIn(next, id, { x: 60 + next.nodes.length * 32, y: 60 });
+        commit(next);
+        select("node", id);
+      });
+    });
+  }
+
+  /**
+   * 连一条边。
+   *
+   * 顺序必须是「先 clone → 再 connect → 再 commit」：
+   * connectNodes 是原地修改的，先改再提交的话撤销栈里存的就是连边之后的状态。
+   * 合法性判定（自环、重复边、端点不存在）全部来自 connectNodes 的 reason。
+   */
+  function connectNodesSafely(fromId, toId) {
+    if (!state.canWrite) {
+      return false;
+    }
+    const next = core.cloneModel(state.model);
+    const result = core.connectNodes(next, fromId, toId);
+    if (result.ok) {
+      commit(next);
+      return true;
+    }
+    showNotice(reasonText(result.reason));
+    return false;
+  }
+
+  /* ------------------------------------------------------------------
+     属性检查器
+
+     检查器与画布**分开渲染**：render() 只画画布，检查器由 renderInspector()
+     负责。字段值改动不重建检查器（否则用户正在编辑的输入框会被销毁，
+     焦点丢失、点击落空）；只有「结构变了」才重建。
+     ------------------------------------------------------------------ */
+
+  /** 按 id 找节点。 */
+  function findNode(nodeId) {
+    if (!state.model) {
+      return null;
+    }
+    return state.model.nodes.find((node) => node.id === nodeId) || null;
+  }
+
+  /** 按检查器里的键找边。边的键是 "edge-<序号>"。 */
+  function findEdge(key) {
+    if (!state.model) {
+      return null;
+    }
+    const match = /^edge-(\d+)$/.exec(String(key === undefined ? "" : key));
+    if (!match) {
+      return null;
+    }
+    const index = Number(match[1]);
+    return state.model.edges[index] || null;
+  }
+
+  /**
+   * 检查器结构的签名：选中对象 + 节点集合 + （用到变量时的）可用变量集合。
+   * 这些变了表单结构才变；单纯的字段值变化不改变签名。
+   */
+  function inspectorSignature() {
+    if (!state.model) {
+      return "none||";
+    }
+    const selection = state.selection
+      ? `${state.selection.kind}:${state.selection.id}`
+      : "none";
+    const nodes = state.model.nodes
+      .map((node) => `${node.id}:${node.type}`)
+      .join(",");
+    // 变量按钮列表只出现在边检查器与画布检查器里，
+    // 所以只有这两种选中态才把变量集合算进签名。
+    // 节点检查器里改 outputKey 不重建，用户的输入焦点才留得住。
+    const needsVars = !state.selection || state.selection.kind === "edge";
+    const vars = needsVars ? availableVariables().join(",") : "";
+    return `${selection}|${nodes}|${vars}`;
+  }
+
+  /** 检查器只在「结构变了」时重建，字段值改动不重建（避免焦点丢失）。 */
+  function renderInspector(force) {
+    const host = document.getElementById("workflow-editor-inspector");
+    if (!host) {
+      return;
+    }
+    const signature = inspectorSignature();
+    if (!force && signature === state.inspectorSignature) {
+      return;
+    }
+    state.inspectorSignature = signature;
+    state.inspectorBuilds += 1;
+    host.innerHTML = "";
+    if (!state.selection) {
+      renderWorkflowInspector(host);
+      return;
+    }
+    if (state.selection.kind === "node") {
+      const node = findNode(state.selection.id);
+      if (node) {
+        renderNodeInspector(host, node);
+        return;
+      }
+      renderWorkflowInspector(host);
+      return;
+    }
+    const edge = findEdge(state.selection.id);
+    if (edge) {
+      renderEdgeInspector(host, edge);
+      return;
+    }
+    renderWorkflowInspector(host);
+  }
+
+  /** 一个带标题的表单项。控件上带 data-field，方便定位。 */
+  function field(name, labelText, control) {
+    control.setAttribute("data-field", name);
+    const label = document.createElement("label");
+    label.textContent = labelText;
+    label.appendChild(control);
+    return label;
+  }
+
+  /** 单行文本框。 */
+  function textInput(value, onChange) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = value === undefined || value === null ? "" : String(value);
+    input.disabled = !state.canWrite;
+    input.addEventListener("change", () => onChange(input.value));
+    return input;
+  }
+
+  /** 数字输入框。 */
+  function numberInput(value, onChange) {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.value = String(value === undefined || value === null ? 0 : value);
+    input.disabled = !state.canWrite;
+    input.addEventListener("change", () => {
+      const parsed = Number(input.value);
+      onChange(Number.isFinite(parsed) ? parsed : 0);
+    });
+    return input;
+  }
+
+  /** 下拉框。options 是 [{ value, label }]。 */
+  function selectInput(value, options, onChange) {
+    const select = document.createElement("select");
+    options.forEach((option) => {
+      const item = document.createElement("option");
+      item.value = String(option.value);
+      item.textContent =
+        option.label === undefined ? String(option.value) : option.label;
+      item.selected = String(option.value) === String(value);
+      select.appendChild(item);
+    });
+    select.value = String(value === undefined || value === null ? "" : value);
+    select.disabled = !state.canWrite;
+    select.addEventListener("change", () => onChange(select.value));
+    return select;
+  }
+
+  /** 文本域（审批说明、when、输入模板用）。 */
+  function textArea(value, rows, onChange) {
+    const input = document.createElement("textarea");
+    input.rows = rows;
+    input.value = value === undefined || value === null ? "" : String(value);
+    input.disabled = !state.canWrite;
+    input.addEventListener("change", () => onChange(input.value));
+    return input;
+  }
+
+  /** 一个普通按钮。 */
+  function actionButton(text, className, onClick) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = className;
+    button.textContent = text;
+    button.disabled = !state.canWrite;
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  /**
+   * 可用的 when 变量。
+   *
+   * 只认两种写法：user_input 与 upstream.<outputKey>。
+   * 标识符必须是 [A-Za-z_][A-Za-z0-9_]*（见 app/core/expr.py 的词法），
+   * 所以不合法的 outputKey 不提供按钮 —— 插进去必定是语法错误。
+   * 节点没填 outputKey 时退回节点 id（与 WorkflowNode.key 的取法一致）。
+   */
+  function availableVariables() {
+    const names = [];
+    if (!state.model) {
+      return ["user_input"];
+    }
+    state.model.nodes.forEach((node) => {
+      const key = node.outputKey || node.id;
+      if (
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) &&
+        !names.includes(key)
+      ) {
+        names.push(key);
+      }
+    });
+    return ["user_input"].concat(names);
+  }
+
+  /** 变量按钮插入的 token：user_input 或 upstream.<outputKey>。 */
+  function variableToken(name) {
+    return name === "user_input" ? "user_input" : `upstream.${name}`;
+  }
+
+  /**
+   * 把 token 插进文本域的光标处。
+   *
+   * token 是标识符路径，和相邻标识符直接相连会被粘成另一个标识符，
+   * 所以必要时补一个空格。
+   */
+  function insertAtCursor(textarea, token) {
+    const value = textarea.value || "";
+    const start = Number.isInteger(textarea.selectionStart)
+      ? textarea.selectionStart
+      : value.length;
+    const end = Number.isInteger(textarea.selectionEnd)
+      ? textarea.selectionEnd
+      : start;
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const left = before && /[A-Za-z0-9_]$/.test(before) ? " " : "";
+    const right = after && /^[A-Za-z0-9_]/.test(after) ? " " : "";
+    textarea.value = `${before}${left}${token}${right}${after}`;
+    const caret = before.length + left.length + token.length + right.length;
+    textarea.selectionStart = caret;
+    textarea.selectionEnd = caret;
+  }
+
+  /** 改节点的一个字段（不含 id）。 */
+  function updateNodeField(nodeId, name, value) {
+    if (!state.canWrite) {
+      return;
+    }
+    const next = core.cloneModel(state.model);
+    const node = next.nodes.find((item) => item.id === nodeId);
+    if (!node) {
+      return;
+    }
+    node[name] = value;
+    commit(next);
+  }
+
+  /** 改一条边的 when。 */
+  function updateEdgeWhen(from, to, value) {
+    if (!state.canWrite) {
+      return;
+    }
+    const next = core.cloneModel(state.model);
+    const edge = next.edges.find(
+      (item) => item.from === from && item.to === to,
+    );
+    if (!edge) {
+      return;
+    }
+    edge.when = value;
+    commit(next);
+  }
+
+  /** 把布局坐标的键从旧 id 迁到新 id。 */
+  function moveLayoutPoint(model, oldId, newId) {
+    const nodes = model && model.layout ? model.layout.nodes : null;
+    if (!nodes || !Object.prototype.hasOwnProperty.call(nodes, oldId)) {
+      return;
+    }
+    const point = nodes[oldId];
+    const safe = point && typeof point === "object" ? point : { x: 0, y: 0 };
+    Object.defineProperty(nodes, newId, {
+      value: { x: safe.x, y: safe.y },
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    delete nodes[oldId];
+  }
+
+  /**
+   * 改节点 id —— 完整改名。
+   *
+   * 节点 id 是引用键：edges[].from/to、definition.entry、layout.nodes 的键
+   * 全都指着它，只改 node.id 会立刻造出一堆坏引用。
+   */
+  function renameNode(oldId, rawValue) {
+    if (!state.canWrite) {
+      return false;
+    }
+    const newId = String(rawValue === undefined ? "" : rawValue).trim();
+    if (!newId) {
+      showNotice("节点 id 不能为空");
+      return false;
+    }
+    if (newId === oldId) {
+      return true;
+    }
+    const next = core.cloneModel(state.model);
+    if (next.nodes.some((node) => node.id === newId)) {
+      showNotice(`节点 id ${newId} 已经存在`);
+      return false;
+    }
+    const node = next.nodes.find((item) => item.id === oldId);
+    if (!node) {
+      return false;
+    }
+    node.id = newId;
+    next.edges.forEach((edge) => {
+      if (edge.from === oldId) {
+        edge.from = newId;
+      }
+      if (edge.to === oldId) {
+        edge.to = newId;
+      }
+    });
+    if (next.entry === oldId) {
+      next.entry = newId;
+    }
+    moveLayoutPoint(next, oldId, newId);
+    // 选中态跟着改，否则检查器会以为选中的节点不见了。
+    if (
+      state.selection &&
+      state.selection.kind === "node" &&
+      state.selection.id === oldId
+    ) {
+      state.selection.id = newId;
+    }
+    commit(next);
+    return true;
+  }
+
+  /** 节点检查器。 */
+  function renderNodeInspector(host, node) {
+    const nodeId = node.id;
+    host.appendChild(
+      field(
+        "type",
+        "节点类型",
+        selectInput(
+          node.type,
+          [
+            { value: "agent", label: "Agent" },
+            { value: "approval", label: "审批" },
+          ],
+          (value) => {
+            if (!state.canWrite) {
+              return;
+            }
+            // setNodeType 内部 clone 并清掉另一类型的专属字段。
+            commit(core.setNodeType(state.model, nodeId, value));
+          },
+        ),
+      ),
+    );
+    const idInput = textInput(nodeId, (value) => {
+      if (!renameNode(nodeId, value)) {
+        // 改名被拒：把输入框里的非法值改回去。
+        idInput.value = nodeId;
+      }
+    });
+    host.appendChild(field("id", "节点 ID", idInput));
+    host.appendChild(
+      field(
+        "label",
+        "标题",
+        textInput(node.label, (value) =>
+          updateNodeField(nodeId, "label", value),
+        ),
+      ),
+    );
+    if (node.type === "approval") {
+      host.appendChild(
+        field(
+          "prompt",
+          "审批说明",
+          textArea(node.prompt, 4, (value) =>
+            updateNodeField(nodeId, "prompt", value),
+          ),
+        ),
+      );
+      host.appendChild(
+        field(
+          "requiredApprovals",
+          "会签人数",
+          numberInput(node.requiredApprovals, (value) =>
+            updateNodeField(nodeId, "requiredApprovals", value),
+          ),
+        ),
+      );
+      host.appendChild(
+        field(
+          "approvalTimeoutSec",
+          "超时秒数（0 表示不超时）",
+          numberInput(node.approvalTimeoutSec, (value) =>
+            updateNodeField(nodeId, "approvalTimeoutSec", value),
+          ),
+        ),
+      );
+      host.appendChild(
+        field(
+          "approvalTimeoutAction",
+          "超时动作",
+          selectInput(
+            node.approvalTimeoutAction,
+            [
+              { value: "reject", label: "驳回" },
+              { value: "approve", label: "通过" },
+            ],
+            (value) =>
+              updateNodeField(nodeId, "approvalTimeoutAction", value),
+          ),
+        ),
+      );
+    } else {
+      const agentOptions = [{ value: "", label: "（未选择）" }].concat(
+        state.agents.map((agent) => ({
+          value: agent.code,
+          label: `${agent.name}（${agent.code}）`,
+        })),
+      );
+      host.appendChild(
+        field(
+          "agentCode",
+          "Agent",
+          selectInput(node.agentCode, agentOptions, (value) =>
+            updateNodeField(nodeId, "agentCode", value),
+          ),
+        ),
+      );
+      host.appendChild(
+        field(
+          "outputKey",
+          "输出键",
+          textInput(node.outputKey, (value) =>
+            updateNodeField(nodeId, "outputKey", value),
+          ),
+        ),
+      );
+    }
+    host.appendChild(
+      actionButton("删除节点", "btn btn-danger btn-small", () => {
+        if (!state.canWrite) {
+          return;
+        }
+        commit(core.removeNode(state.model, nodeId));
+        select(null, null);
+      }),
+    );
+  }
+
+  /** 边检查器。 */
+  function renderEdgeInspector(host, edge) {
+    const from = edge.from;
+    const to = edge.to;
+    const whenInput = textArea(edge.when, 3, (value) =>
+      updateEdgeWhen(from, to, value),
+    );
+    host.appendChild(field("when", "条件（when）", whenInput));
+    const variables = document.createElement("div");
+    variables.className = "workflow-inspector-variables";
+    availableVariables().forEach((name) => {
+      const token = variableToken(name);
+      const button = actionButton(
+        token,
+        "btn btn-secondary btn-small workflow-variable-button",
+        () => insertAtCursor(whenInput, token),
+      );
+      button.setAttribute("data-variable", token);
+      // 按下按钮时不让文本域失焦：光标位置要留住。
+      button.addEventListener("mousedown", (event) => {
+        if (event && event.preventDefault) {
+          event.preventDefault();
+        }
+      });
+      variables.appendChild(button);
+    });
+    host.appendChild(variables);
+    host.appendChild(
+      actionButton("删除边", "btn btn-danger btn-small", () => {
+        if (!state.canWrite) {
+          return;
+        }
+        const next = core.cloneModel(state.model);
+        next.edges = next.edges.filter(
+          (item) => !(item.from === from && item.to === to),
+        );
+        commit(next);
+        select(null, null);
+      }),
+    );
+  }
+
+  /** 画布检查器：未选中任何对象时。 */
+  function renderWorkflowInspector(host) {
+    const entryOptions = [{ value: "", label: "（未设置）" }].concat(
+      state.model.nodes.map((node) => ({
+        value: node.id,
+        label: node.label ? `${node.label}（${node.id}）` : node.id,
+      })),
+    );
+    host.appendChild(
+      field(
+        "entry",
+        "入口节点",
+        selectInput(state.model.entry, entryOptions, (value) => {
+          if (!state.canWrite) {
+            return;
+          }
+          const next = core.cloneModel(state.model);
+          next.entry = value;
+          commit(next);
+        }),
+      ),
+    );
+    host.appendChild(
+      field(
+        "inputTemplate",
+        "输入模板",
+        textArea(state.model.inputTemplate, 6, (value) => {
+          if (!state.canWrite) {
+            return;
+          }
+          const next = core.cloneModel(state.model);
+          next.inputTemplate = value;
+          commit(next);
+        }),
+      ),
+    );
+    const hint = document.createElement("div");
+    hint.className = "workflow-inspector-hint";
+    hint.textContent =
+      "可用变量：" +
+      availableVariables().join("、") +
+      "（模板里写 {{变量名}}，不带 upstream. 前缀）";
+    host.appendChild(hint);
+  }
+
+  /* ------------------------------------------------------------------
+     键盘删除
+     ------------------------------------------------------------------ */
+
+  /** Delete / Backspace 删除选中的节点或边。 */
+  function bindKeyboard() {
+    document.addEventListener("keydown", (event) => {
+      if (!state.canWrite || !state.selection) {
+        return;
+      }
+      const target = event.target || {};
+      const tag = String(target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") {
+        return;
+      }
+      if (event.key !== "Delete" && event.key !== "Backspace") {
+        return;
+      }
+      event.preventDefault();
+      deleteSelection();
+    });
+  }
+
+  /** 删除当前选中的对象。 */
+  function deleteSelection() {
+    if (!state.selection) {
+      return;
+    }
+    if (state.selection.kind === "node") {
+      const node = findNode(state.selection.id);
+      if (!node) {
+        select(null, null);
+        return;
+      }
+      commit(core.removeNode(state.model, node.id));
+      select(null, null);
+      return;
+    }
+    const edge = findEdge(state.selection.id);
+    if (!edge) {
+      select(null, null);
+      return;
+    }
+    const next = core.cloneModel(state.model);
+    next.edges = next.edges.filter(
+      (item) => !(item.from === edge.from && item.to === edge.to),
+    );
+    commit(next);
+    select(null, null);
   }
 
   /** 初始化。 */
@@ -561,10 +1359,13 @@
       scale: Number(viewport.scale || 1),
     };
     render();
+    renderInspector(true);
     const canvas = document.getElementById("workflow-editor-canvas");
     if (canvas) {
       bindCanvasInteractions(canvas);
     }
+    bindPalette();
+    bindKeyboard();
   }
 
   const api = {
@@ -574,6 +1375,10 @@
     commit,
     getLayoutPoint,
     setLayoutPoint,
+    getLayoutPointIn,
+    setLayoutPointIn,
+    renderInspector,
+    showNotice,
   };
 
   if (typeof window !== "undefined") {

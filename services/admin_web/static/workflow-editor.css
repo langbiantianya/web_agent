@@ -190,6 +190,23 @@
   box-sizing: border-box;
 }
 
+/* when 的变量插入按钮 */
+.workflow-inspector-variables {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workflow-inspector-hint {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workflow-editor-inspector > button {
+  align-self: flex-start;
+}
+
 .workflow-editor-errorbar {
   border: 1px solid var(--color-danger);
   border-radius: var(--radius-surface);
