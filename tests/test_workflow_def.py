@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.workflow_def import WorkflowDefinition, render_template
+from app.core.workflow_def import (
+    WorkflowDefinition,
+    WorkflowEdge,
+    WorkflowNode,
+    render_template,
+)
 
 LINEAR = {
     "entry": "planner",
@@ -356,3 +361,29 @@ def test_user_input_allowed_as_bare_name_in_when():
         ],
     }
     assert len(WorkflowDefinition.model_validate(ok).edges) == 2
+
+
+def test_workflow_node_accepts_optional_label():
+    """节点可带展示用 label，且缺省时为空串。"""
+    node = WorkflowNode(id="step1", type="agent", agentCode="planner")
+    assert node.label == ""
+    assert WorkflowNode(id="s", type="agent", agentCode="p", label="意图识别").label == (
+        "意图识别"
+    )
+
+
+def test_workflow_definition_keeps_top_level_layout_key():
+    """definition 顶层 layout 坐标键必须原样保留，不被校验丢掉。"""
+    payload = {
+        "entry": "step1",
+        "nodes": [{"id": "step1", "type": "agent", "agentCode": "planner"}],
+        "edges": [],
+        "layout": {
+            "nodes": {"step1": {"x": 80, "y": 120}},
+            "viewport": {"x": 0, "y": 0, "scale": 1},
+        },
+    }
+    definition = WorkflowDefinition.model_validate(payload)
+    dumped = definition.model_dump(by_alias=True, exclude_none=True)
+    assert dumped["layout"]["nodes"]["step1"] == {"x": 80, "y": 120}
+    assert dumped["layout"]["viewport"]["scale"] == 1

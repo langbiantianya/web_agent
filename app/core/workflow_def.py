@@ -55,6 +55,9 @@ class WorkflowNode(BaseModel):
 
     id: str = Field(min_length=1, max_length=64)
     type: str = Field(default=NodeType.AGENT.value, max_length=16)
+    # 展示用名称。运行期不读它（产出键仍取 outputKey 或 id），
+    # 但画布上必须靠它区分两个同名的审批节点。
+    label: str = Field(default="", max_length=128)
     agentCode: str = Field(default="", max_length=64)
     outputKey: str = Field(default="", max_length=64)
     # 审批节点上给审批人看的话；只有 type=approval 时才有意义
