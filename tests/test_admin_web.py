@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import string
 import uuid
@@ -1470,3 +1471,180 @@ def test_admin_workflow_validate_unknown_error_type_falls_back_to_chinese():
         _pydantic_message("some_unknown_type", "Input should be ...", None)
         == "定义不合法"
     )
+
+
+async def test_admin_workflow_editor_page_renders_canvas():
+    """编排页返回画布容器，且不下发任何 client secret 之类的敏感值。"""
+    from app.models.workflow import Workflow
+
+    client, _, _, _ = await _create_seeded_logged_in_super_admin()
+    tag = uuid.uuid4().hex[:8]
+    code = f"wf-{tag}"
+    async with AdminSessionLocal() as db:
+        db.add(
+            Workflow(
+                code=code,
+                name="Canvas Flow",
+                description="",
+                definition={
+                    "entry": "step1",
+                    "nodes": [
+                        {
+                            "id": "step1",
+                            "type": "agent",
+                            "label": "意图识别",
+                            "agentCode": "planner",
+                        }
+                    ],
+                    "edges": [],
+                },
+                enabled=1,
+            )
+        )
+        await db.commit()
+    try:
+        response = await client.get(f"/admin/workflows/{code}")
+        assert response.status_code == 200, response.text
+        assert "workflow-editor-canvas" in response.text
+        assert "workflow-editor-state" in response.text
+        assert "意图识别" in response.text
+        # 画布页不应出现 client secret / 密码一类的字样
+        assert "client_secret" not in response.text
+    finally:
+        await client.aclose()
+
+
+async def test_admin_workflow_update_persists_layout_and_label():
+    """保存后 layout 坐标与节点 label 必须原样落库。"""
+    from app.models.workflow import Workflow
+
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    tag = uuid.uuid4().hex[:8]
+    code = f"wf-{tag}"
+    async with AdminSessionLocal() as db:
+        db.add(
+            Workflow(
+                code=code,
+                name="Layout Flow",
+                description="",
+                definition={
+                    "entry": "step1",
+                    "nodes": [
+                        {
+                            "id": "step1",
+                            "type": "agent",
+                            "label": "意图识别",
+                            "agentCode": "planner",
+                        }
+                    ],
+                    "edges": [],
+                },
+                enabled=1,
+            )
+        )
+        await db.commit()
+    definition = {
+        "entry": "step1",
+        "inputTemplate": "问：{{user_input}}",
+        "nodes": [
+            {
+                "id": "step1",
+                "type": "agent",
+                "label": "意图识别",
+                "agentCode": "planner",
+            }
+        ],
+        "edges": [],
+        "layout": {
+            "nodes": {"step1": {"x": 320, "y": 640}},
+            "viewport": {"x": 12, "y": 34, "scale": 1.5},
+        },
+    }
+    try:
+        updated = await client.post(
+            f"/admin/workflows/{code}/update",
+            data={
+                "csrf_token": csrf,
+                "name": "Layout Flow",
+                "description": "",
+                "enabled": "1",
+                "definition": json.dumps(definition, ensure_ascii=False),
+                "next": f"/admin/workflows/{code}",
+            },
+        )
+        assert updated.status_code == 303, updated.text
+        assert updated.headers["location"] == f"/admin/workflows/{code}"
+        async with AdminSessionLocal() as db:
+            row = await db.scalar(
+                sa.select(Workflow).where(Workflow.code == code)
+            )
+            assert row is not None
+            assert row.definition["layout"]["nodes"]["step1"] == {
+                "x": 320,
+                "y": 640,
+            }
+            assert row.definition["layout"]["viewport"]["scale"] == 1.5
+            assert row.definition["nodes"][0]["label"] == "意图识别"
+    finally:
+        await client.aclose()
+
+
+async def test_admin_workflow_editor_page_missing_workflow_returns_404():
+    """不存在的编排返回 404，不泄露存在性差异。"""
+    client, _, _, _ = await _create_seeded_logged_in_super_admin()
+    try:
+        response = await client.get("/admin/workflows/does-not-exist")
+        assert response.status_code == 404
+    finally:
+        await client.aclose()
+
+
+async def test_admin_workflow_create_accepts_agent_code_and_redirects_to_editor():
+    """创建表单不再收 JSON，改收初始 Agent code。"""
+    from app.models.agent import Agent
+
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    tag = uuid.uuid4().hex[:8]
+    agent_code = f"ag-{tag}"
+    code = f"wf-{tag}"
+    async with AdminSessionLocal() as db:
+        db.add(
+            Agent(
+                tenant_id="default",
+                code=agent_code,
+                name="Planner",
+                model="test-model",
+                base_url="https://llm.example.com/v1",
+                api_key_cipher="",
+                system_prompt="p",
+                tools=[],
+                skills=[],
+                enabled=1,
+            )
+        )
+        await db.commit()
+    try:
+        created = await client.post(
+            "/admin/workflows",
+            data={
+                "csrf_token": csrf,
+                "code": code,
+                "name": "New Flow",
+                "description": "",
+                "agent_code": agent_code,
+                "enabled": "1",
+            },
+        )
+        assert created.status_code == 303, created.text
+        assert created.headers["location"] == f"/admin/workflows/{code}"
+        async with AdminSessionLocal() as db:
+            from app.models.workflow import Workflow
+
+            row = await db.scalar(
+                sa.select(Workflow).where(Workflow.code == code)
+            )
+            assert row is not None
+            assert row.definition["nodes"][0]["agentCode"] == agent_code
+            assert row.definition["nodes"][0]["id"] == "step1"
+    finally:
+        await client.aclose()

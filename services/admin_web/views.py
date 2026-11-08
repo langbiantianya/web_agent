@@ -15,6 +15,7 @@ from ludic.html import (
     form,
     h1,
     h2,
+    h3,
     head,
     header,
     html,
@@ -27,6 +28,7 @@ from ludic.html import (
     nav,
     option,
     p,
+    pre,
     section,
     select,
     script,
@@ -149,6 +151,8 @@ def shell(
     content: Any,
     flash: str | None = None,
     flash_kind: str = "info",
+    extra_scripts: list[str] | None = None,
+    extra_styles: list[str] | None = None,
 ) -> Any:
     """渲染三主题共用的管理端 HTML 外壳。"""
     role_label = (
@@ -174,7 +178,9 @@ def shell(
             ),
             title(f"{title_text} · web_agent Admin"),
             link(rel="stylesheet", href=ADMIN_STYLESHEET),
+            *(link(rel="stylesheet", href=href) for href in (extra_styles or [])),
             script(src=ADMIN_UI_SCRIPT),
+            *(script(src=src) for src in (extra_scripts or [])),
         ),
         body(
             header(
@@ -586,6 +592,7 @@ def workflows_page(
     csrf: str,
     pages: Iterable[AdminPageDefinition],
     rows: list[Any],
+    agents: list[Any],
     theme: str,
     color_mode: str,
     density: str,
@@ -602,34 +609,13 @@ def workflows_page(
             can_write=can_write,
         )
         editor = (
-            details(
-                summary("Edit definition"),
-                form(
-                    _csrf(csrf),
-                    label(span("Name"), input_(name="name", value=row.name, required=True)),
-                    label(
-                        span("Description"),
-                        input_(name="description", value=row.description or ""),
-                    ),
-                    label(
-                        span("Definition JSON"),
-                        textarea(
-                            __import__("json").dumps(
-                                row.definition, ensure_ascii=False, indent=2
-                            ),
-                            name="definition",
-                            rows=14,
-                            required=True,
-                        ),
-                    ),
-                    button("Save changes", type="submit", class_="btn btn-primary"),
-                    action=f"/admin/workflows/{row.code}/update",
-                    method="post",
-                    class_="stack",
-                ),
+            a(
+                "Open editor",
+                href=f"/admin/workflows/{row.code}",
+                class_="btn btn-secondary btn-small",
             )
             if can_write
-            else span("")
+            else span("Read only", class_="status-badge")
         )
         table_rows.append(
             tr(
@@ -646,12 +632,13 @@ def workflows_page(
             label(span("Name"), input_(name="name", required=True)),
             label(span("Description"), input_(name="description")),
             label(
-                span("Definition JSON"),
-                textarea(
-                    '{"nodes":[{"id":"node","agentCode":"agent"}],"edges":[],'
-                    '"inputTemplate":"{{user_input}}"}',
-                    name="definition",
-                    rows=10,
+                span("Initial agent"),
+                select(
+                    *(
+                        option(f"{a.name} ({a.code})", value=a.code)
+                        for a in agents
+                    ),
+                    name="agent_code",
                     required=True,
                 ),
             ),
@@ -680,6 +667,218 @@ def workflows_page(
         headers=["Workflow", "State", "Version", "Actions"],
         rows=table_rows,
         flash=flash,
+    )
+
+
+def workflow_editor_page(
+    *,
+    principal: AdminPrincipal,
+    csrf: str,
+    pages: Iterable[AdminPageDefinition],
+    workflow: Any,
+    agents: list[Any],
+    theme: str,
+    color_mode: str,
+    density: str,
+    can_write: bool,
+    flash: str | None = None,
+) -> Any:
+    """渲染 Workflow 画布编排页。"""
+    import json as _json
+
+    state = {
+        "code": workflow.code,
+        "name": workflow.name,
+        "description": workflow.description or "",
+        "version": int(workflow.version or 1),
+        "enabled": bool(workflow.enabled),
+        "canWrite": bool(can_write),
+        "definition": workflow.definition or {},
+        "agents": [
+            {"code": a.code, "name": a.name, "enabled": bool(a.enabled)}
+            for a in agents
+        ],
+    }
+    state_text = _json.dumps(state, ensure_ascii=False)
+    palette = div(
+        h2("Node palette"),
+        div(
+            button(
+                "Agent node",
+                type="button",
+                class_="btn btn-secondary workflow-palette-item",
+                attrs={"data-node-type": "agent"},
+            ),
+            button(
+                "Approval node",
+                type="button",
+                class_="btn btn-secondary workflow-palette-item",
+                attrs={"data-node-type": "approval"},
+            ),
+            class_="workflow-palette",
+        ),
+        h3("Available agents"),
+        ul(
+            *(
+                li(
+                    span(f"{a.name} "),
+                    small(a.code, class_="block-muted"),
+                    class_="workflow-agent-item",
+                )
+                for a in agents
+            )
+        ),
+        class_="surface workflow-palette-panel",
+    )
+    canvas = div(
+        div(id="workflow-editor-canvas", class_="workflow-editor-canvas"),
+        class_="workflow-editor-canvas-wrap",
+    )
+    inspector = div(
+        h2("Inspector"),
+        div(id="workflow-editor-inspector", class_="workflow-editor-inspector"),
+        class_="surface workflow-editor-inspector-panel",
+    )
+    toolbar = div(
+        a("Back to list", href="/admin/workflows", class_="btn btn-secondary"),
+        h1(workflow.name),
+        small(workflow.code, class_="block-muted"),
+        span(
+            "Enabled" if workflow.enabled else "Disabled",
+            class_="status-badge",
+        ),
+        div(
+            button(
+                "Undo",
+                type="button",
+                class_="btn btn-secondary btn-small",
+                id="workflow-editor-undo",
+                disabled=not can_write,
+            ),
+            button(
+                "Redo",
+                type="button",
+                class_="btn btn-secondary btn-small",
+                id="workflow-editor-redo",
+                disabled=not can_write,
+            ),
+            button(
+                "Auto layout",
+                type="button",
+                class_="btn btn-secondary btn-small",
+                id="workflow-editor-layout",
+                disabled=not can_write,
+            ),
+            button(
+                "JSON",
+                type="button",
+                class_="btn btn-secondary btn-small",
+                id="workflow-editor-json-toggle",
+            ),
+            class_="workflow-editor-toolbar-actions",
+        ),
+        class_="workflow-editor-toolbar",
+    )
+    save_form = (
+        form(
+            _csrf(csrf),
+            label(
+                span("Name"),
+                input_(name="name", value=workflow.name, required=True),
+            ),
+            label(
+                span("Description"),
+                input_(name="description", value=workflow.description or ""),
+            ),
+            label(
+                span("Enabled"),
+                select(
+                    option("Yes", value="1", selected=bool(workflow.enabled)),
+                    option("No", value="0", selected=not bool(workflow.enabled)),
+                    name="enabled",
+                ),
+            ),
+            input_(
+                type="hidden",
+                name="definition",
+                id="workflow-editor-definition",
+                value=_json.dumps(
+                    workflow.definition or {}, ensure_ascii=False
+                ),
+            ),
+            input_(
+                type="hidden",
+                name="next",
+                value=f"/admin/workflows/{workflow.code}",
+            ),
+            button(
+                "Save workflow",
+                type="submit",
+                class_="btn btn-primary",
+                disabled=not can_write,
+            ),
+            action=f"/admin/workflows/{workflow.code}/update",
+            method="post",
+            class_="workflow-editor-save-form",
+        )
+        if can_write
+        else div(
+            span("Read only", class_="status-badge"),
+            class_="workflow-editor-save-form",
+        )
+    )
+    state_block = textarea(
+        state_text,
+        id="workflow-editor-state",
+        name="workflow_editor_state",
+        rows=1,
+        readonly=True,
+        class_="workflow-editor-state",
+    )
+    json_view = div(
+        pre(
+            _json.dumps(workflow.definition or {}, ensure_ascii=False, indent=2),
+            id="workflow-editor-json",
+            class_="workflow-editor-json",
+        ),
+        class_="surface workflow-editor-json-panel",
+        id="workflow-editor-json-panel",
+        hidden=True,
+    )
+    error_bar = div(
+        ul(id="workflow-editor-errors", class_="workflow-editor-errors"),
+        class_="workflow-editor-errorbar",
+        id="workflow-editor-errorbar",
+        hidden=True,
+    )
+    return shell(
+        title_text=f"{workflow.name} · Workflow editor",
+        principal=principal,
+        csrf=csrf,
+        theme=theme,
+        color_mode=color_mode,
+        density=density,
+        pages=pages,
+        flash=flash,
+        content=div(
+            section(toolbar, class_="surface"),
+            div(
+                palette,
+                canvas,
+                inspector,
+                class_="workflow-editor-layout",
+            ),
+            error_bar,
+            json_view,
+            state_block,
+            save_form,
+            class_="stack",
+        ),
+        extra_styles=["/admin/static/workflow-editor.css"],
+        extra_scripts=[
+            "/admin/static/workflow-editor-core.js",
+            "/admin/static/workflow-editor.js",
+        ],
     )
 
 

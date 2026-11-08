@@ -47,7 +47,11 @@ from app.core.skill_names import (
 from app.core.skill_pack import compute_content_hash
 from app.core.tools import normalize_tool_names
 from app.core.user_profile import normalize_email, normalize_phone
-from app.core.workflow_def import WorkflowDefinition, collect_graph_issues
+from app.core.workflow_def import (
+    WorkflowDefinition,
+    WorkflowNode,
+    collect_graph_issues,
+)
 from app.models.admin_control import (
     AdminComponentDefinition,
     AdminComponentPermission,
@@ -148,6 +152,7 @@ from services.admin_web.views import (
     preferences_page,
     roles_page,
     skills_page,
+    workflow_editor_page,
     workflows_page,
 )
 
@@ -883,6 +888,9 @@ async def workflows_get(request: Request):
             csrf=csrf,
             pages=await visible_pages(db, principal),
             rows=await workflow_repo.list(db, limit=500),
+            agents=await agent_repo.list(
+                db, only_enabled=True, limit=500, tenant_id=_tenant_id(principal)
+            ),
             theme=pref.theme,
             color_mode=pref.color_mode,
             density=pref.density,
@@ -893,6 +901,46 @@ async def workflows_get(request: Request):
                 component_code="workflow_editor",
             ),
             flash=flash,
+        )
+    finally:
+        await db.close()
+
+
+@app.get("/admin/workflows/{code}")
+async def workflow_editor_get(code: str, request: Request):
+    """渲染 Workflow 画布编排页。
+
+    只读页：能不能看由页面权限决定，能不能改由编排组件权限决定。
+    编排不存在与无权访问都返回 404，不向外区分这两种情况。
+    """
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, pref, csrf = values
+    try:
+        if not await can_access_page(db, principal, "workflows"):
+            return _not_found()
+        row = await workflow_repo.get_by_code(db, code)
+        if row is None:
+            return _not_found()
+        agents = await agent_repo.list(
+            db, only_enabled=True, limit=500, tenant_id=_tenant_id(principal)
+        )
+        return workflow_editor_page(
+            principal=principal,
+            csrf=csrf,
+            pages=await visible_pages(db, principal),
+            workflow=row,
+            agents=agents,
+            theme=pref.theme,
+            color_mode=pref.color_mode,
+            density=pref.density,
+            can_write=await _can_edit_resource(
+                db,
+                principal,
+                page_code="workflows",
+                component_code="workflow_editor",
+            ),
         )
     finally:
         await db.close()
@@ -1150,7 +1198,12 @@ async def workflows_validate(request: Request):
 
 @app.post("/admin/workflows")
 async def workflows_post(request: Request):
-    """通过共享 Workflow 仓储创建编排。"""
+    """通过共享 Workflow 仓储创建编排。
+
+    新表单只收一个「初始 Agent code」，服务端据此生成单节点骨架 definition，
+    剩下的图交给编排页画。老的 ``definition`` JSON 表单字段仍然接受，
+    避免既有调用方（含既有测试）突然失效。
+    """
     values = await _with_auth(request)
     if values is None:
         return _unauthorized()
@@ -1166,15 +1219,49 @@ async def workflows_post(request: Request):
             form=form,
         ):
             return _not_found()
-        try:
-            payload = WorkflowCreate(
-                code=str(form.get("code") or ""),
-                name=str(form.get("name") or ""),
-                description=str(form.get("description") or ""),
-                definition=_json_object(form.get("definition")),
-                enabled=_as_bool(form.get("enabled"), True),
-            )
-        except (ValidationError, ValueError):
+        agent_code = str(form.get("agent_code") or "").strip()
+        raw_definition = str(form.get("definition") or "").strip()
+        if agent_code:
+            if (
+                await agent_repo.get_by_code(
+                    db, agent_code, tenant_id=_tenant_id(principal)
+                )
+                is None
+            ):
+                # 初始 Agent 必须真实存在，否则建出来的编排一跑就找不到 Agent。
+                return _business_redirect("/admin/workflows", error="invalid")
+            try:
+                payload = WorkflowCreate(
+                    code=str(form.get("code") or ""),
+                    name=str(form.get("name") or ""),
+                    description=str(form.get("description") or ""),
+                    definition=WorkflowDefinition(
+                        entry="step1",
+                        nodes=[
+                            WorkflowNode(
+                                id="step1",
+                                type="agent",
+                                agentCode=agent_code,
+                            )
+                        ],
+                        edges=[],
+                    ),
+                    enabled=_as_bool(form.get("enabled"), True),
+                )
+            except (ValidationError, ValueError):
+                return _business_redirect("/admin/workflows", error="invalid")
+        elif raw_definition:
+            try:
+                payload = WorkflowCreate(
+                    code=str(form.get("code") or ""),
+                    name=str(form.get("name") or ""),
+                    description=str(form.get("description") or ""),
+                    definition=_json_object(raw_definition),
+                    enabled=_as_bool(form.get("enabled"), True),
+                )
+            except (ValidationError, ValueError):
+                return _business_redirect("/admin/workflows", error="invalid")
+        else:
             return _business_redirect("/admin/workflows", error="invalid")
         if await workflow_repo.get_by_code(db, payload.code):
             return _business_redirect("/admin/workflows", error="duplicate")
@@ -1197,14 +1284,18 @@ async def workflows_post(request: Request):
             tenant_id=principal.tenant_id,
         )
         await db.commit()
-        return _business_redirect("/admin/workflows", notice="created")
+        return RedirectResponse(f"/admin/workflows/{row.code}", status_code=303)
     finally:
         await db.close()
 
 
 @app.post("/admin/workflows/{code}/update")
 async def workflows_update(code: str, request: Request):
-    """更新 Workflow 名称、启用状态或图定义。"""
+    """更新 Workflow 名称、启用状态或图定义。
+
+    表单可以带一个可选的 ``next`` 指回保存后的落点（编排页会带上自己），
+    只接受 ``/admin/`` 内部路径，避免开放重定向。
+    """
     values = await _with_auth(request)
     if values is None:
         return _unauthorized()
@@ -1246,7 +1337,8 @@ async def workflows_update(code: str, request: Request):
             tenant_id=principal.tenant_id,
         )
         await db.commit()
-        return _business_redirect("/admin/workflows", notice="updated")
+        next_url = _safe_next(str(form.get("next") or "/admin/workflows"))
+        return RedirectResponse(next_url, status_code=303)
     finally:
         await db.close()
 
