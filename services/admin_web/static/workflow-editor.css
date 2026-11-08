@@ -53,6 +53,21 @@
   cursor: grabbing;
 }
 
+/* 有未保存改动时在画布右下角提示一句（不改 DOM 结构）。 */
+.workflow-editor-canvas.is-dirty::after {
+  content: "有未保存的改动";
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  pointer-events: none;
+}
+
 .workflow-editor-canvas.is-readonly {
   cursor: default;
 }
@@ -224,6 +239,11 @@
 .workflow-editor-json-panel {
   max-height: 320px;
   overflow: auto;
+}
+
+/* hidden 属性优先于上面的 display，避免折叠时仍占位。 */
+.workflow-editor-json-panel[hidden] {
+  display: none;
 }
 
 .workflow-editor-json {

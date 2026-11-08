@@ -1573,7 +1573,8 @@ async def test_admin_workflow_update_persists_layout_and_label():
             },
         )
         assert updated.status_code == 303, updated.text
-        assert updated.headers["location"] == f"/admin/workflows/{code}"
+        # 保存成功要回到编排页并带上可见反馈。
+        assert updated.headers["location"] == f"/admin/workflows/{code}?notice=updated"
         async with AdminSessionLocal() as db:
             row = await db.scalar(
                 sa.select(Workflow).where(Workflow.code == code)
@@ -1636,7 +1637,8 @@ async def test_admin_workflow_create_accepts_agent_code_and_redirects_to_editor(
             },
         )
         assert created.status_code == 303, created.text
-        assert created.headers["location"] == f"/admin/workflows/{code}"
+        # 建完直接进编排页，并带上可见反馈。
+        assert created.headers["location"] == f"/admin/workflows/{code}?notice=created"
         async with AdminSessionLocal() as db:
             from app.models.workflow import Workflow
 
@@ -1646,5 +1648,54 @@ async def test_admin_workflow_create_accepts_agent_code_and_redirects_to_editor(
             assert row is not None
             assert row.definition["nodes"][0]["agentCode"] == agent_code
             assert row.definition["nodes"][0]["id"] == "step1"
+    finally:
+        await client.aclose()
+
+
+async def test_admin_workflow_editor_shows_save_feedback():
+    """保存后编排页要看得见反馈：notice 查询值翻成 flash 文案。
+
+    改造前保存成功后的 303 不带 notice=，编排页也不消费 flash，
+    于是用户点完「保存」看不到任何提示。
+    """
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    tag = uuid.uuid4().hex[:8]
+    code = f"wf-{tag}"
+    try:
+        created = await client.post(
+            "/admin/workflows",
+            data={
+                "csrf_token": csrf,
+                "code": code,
+                "name": "Feedback Flow",
+                "description": "",
+                "definition": json.dumps(
+                    {
+                        "entry": "step1",
+                        "nodes": [
+                            {"id": "step1", "type": "agent", "agentCode": "a"},
+                        ],
+                        "edges": [],
+                    }
+                ),
+                "enabled": "1",
+            },
+        )
+        assert created.status_code == 303, created.text
+
+        # 创建后带 notice=created 打开编排页 → 页面出现创建提示。
+        page = await client.get(f"/admin/workflows/{code}?notice=created")
+        assert page.status_code == 200, page.text
+        assert "Resource created." in page.text
+
+        # 保存后带 notice=updated 打开编排页 → 页面出现保存提示。
+        page = await client.get(f"/admin/workflows/{code}?notice=updated")
+        assert page.status_code == 200, page.text
+        assert "Changes saved." in page.text
+
+        # 任意文本不会被回显：白名单外的值不产生提示。
+        page = await client.get(f"/admin/workflows/{code}?notice=<script>x</script>")
+        assert page.status_code == 200, page.text
+        assert "<script>x</script>" not in page.text
     finally:
         await client.aclose()

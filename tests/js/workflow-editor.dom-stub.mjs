@@ -78,6 +78,19 @@ class FakeElement {
     this.setAttribute("class", String(value));
   }
 
+  /** hidden 与 hidden 属性保持同步（真实浏览器就是这样）。 */
+  get hidden() {
+    return this.hasAttribute("hidden");
+  }
+
+  set hidden(value) {
+    if (value) {
+      this.setAttribute("hidden", "hidden");
+    } else {
+      this.removeAttribute("hidden");
+    }
+  }
+
   /** 光标位置：没显式设置过时取文本长度。 */
   get selectionStart() {
     if (this._selectionStart === null) {
@@ -240,6 +253,34 @@ export function createDom({ state, definition = "" } = {}) {
       });
       return hits;
     },
+    /** 返回第一个匹配（取不到就是 null）。另支持 [name="x"] 与 tag[name="x"] 属性选择器。 */
+    querySelector(selector) {
+      const attr = /^([a-zA-Z]+)?\[([\w-]+)="([^"]*)"\]$/.exec(
+        String(selector || ""),
+      );
+      if (attr) {
+        const wantTag = attr[1] ? attr[1].toLowerCase() : null;
+        const wantName = attr[2];
+        const wantValue = attr[3];
+        let found = null;
+        root.walk((node) => {
+          if (found) {
+            return;
+          }
+          const tagOk =
+            !wantTag ||
+            String(node.tagName || "").toLowerCase() === wantTag;
+          const attrOk =
+            node.getAttribute && node.getAttribute(wantName) === wantValue;
+          if (tagOk && attrOk) {
+            found = node;
+          }
+        });
+        return found;
+      }
+      const hits = this.querySelectorAll(selector);
+      return hits.length ? hits[0] : null;
+    },
     addEventListener(type, handler) {
       if (!documentListeners.has(type)) {
         documentListeners.set(type, []);
@@ -254,6 +295,10 @@ export function createDom({ state, definition = "" } = {}) {
         target: init.target || document,
         code: init.code || "",
         key: init.key || "",
+        ctrlKey: Boolean(init.ctrlKey),
+        metaKey: Boolean(init.metaKey),
+        shiftKey: Boolean(init.shiftKey),
+        altKey: Boolean(init.altKey),
         defaultPrevented: false,
         preventDefault() {
           this.defaultPrevented = true;
@@ -313,6 +358,34 @@ export function createDom({ state, definition = "" } = {}) {
   registry.set("workflow-editor-definition", definitionBox);
   root.appendChild(definitionBox);
 
+  // 保存表单里的 CSRF 隐藏字段（校验端点要用）。
+  const csrfBox = new FakeElement("input");
+  csrfBox.setAttribute("type", "hidden");
+  csrfBox.setAttribute("name", "csrf_token");
+  csrfBox.value = "csrf-demo";
+  root.appendChild(csrfBox);
+
+  // 工具栏按钮。只读时由页面渲染成 disabled，这里交给用例按需设置。
+  const toolbar = {};
+  ["undo", "redo", "layout", "fit", "json-toggle"].forEach((name) => {
+    const button = new FakeElement("button");
+    button.setAttribute("id", `workflow-editor-${name}`);
+    registry.set(`workflow-editor-${name}`, button);
+    root.appendChild(button);
+    toolbar[name] = button;
+  });
+
+  // JSON 预览面板：默认隐藏，里面有一个 pre。
+  const jsonView = new FakeElement("pre");
+  jsonView.setAttribute("id", "workflow-editor-json");
+  const jsonPanel = new FakeElement("div");
+  jsonPanel.setAttribute("id", "workflow-editor-json-panel");
+  jsonPanel.setAttribute("hidden", "hidden");
+  jsonPanel.appendChild(jsonView);
+  root.appendChild(jsonPanel);
+  registry.set("workflow-editor-json-panel", jsonPanel);
+  registry.set("workflow-editor-json", jsonView);
+
   const window = {};
   return {
     document,
@@ -320,9 +393,13 @@ export function createDom({ state, definition = "" } = {}) {
     canvas,
     stateBox,
     definitionBox,
+    csrfBox,
     inspector,
     errorBar,
     errorList,
+    toolbar,
+    jsonPanel,
+    jsonView,
     registry,
     root,
   };

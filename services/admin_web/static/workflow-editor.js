@@ -33,6 +33,12 @@
     inspectorSignature: null,
     // 检查器重建次数，供测试断言「没有重建」。
     inspectorBuilds: 0,
+    // 实时校验的防抖计时器。
+    validationTimer: null,
+    // 实时校验的防抖间隔（毫秒）。测试可调小以避免等待。
+    validationDelayMs: 300,
+    // 实时校验总开关。测试里默认关掉，避免防抖计时器跨用例泄漏。
+    validationEnabled: true,
   };
 
   /**
@@ -200,6 +206,8 @@
     canvas.innerHTML = "";
     canvas.classList.toggle("is-readonly", !state.canWrite);
     canvas.classList.toggle("is-node-dragging", Boolean(drag));
+    // 有未保存改动时给画布挂一个标记，CSS 负责显示提示文字。
+    canvas.classList.toggle("is-dirty", Boolean(state.dirty));
 
     const svg = el("svg", { width: "100%", height: "100%" });
     svg.appendChild(buildArrowDefs());
@@ -244,7 +252,7 @@
 
   /** 画边。 */
   function renderEdges(layer, fallback) {
-    state.model.edges.forEach((edge, index) => {
+    state.model.edges.forEach((edge) => {
       const from = nodePosition(edge.from, fallback);
       const to = nodePosition(edge.to, fallback);
       const x1 = from.x + core.NODE_WIDTH;
@@ -258,9 +266,12 @@
       if (
         state.selection &&
         state.selection.kind === "edge" &&
-        state.selection.id === edgeKey(index)
+        state.selection.id === edgeKey(edge)
       ) {
         group.classList.add("is-selected");
+      }
+      if (hasEdgeIssue(edge)) {
+        group.classList.add("is-error");
       }
       const path = el("path", {
         d: `M ${x1} ${y1} C ${x1 + 60} ${y1}, ${x2 - 60} ${y2}, ${x2} ${y2}`,
@@ -273,15 +284,51 @@
         );
       }
       group.addEventListener("click", () => {
-        select("edge", edgeKey(index));
+        select("edge", edgeKey(edge));
       });
       layer.appendChild(group);
     });
   }
 
-  /** 边的稳定标识：按序号。 */
-  function edgeKey(index) {
-    return `edge-${index}`;
+  /**
+   * 边的稳定标识：由 from / to 组成，与边在数组里的先后顺序无关。
+   *
+   * 节点 id 是用户可控的，可能含 "->" 这类字符，所以把 from 的长度
+   * 也写进键里：(from, to) → 键是单射，两对不同的端点不会撞成同一个键。
+   */
+  function edgeKey(edge) {
+    const from = String(edge && edge.from !== undefined ? edge.from : "");
+    const to = String(edge && edge.to !== undefined ? edge.to : "");
+    return `edge:${from.length}:${from}:${to}`;
+  }
+
+  /** 由 from / to 拼出边的稳定键。 */
+  function edgeKeyOf(from, to) {
+    const source = String(from === undefined ? "" : from);
+    const target = String(to === undefined ? "" : to);
+    return `edge:${source.length}:${source}:${target}`;
+  }
+
+  /**
+   * 按稳定键反查边。
+   *
+   * 不做 split("->")：节点 id 里可能有 "->"，拆开再拼回去不可靠。
+   * 直接拿每条边的键去比对，从两端匹配，不会认错边。
+   */
+  function findEdge(key) {
+    if (!state.model) {
+      return null;
+    }
+    const target = String(key === undefined ? "" : key);
+    return state.model.edges.find((edge) => edgeKey(edge) === target) || null;
+  }
+
+  /** 这条边是否被服务端指出了问题。 */
+  function hasEdgeIssue(edge) {
+    const ref = `${edge.from}->${edge.to}`;
+    return state.issues.some(
+      (issue) => issue && issue.edge && issue.edge === ref,
+    );
   }
 
   /** 画节点。 */
@@ -420,6 +467,10 @@
     state.dirty = true;
     render();
     renderInspector();
+    syncHistoryButtons();
+    // render() 内部已经同步过隐藏的 definition 字段，
+    // 所以这里排队校验时拿到的一定是最新定义。
+    scheduleValidation();
   }
 
   /** 把当前视角写回 model —— 视角要跟着定义一起存。 */
@@ -537,10 +588,21 @@
       if (!drag) {
         return;
       }
-      if (drag.kind === "node" && movedDuringDrag()) {
-        // 拖动过程中不记撤销，拖动结束且坐标真的变了才记一步。
-        state.stack.push(state.model);
-        state.dirty = true;
+      if (drag.kind === "node") {
+        if (movedDuringDrag()) {
+          // 拖动过程中不记撤销，拖动结束且坐标真的变了才记一步。
+          state.stack.push(state.model);
+          state.dirty = true;
+          syncHistoryButtons();
+        } else if (!drag.hadStoredPoint) {
+          // 原本没有自有坐标、拖了一圈又回到原地：拖拽过程中写进去的
+          // 那个坐标要撤掉，让 model 与拖拽前完全一致（否则会凭空多出
+          // 一条 layout 记录，而用户按 Ctrl+Z 又没有可撤销的步骤）。
+          const nodes = layoutNodesIn(state.model);
+          if (nodes) {
+            delete nodes[drag.nodeId];
+          }
+        }
       }
       drag = null;
       canvas.classList.remove("is-panning");
@@ -786,19 +848,6 @@
     return state.model.nodes.find((node) => node.id === nodeId) || null;
   }
 
-  /** 按检查器里的键找边。边的键是 "edge-<序号>"。 */
-  function findEdge(key) {
-    if (!state.model) {
-      return null;
-    }
-    const match = /^edge-(\d+)$/.exec(String(key === undefined ? "" : key));
-    if (!match) {
-      return null;
-    }
-    const index = Number(match[1]);
-    return state.model.edges[index] || null;
-  }
-
   /**
    * 检查器结构的签名：选中对象 + 节点集合 + （用到变量时的）可用变量集合。
    * 这些变了表单结构才变；单纯的字段值变化不改变签名。
@@ -958,8 +1007,14 @@
   /**
    * 把 token 插进文本域的光标处。
    *
-   * token 是标识符路径，和相邻标识符直接相连会被粘成另一个标识符，
-   * 所以必要时补一个空格。
+   * 与相邻标识符直接相连会被粘成另一个标识符，所以至少要补空格。
+   * 但只补空格还不够：左边已经是一个**完整操作数**时，裸 token 接上去
+   * 是非法表达式（`user_input upstream.plan` 会被 expr.py 拒成
+   * 「表达式结尾有多余内容」）。所以这种情况要补一个 ` and `。
+   *
+   * 规则：插入点左侧去掉尾部空白后，最后一个字符若属于操作数结尾
+   * （标识符字符 / 右括号 / 引号），就说明左边表达式已完整 → 用 ` and `；
+   * 否则（左边是运算符、空白或空串）插裸 token。
    */
   function insertAtCursor(textarea, token) {
     const value = textarea.value || "";
@@ -971,10 +1026,13 @@
       : start;
     const before = value.slice(0, start);
     const after = value.slice(end);
-    const left = before && /[A-Za-z0-9_]$/.test(before) ? " " : "";
+    const trimmed = before.replace(/\s+$/, "");
+    const leftIsOperandEnd = /[A-Za-z0-9_)\]"']$/.test(trimmed);
+    const prefix = leftIsOperandEnd ? " and " : before ? " " : "";
     const right = after && /^[A-Za-z0-9_]/.test(after) ? " " : "";
-    textarea.value = `${before}${left}${token}${right}${after}`;
-    const caret = before.length + left.length + token.length + right.length;
+    textarea.value = `${before}${prefix}${token}${right}${after}`;
+    const caret =
+      before.length + prefix.length + token.length + right.length;
     textarea.selectionStart = caret;
     textarea.selectionEnd = caret;
   }
@@ -1073,6 +1131,20 @@
       state.selection.id === oldId
     ) {
       state.selection.id = newId;
+    }
+    // 改名会改掉边的 from/to，边的稳定键也跟着变 —— 选中的边要换新键。
+    if (
+      state.selection &&
+      state.selection.kind === "edge" &&
+      state.selection.id
+    ) {
+      const selected = findEdge(state.selection.id);
+      if (selected && (selected.from === oldId || selected.to === oldId)) {
+        state.selection.id = edgeKeyOf(
+          selected.from === oldId ? newId : selected.from,
+          selected.to === oldId ? newId : selected.to,
+        );
+      }
     }
     commit(next);
     return true;
@@ -1277,11 +1349,323 @@
     );
     const hint = document.createElement("div");
     hint.className = "workflow-inspector-hint";
+    // upstream 是服务端认可的保留变量（WorkflowDefinition._template_vars
+    // 的 known 集里就有它），默认 inputTemplate 也在用它，所以必须列出来。
     hint.textContent =
       "可用变量：" +
-      availableVariables().join("、") +
-      "（模板里写 {{变量名}}，不带 upstream. 前缀）";
+      ["user_input", "upstream"].concat(availableVariables().slice(1)).join("、") +
+      "（模板里写 {{变量名}}，不写 upstream. 前缀）";
     host.appendChild(hint);
+  }
+
+  /* ------------------------------------------------------------------
+     撤销 / 重做
+     ------------------------------------------------------------------ */
+
+  /** 撤销 / 重做：工具栏按钮与快捷键。 */
+  function bindHistory() {
+    const undo = document.getElementById("workflow-editor-undo");
+    const redo = document.getElementById("workflow-editor-redo");
+    if (undo) {
+      undo.addEventListener("click", () => {
+        applyHistory(state.stack.undo());
+      });
+    }
+    if (redo) {
+      redo.addEventListener("click", () => {
+        applyHistory(state.stack.redo());
+      });
+    }
+    document.addEventListener("keydown", (event) => {
+      const target = event.target || {};
+      const tag = String(target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") {
+        // 输入框里按 Ctrl+Z 交给浏览器的输入撤销，画布不抢。
+        return;
+      }
+      if (!(event.ctrlKey || event.metaKey)) {
+        return;
+      }
+      const key = String(event.key || "").toLowerCase();
+      if (key === "z" && !event.shiftKey) {
+        event.preventDefault();
+        applyHistory(state.stack.undo());
+        return;
+      }
+      if ((key === "z" && event.shiftKey) || key === "y") {
+        event.preventDefault();
+        applyHistory(state.stack.redo());
+      }
+    });
+    syncHistoryButtons();
+  }
+
+  /** 撤销/重做按钮的可用状态。 */
+  function syncHistoryButtons() {
+    const undo = document.getElementById("workflow-editor-undo");
+    const redo = document.getElementById("workflow-editor-redo");
+    if (undo) {
+      undo.disabled = !state.stack.canUndo();
+    }
+    if (redo) {
+      redo.disabled = !state.stack.canRedo();
+    }
+  }
+
+  /**
+   * 把栈里取出的快照装回当前状态。
+   *
+   * 撤销之后选中的对象可能已经不存在（或被换成了别的东西），
+   * 所以先按**稳定标识**重新定位：节点按 id、边按 from/to。
+   */
+  function applyHistory(snapshot) {
+    if (!snapshot) {
+      return;
+    }
+    state.model = snapshot;
+    state.dirty = true;
+    state.selection = relocateSelection();
+    render();
+    renderInspector();
+    syncHistoryButtons();
+    scheduleValidation();
+  }
+
+  /** 撤销/重做之后重新定位选中态；定位不到就清空。 */
+  function relocateSelection() {
+    if (!state.selection) {
+      return null;
+    }
+    if (state.selection.kind === "node") {
+      const node = findNode(state.selection.id);
+      return node ? { kind: "node", id: node.id } : null;
+    }
+    const edge = findEdge(state.selection.id);
+    return edge ? { kind: "edge", id: edgeKey(edge) } : null;
+  }
+
+  /* ------------------------------------------------------------------
+     整理布局 / 适应画布
+     ------------------------------------------------------------------ */
+
+  /** 整理布局：按最长路径分层重排坐标。 */
+  function bindAutoLayout() {
+    const button = document.getElementById("workflow-editor-layout");
+    if (!button) {
+      return;
+    }
+    button.addEventListener("click", () => {
+      if (!state.canWrite) {
+        return;
+      }
+      const next = core.cloneModel(state.model);
+      const layout = core.computeLayout(next);
+      // 只重排坐标。computeLayout 返回的 viewport 是 {0,0,1}，
+      // 直接覆盖会把用户保存的视角重置掉，所以保留原视角。
+      next.layout.nodes = layout.nodes;
+      commit(next);
+      select(null, null);
+    });
+  }
+
+  /** 适应画布：只改视口，不改节点坐标，也不记撤销。 */
+  function bindFitCanvas() {
+    const button = document.getElementById("workflow-editor-fit");
+    if (!button) {
+      return;
+    }
+    button.addEventListener("click", () => {
+      fitCanvas();
+    });
+  }
+
+  /** 把所有节点框进画布可视范围。 */
+  function fitCanvas() {
+    const canvas = document.getElementById("workflow-editor-canvas");
+    if (!canvas || !state.model || !state.model.nodes.length) {
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const points = state.model.nodes.map((node) => nodePosition(node.id));
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    points.forEach((point) => {
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x + core.NODE_WIDTH);
+      maxY = Math.max(maxY, point.y + core.NODE_HEIGHT);
+    });
+    const padding = 40;
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, maxY - minY);
+    const viewportWidth = Number(rect.width) > 0 ? Number(rect.width) : 800;
+    const viewportHeight = Number(rect.height) > 0 ? Number(rect.height) : 600;
+    const fitScale = Math.min(
+      (viewportWidth - padding * 2) / width,
+      (viewportHeight - padding * 2) / height,
+    );
+    const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, fitScale));
+    state.viewport.scale = scale;
+    state.viewport.x = padding - minX * scale;
+    state.viewport.y = padding - minY * scale;
+    writeViewport();
+    render();
+  }
+
+  /* ------------------------------------------------------------------
+     实时校验
+     ------------------------------------------------------------------ */
+
+  /** 实时校验：改动后防抖调用服务端校验端点。 */
+  function bindValidation() {
+    if (!state.canWrite) {
+      return;
+    }
+    scheduleValidation();
+  }
+
+  /** 防抖后跑一次校验。 */
+  function scheduleValidation() {
+    if (!state.validationEnabled || !state.canWrite) {
+      return;
+    }
+    if (typeof globalThis.fetch !== "function") {
+      // 没有 fetch 就没有实时反馈，静默跳过，不阻塞编辑。
+      return;
+    }
+    if (state.validationTimer) {
+      clearTimeout(state.validationTimer);
+    }
+    state.validationTimer = setTimeout(() => {
+      state.validationTimer = null;
+      runValidation();
+    }, state.validationDelayMs);
+  }
+
+  /** 关掉校验：清掉待触发的防抖计时器。 */
+  function cancelValidation() {
+    if (state.validationTimer) {
+      clearTimeout(state.validationTimer);
+      state.validationTimer = null;
+    }
+  }
+
+  /** 端点的机器码 → 中文文案。 */
+  function machineText(code) {
+    const table = {
+      invalid_json: "请求格式不正确",
+      definition_required: "没有提交工作流定义",
+      definition_shape_invalid: "工作流定义结构不正确",
+      forbidden: "没有校验权限或登录已过期",
+    };
+    return table[code] || "无法完成校验";
+  }
+
+  /** 调校验端点，把结果显示到错误条。 */
+  async function runValidation() {
+    const bar = document.getElementById("workflow-editor-errorbar");
+    const list = document.getElementById("workflow-editor-errors");
+    const definitionInput = document.getElementById("workflow-editor-definition");
+    if (!bar || !list || !definitionInput) {
+      return;
+    }
+    let definition;
+    try {
+      definition = JSON.parse(definitionInput.value || "{}");
+    } catch (err) {
+      return;
+    }
+    const csrfInput = document.querySelector('input[name="csrf_token"]');
+    try {
+      const response = await globalThis.fetch("/admin/workflows/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          csrf_token: csrfInput ? csrfInput.value : "",
+          definition,
+        }),
+      });
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch (err) {
+        payload = null;
+      }
+      if (!response.ok) {
+        // 400 / 403：body 里是机器码，翻成中文再显示。
+        const first =
+          payload && payload.errors && payload.errors[0]
+            ? payload.errors[0].message
+            : "";
+        state.issues = [];
+        showIssues([machineText(first)]);
+        render();
+        return;
+      }
+      state.issues =
+        payload && payload.ok === false ? payload.errors || [] : [];
+      showIssues(state.issues.map((issue) => issue && issue.message));
+      render();
+    } catch (err) {
+      // 校验失败**不阻塞编辑**：本地编辑仍然可用，只是没有即时反馈。
+      state.issues = [];
+      showIssues([]);
+      render();
+    }
+  }
+
+  /** 把一组文案显示到错误条上；空数组则隐藏错误条。 */
+  function showIssues(messages) {
+    const bar = document.getElementById("workflow-editor-errorbar");
+    const list = document.getElementById("workflow-editor-errors");
+    if (!list) {
+      return;
+    }
+    list.innerHTML = "";
+    const texts = (messages || []).filter(
+      (text) => text !== undefined && text !== null && String(text) !== "",
+    );
+    texts.forEach((text) => {
+      const item = document.createElement("li");
+      item.textContent = String(text);
+      list.appendChild(item);
+    });
+    if (bar) {
+      if (texts.length) {
+        bar.removeAttribute("hidden");
+      } else {
+        bar.setAttribute("hidden", "hidden");
+      }
+    }
+  }
+
+  /* ------------------------------------------------------------------
+     JSON 预览
+     ------------------------------------------------------------------ */
+
+  /** 切换 JSON 预览面板。 */
+  function bindJsonToggle() {
+    const toggle = document.getElementById("workflow-editor-json-toggle");
+    const panel = document.getElementById("workflow-editor-json-panel");
+    const view = document.getElementById("workflow-editor-json");
+    if (!toggle || !panel || !view) {
+      return;
+    }
+    toggle.addEventListener("click", () => {
+      const showing = !panel.hidden;
+      if (!showing) {
+        // 面板里是页面渲染时的初始定义，展开时先刷新成当前内容。
+        view.textContent = JSON.stringify(
+          core.toDefinition(state.model),
+          null,
+          2,
+        );
+      }
+      panel.hidden = showing;
+    });
   }
 
   /* ------------------------------------------------------------------
@@ -1366,6 +1750,11 @@
     }
     bindPalette();
     bindKeyboard();
+    bindHistory();
+    bindAutoLayout();
+    bindFitCanvas();
+    bindJsonToggle();
+    bindValidation();
   }
 
   const api = {
@@ -1379,6 +1768,13 @@
     setLayoutPointIn,
     renderInspector,
     showNotice,
+    applyHistory,
+    fitCanvas,
+    scheduleValidation,
+    runValidation,
+    cancelValidation,
+    syncHistoryButtons,
+    edgeKey,
   };
 
   if (typeof window !== "undefined") {

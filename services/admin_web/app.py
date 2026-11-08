@@ -926,6 +926,9 @@ async def workflow_editor_get(code: str, request: Request):
         agents = await agent_repo.list(
             db, only_enabled=True, limit=500, tenant_id=_tenant_id(principal)
         )
+        # 保存成功后会被重定向回本页并带上 notice=，这里把它翻成页面提示。
+        # _flash_from_query 只认固定白名单里的查询值，绝不回显任意文本。
+        flash, _kind = _flash_from_query(request)
         return workflow_editor_page(
             principal=principal,
             csrf=csrf,
@@ -941,6 +944,7 @@ async def workflow_editor_get(code: str, request: Request):
                 page_code="workflows",
                 component_code="workflow_editor",
             ),
+            flash=flash,
         )
     finally:
         await db.close()
@@ -1284,7 +1288,8 @@ async def workflows_post(request: Request):
             tenant_id=principal.tenant_id,
         )
         await db.commit()
-        return RedirectResponse(f"/admin/workflows/{row.code}", status_code=303)
+        # 建完之后直接进编排页，并带上 notice 让页面给出可见反馈。
+        return _business_redirect(f"/admin/workflows/{row.code}", notice="created")
     finally:
         await db.close()
 
@@ -1338,7 +1343,9 @@ async def workflows_update(code: str, request: Request):
         )
         await db.commit()
         next_url = _safe_next(str(form.get("next") or "/admin/workflows"))
-        return RedirectResponse(next_url, status_code=303)
+        # 编排页与列表页都要能看到「已保存」的反馈。
+        separator = "&" if "?" in next_url else "?"
+        return RedirectResponse(f"{next_url}{separator}notice=updated", status_code=303)
     finally:
         await db.close()
 

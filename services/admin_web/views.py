@@ -770,6 +770,13 @@ def workflow_editor_page(
                 disabled=not can_write,
             ),
             button(
+                "Fit canvas",
+                type="button",
+                class_="btn btn-secondary btn-small",
+                id="workflow-editor-fit",
+                disabled=not can_write,
+            ),
+            button(
                 "JSON",
                 type="button",
                 class_="btn btn-secondary btn-small",
