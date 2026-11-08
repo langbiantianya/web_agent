@@ -19,6 +19,17 @@ depends_on = None
 DATETIME3 = sa.DateTime().with_variant(mysql_dialect.DATETIME(fsp=3), "mysql")
 
 
+def long_text(length: int) -> sa.types.TypeEngine:
+    """长密文列：MySQL 用 ``TEXT``，其它方言保持 ``VARCHAR(length)``。
+
+    与 ``app/models/base.long_text`` 是同一口径（迁移文件按本仓库惯例自带类型
+    助手，不 import 应用代码）。原因：MySQL 的 utf8mb4 按 ``length × 4`` 字节
+    计入行大小，本表两个 ``VARCHAR(8192)`` 就是 64 KB，实测建表即报
+    ``1118 Row size too large``；``TEXT`` 存在行外，不计入。
+    """
+    return sa.String(length).with_variant(mysql_dialect.TEXT(), "mysql")
+
+
 def upgrade() -> None:
     """给 MCP 服务器增加租户和 OAuth 机器身份字段。"""
     with op.batch_alter_table("mcp_server") as batch:
@@ -44,8 +55,8 @@ def upgrade() -> None:
         batch.add_column(sa.Column("oauth_client_secret_cipher", sa.String(length=4096)))
         batch.add_column(sa.Column("oauth_scopes", sa.JSON()))
         batch.add_column(sa.Column("oauth_resource", sa.String(length=512)))
-        batch.add_column(sa.Column("oauth_access_token_cipher", sa.String(length=8192)))
-        batch.add_column(sa.Column("oauth_refresh_token_cipher", sa.String(length=8192)))
+        batch.add_column(sa.Column("oauth_access_token_cipher", long_text(8192)))
+        batch.add_column(sa.Column("oauth_refresh_token_cipher", long_text(8192)))
         batch.add_column(sa.Column("oauth_expires_at", DATETIME3))
         batch.drop_index("idx_mcp_server_enabled")
         batch.create_index(

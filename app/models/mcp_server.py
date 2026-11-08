@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import DATETIME3, JSON_COL, PK, Base
+from app.models.base import DATETIME3, JSON_COL, PK, Base, long_text
 
 # 传输方式。旧版 HTTP+SSE 传输不实现（2025-03-26 废弃）。
 TRANSPORT_STDIO = "stdio"
@@ -66,11 +66,14 @@ class McpServer(Base):
     oauth_resource: Mapped[str | None] = mapped_column(
         sa.String(512), nullable=True
     )
+    # 访问令牌与刷新令牌的密文都很长（JWT 动辄上千字符）。两个 VARCHAR(8192)
+    # 在 MySQL 的 utf8mb4 下各占 32 KB 行内空间，合起来就顶爆 65535 的行上限，
+    # 所以走 long_text：MySQL 落 TEXT（行外存储），其它方言仍是 VARCHAR。
     oauth_access_token_cipher: Mapped[str | None] = mapped_column(
-        sa.String(8192), nullable=True
+        long_text(8192), nullable=True
     )
     oauth_refresh_token_cipher: Mapped[str | None] = mapped_column(
-        sa.String(8192), nullable=True
+        long_text(8192), nullable=True
     )
     oauth_expires_at: Mapped[object] = mapped_column(DATETIME3, nullable=True)
     # 工具白名单：只导入这些工具；为空 = 全导。

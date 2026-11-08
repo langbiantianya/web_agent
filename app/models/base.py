@@ -31,6 +31,20 @@ PK = sa.BigInteger().with_variant(sa.Integer, "sqlite")
 JSON_COL = sa.JSON
 
 
+def long_text(length: int) -> sa.types.TypeEngine:
+    """长文本/密文列：MySQL 落成 ``TEXT``，其它方言保持 ``VARCHAR(length)``。
+
+    为什么需要这个变体：MySQL 在 utf8mb4 下按 ``length × 4`` 字节计入**行大小**，
+    整行上限 65535 字节。``mcp_server`` 上两个 ``VARCHAR(8192)`` 就是 64 KB，
+    加上同表其它列直接顶爆——实测报 ``1118 Row size too large``，迁移在建表时
+    就失败了，而这个失败**只在 MySQL 上出现**（SQLite/PG 不按字节计行长）。
+
+    ``TEXT`` 的 64 KB 存在行外，不计入行大小，容量对密文绰绰有余；换到别的
+    方言时仍然是原来的 ``VARCHAR(length)``，已有库的结构不变。
+    """
+    return sa.String(length).with_variant(mysql_dialect.TEXT(), "mysql")
+
+
 def utcnow() -> datetime:
     """取当前 **UTC** 时间，微秒截断到毫秒，对齐 MySQL ``DATETIME(3)`` 的存储精度。
 
