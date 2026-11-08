@@ -1158,3 +1158,125 @@ def test_admin_engine_uses_postgresql_timezone_and_prepare_safety():
         "prepare_threshold": None,
         "options": "-c timezone=UTC",
     }
+
+
+async def test_admin_workflow_validate_endpoint_reports_graph_issues():
+    """校验端点一次返回全部问题，并带出节点/边定位。"""
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    try:
+        payload = {
+            "csrf_token": csrf,
+            "definition": {
+                "entry": "step1",
+                "nodes": [
+                    {"id": "step1", "type": "agent", "agentCode": "planner"},
+                    {"id": "review", "type": "agent", "agentCode": "writer"},
+                    {"id": "lonely", "type": "agent", "agentCode": "writer"},
+                ],
+                "edges": [
+                    {"from": "step1", "to": "review", "when": 'upstream.nope == "x"'},
+                ],
+            },
+        }
+        response = await client.post("/admin/workflows/validate", json=payload)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["ok"] is False
+        messages = " ".join(item["message"] for item in body["errors"])
+        assert "lonely" in messages
+        assert "upstream.nope" in messages
+        assert any(item.get("node") == "lonely" for item in body["errors"])
+        assert any(
+            item.get("edge") == "step1->review" for item in body["errors"]
+        )
+    finally:
+        await client.aclose()
+
+
+async def test_admin_workflow_validate_endpoint_accepts_valid_definition():
+    """合法定义返回 ok=true。"""
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    try:
+        response = await client.post(
+            "/admin/workflows/validate",
+            json={
+                "csrf_token": csrf,
+                "definition": {
+                    "entry": "a",
+                    "nodes": [
+                        {"id": "a", "type": "agent", "agentCode": "planner"},
+                        {"id": "b", "type": "agent", "agentCode": "writer"},
+                    ],
+                    "edges": [{"from": "a", "to": "b"}],
+                },
+            },
+        )
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+    finally:
+        await client.aclose()
+
+
+async def test_admin_workflow_validate_rejects_malformed_definition():
+    """形状不对的负载必须拿到 400，不能让校验端点 500。"""
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    try:
+        for bad in (
+            {"entry": "a", "nodes": {"a": {}}, "edges": []},
+            {"entry": "a", "nodes": ["x"], "edges": []},
+            {"entry": "a", "nodes": [None], "edges": []},
+            {"entry": "a", "nodes": [{"id": "a"}], "edges": ["x"]},
+        ):
+            response = await client.post(
+                "/admin/workflows/validate",
+                json={"csrf_token": csrf, "definition": bad},
+            )
+            assert response.status_code == 400, (bad, response.text)
+            assert response.json()["ok"] is False
+    finally:
+        await client.aclose()
+
+
+async def test_admin_workflow_validate_reports_node_level_problems():
+    """节点自身字段不合法（缺 agentCode）也要报出来，并定位到节点。"""
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    try:
+        response = await client.post(
+            "/admin/workflows/validate",
+            json={
+                "csrf_token": csrf,
+                "definition": {
+                    "entry": "step1",
+                    "nodes": [{"id": "step1", "type": "agent"}],
+                    "edges": [],
+                },
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["ok"] is False
+        assert any(
+            item.get("node") == "step1" for item in body["errors"]
+        ), body
+    finally:
+        await client.aclose()
+
+
+async def test_admin_workflow_validate_requires_csrf():
+    """缺 CSRF 时拒绝。"""
+    client, _, _, _ = await _create_seeded_logged_in_super_admin()
+    try:
+        response = await client.post(
+            "/admin/workflows/validate",
+            json={
+                "definition": {
+                    "entry": "a",
+                    "nodes": [{"id": "a", "type": "agent", "agentCode": "p"}],
+                    "edges": [],
+                }
+            },
+        )
+        assert response.status_code == 403
+        assert response.json()["ok"] is False
+    finally:
+        await client.aclose()

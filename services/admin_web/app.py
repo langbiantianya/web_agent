@@ -47,6 +47,7 @@ from app.core.skill_names import (
 from app.core.skill_pack import compute_content_hash
 from app.core.tools import normalize_tool_names
 from app.core.user_profile import normalize_email, normalize_phone
+from app.core.workflow_def import WorkflowDefinition, collect_graph_issues
 from app.models.admin_control import (
     AdminComponentDefinition,
     AdminComponentPermission,
@@ -893,6 +894,115 @@ async def workflows_get(request: Request):
             ),
             flash=flash,
         )
+    finally:
+        await db.close()
+
+
+def _definition_errors(definition: dict) -> list[dict]:
+    """把一份 definition 的全部问题摊平成画布能定位的条目。
+
+    两路串联，缺一不可：
+
+    1. **pydantic** 负责**节点级**问题（id 缺失/重复、未知节点类型、
+       agent 节点缺 agentCode、approval 节点缺 prompt…）。它给出的
+       ``loc`` 形如 ``("nodes", 0, "id")``，据此能反查是哪个节点。
+    2. **collect_graph_issues** 负责**图级**问题（环、孤立节点、条件边
+       混用、when 表达式），并直接带出 ``node_ids`` / ``edge_refs``。
+
+    只跑其中一路会漏：pydantic 的 model 级报错会把整张图压成一条
+    没有定位的信息；collect_graph_issues 则完全不看节点自身的字段组合。
+    """
+    errors: list[dict] = []
+    nodes = definition.get("nodes") or []
+    try:
+        WorkflowDefinition.model_validate(definition)
+    except ValidationError as exc:
+        for item in exc.errors():
+            loc = item.get("loc") or ()
+            message = str(item.get("msg") or "invalid")
+            entry: dict[str, str] = {"message": message}
+            if len(loc) >= 2 and loc[0] == "nodes" and isinstance(loc[1], int):
+                node = nodes[loc[1]] if loc[1] < len(nodes) else None
+                if isinstance(node, dict) and isinstance(node.get("id"), str):
+                    entry["node"] = node["id"]
+            errors.append(entry)
+    for issue in collect_graph_issues(definition):
+        entry = {"message": issue.message}
+        if issue.node_ids:
+            entry["node"] = issue.node_ids[0]
+        if issue.edge_refs:
+            entry["edge"] = issue.edge_refs[0]
+        errors.append(entry)
+    return errors
+
+
+@app.post("/admin/workflows/validate")
+async def workflows_validate(request: Request):
+    """校验一份 Workflow definition，不落库。
+
+    画布用它做实时反馈。规则实现在 ``app.core.workflow_def``，与保存时
+    走的是同一份代码——前端不自己判断「这个图合不合法」。
+    """
+    values = await _with_auth(request)
+    if values is None:
+        return _unauthorized()
+    db, principal, _pref, _csrf = values
+    try:
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return JSONResponse(
+                {"ok": False, "errors": [{"message": "invalid_json"}]},
+                status_code=400,
+            )
+        if not isinstance(body, dict):
+            return JSONResponse(
+                {"ok": False, "errors": [{"message": "invalid_json"}]},
+                status_code=400,
+            )
+        definition = body.get("definition")
+        if not isinstance(definition, dict):
+            return JSONResponse(
+                {"ok": False, "errors": [{"message": "definition_required"}]},
+                status_code=400,
+            )
+        # 端点接收任意 JSON。形状不对的负载必须先挡掉：
+        # nodes / edges 不是 list，或 list 里混进了非 dict 元素，
+        # collect_graph_issues 会迭代它们并炸在 AttributeError 上（→ 500）。
+        nodes = definition.get("nodes")
+        edges = definition.get("edges", [])
+        shape_ok = (
+            isinstance(nodes, list)
+            and isinstance(edges, list)
+            and all(isinstance(item, dict) for item in nodes)
+            and all(isinstance(item, dict) for item in edges)
+        )
+        if not shape_ok:
+            return JSONResponse(
+                {"ok": False, "errors": [{"message": "definition_shape_invalid"}]},
+                status_code=400,
+            )
+        authorized = (
+            _origin_ok(request)
+            and await _can_edit_resource(
+                db,
+                principal,
+                page_code="workflows",
+                component_code="workflow_editor",
+            )
+            and await _require_csrf(
+                db, request, principal, {"csrf_token": body.get("csrf_token")}
+            )
+        )
+        if not authorized:
+            return JSONResponse(
+                {"ok": False, "errors": [{"message": "forbidden"}]},
+                status_code=403,
+            )
+        errors = _definition_errors(definition)
+        if not errors:
+            return JSONResponse({"ok": True})
+        return JSONResponse({"ok": False, "errors": errors})
     finally:
         await db.close()
 
