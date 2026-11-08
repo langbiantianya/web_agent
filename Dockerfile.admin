@@ -20,7 +20,10 @@ RUN groupadd --system --gid 10001 webagent \
 COPY app/ ./app/
 COPY services/admin_web/ ./services/admin_web/
 COPY services/__init__.py ./services/__init__.py
-COPY scripts/admin_healthcheck.py scripts/bootstrap_superadmin.py ./scripts/
+# 迁移在入口里跑（`scripts/admin_entrypoint.py`），所以 alembic 与 scripts 包
+# 都必须进镜像——少了任何一个，容器会在启动时才发现。
+COPY scripts/__init__.py scripts/admin_healthcheck.py scripts/bootstrap_superadmin.py \
+     scripts/admin_entrypoint.py ./scripts/
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
 
@@ -31,4 +34,7 @@ EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["python", "-m", "scripts.admin_healthcheck"]
 
+# 入口先 `alembic upgrade head`，再把进程换成 CMD 里的命令。
+# 关掉自动迁移的开关是 `ADMIN_MIGRATE_ON_START=0`。
+ENTRYPOINT ["python", "-m", "scripts.admin_entrypoint"]
 CMD ["uvicorn", "services.admin_web.app:app", "--host", "0.0.0.0", "--port", "8001"]

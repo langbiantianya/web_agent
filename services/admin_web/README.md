@@ -53,6 +53,13 @@ python -m alembic upgrade head
 uvicorn services.admin_web.app:app --host 0.0.0.0 --port 8001
 ```
 
+**容器里这一步是自动的**：镜像的 `ENTRYPOINT` 是
+`scripts/admin_entrypoint.py`，它先把 `DATABASE_URL` 指向 `ADMIN_DATABASE_URL`
+跑一遍 `alembic upgrade head`，成功后再 `exec` 成 `CMD` 里的 uvicorn（SIGTERM
+能直达 uvicorn，不留中间进程）。迁移真的失败时容器**不会**带着旧结构启动；
+唯一例外是「命令失败但库已经是 head」——那说明多副本里的另一个实例刚迁移完。
+迁移由外部流水线负责时，用 `ADMIN_MIGRATE_ON_START=0` 关掉自动迁移。
+
 首次启动时，如果 `super_admin_account` 中还没有固定 owner `superAdmin`，服务会生成
 8 位随机密码、写入 Argon2id 摘要并输出一条 `WARNING` 日志：
 
