@@ -744,15 +744,43 @@
       """形状不对的负载必须拿到 400，不能让校验端点 500。"""
       client, _, _, csrf = await _create_seeded_logged_in_super_admin()
       try:
+          for bad in (
+              {"entry": "a", "nodes": {"a": {}}, "edges": []},
+              {"entry": "a", "nodes": ["x"], "edges": []},
+              {"entry": "a", "nodes": [None], "edges": []},
+              {"entry": "a", "nodes": [{"id": "a"}], "edges": ["x"]},
+          ):
+              response = await client.post(
+                  "/admin/workflows/validate",
+                  json={"csrf_token": csrf, "definition": bad},
+              )
+              assert response.status_code == 400, (bad, response.text)
+              assert response.json()["ok"] is False
+      finally:
+          await client.aclose()
+
+
+  async def test_admin_workflow_validate_reports_node_level_problems():
+      """节点自身字段不合法（缺 agentCode）也要报出来，并定位到节点。"""
+      client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+      try:
           response = await client.post(
               "/admin/workflows/validate",
               json={
                   "csrf_token": csrf,
-                  "definition": {"entry": "a", "nodes": {"a": {}}, "edges": []},
+                  "definition": {
+                      "entry": "step1",
+                      "nodes": [{"id": "step1", "type": "agent"}],
+                      "edges": [],
+                  },
               },
           )
-          assert response.status_code == 400, response.text
-          assert response.json()["ok"] is False
+          assert response.status_code == 200, response.text
+          body = response.json()
+          assert body["ok"] is False
+          assert any(
+              item.get("node") == "step1" for item in body["errors"]
+          ), body
       finally:
           await client.aclose()
 
@@ -827,12 +855,18 @@
                   {"ok": False, "errors": [{"message": "definition_required"}]},
                   status_code=400,
               )
-          # 端点接收任意 JSON：``nodes`` / ``edges`` 类型不对时，
-          # collect_graph_issues 会把它当 list 迭代并炸在 500 上。
-          # 这里先挡掉形状不对的负载，让它们拿到 400 而不是服务端异常。
-          if not isinstance(definition.get("nodes"), list) or not isinstance(
-              definition.get("edges", []), list
-          ):
+          # 端点接收任意 JSON。形状不对的负载必须先挡掉：
+          # nodes / edges 不是 list，或 list 里混进了非 dict 元素，
+          # collect_graph_issues 会迭代它们并炸在 AttributeError 上（→ 500）。
+          nodes = definition.get("nodes")
+          edges = definition.get("edges", [])
+          shape_ok = (
+              isinstance(nodes, list)
+              and isinstance(edges, list)
+              and all(isinstance(item, dict) for item in nodes)
+              and all(isinstance(item, dict) for item in edges)
+          )
+          if not shape_ok:
               return JSONResponse(
                   {"ok": False, "errors": [{"message": "definition_shape_invalid"}]},
                   status_code=400,
@@ -854,20 +888,53 @@
                   {"ok": False, "errors": [{"message": "forbidden"}]},
                   status_code=403,
               )
-          issues = collect_graph_issues(definition)
-          if not issues:
+          errors = _definition_errors(definition)
+          if not errors:
               return JSONResponse({"ok": True})
-          errors = []
-          for issue in issues:
-              item: dict[str, str] = {"message": issue.message}
-              if issue.node_ids:
-                  item["node"] = issue.node_ids[0]
-              if issue.edge_refs:
-                  item["edge"] = issue.edge_refs[0]
-              errors.append(item)
           return JSONResponse({"ok": False, "errors": errors})
       finally:
           await db.close()
+  ```
+
+  配套的 `_definition_errors`，放在 `app.py` 的模块级：
+
+  ```python
+  def _definition_errors(definition: dict) -> list[dict]:
+      """把一份 definition 的全部问题摊平成画布能定位的条目。
+
+      两路串联，缺一不可：
+
+      1. **pydantic** 负责**节点级**问题（id 缺失/重复、未知节点类型、
+         agent 节点缺 agentCode、approval 节点缺 prompt…）。它给出的
+         ``loc`` 形如 ``("nodes", 0, "id")``，据此能反查是哪个节点。
+      2. **collect_graph_issues** 负责**图级**问题（环、孤立节点、条件边
+         混用、when 表达式），并直接带出 ``node_ids`` / ``edge_refs``。
+
+      只跑其中一路会漏：pydantic 的 model 级报错会把整张图压成一条
+      没有定位的信息；collect_graph_issues 则完全不看节点自身的字段组合。
+      """
+      errors: list[dict] = []
+      nodes = definition.get("nodes") or []
+      try:
+          WorkflowDefinition.model_validate(definition)
+      except ValidationError as exc:
+          for item in exc.errors():
+              loc = item.get("loc") or ()
+              message = str(item.get("msg") or "invalid")
+              entry: dict[str, str] = {"message": message}
+              if len(loc) >= 2 and loc[0] == "nodes" and isinstance(loc[1], int):
+                  node = nodes[loc[1]] if loc[1] < len(nodes) else None
+                  if isinstance(node, dict) and isinstance(node.get("id"), str):
+                      entry["node"] = node["id"]
+              errors.append(entry)
+      for issue in collect_graph_issues(definition):
+          entry = {"message": issue.message}
+          if issue.node_ids:
+              entry["node"] = issue.node_ids[0]
+          if issue.edge_refs:
+              entry["edge"] = issue.edge_refs[0]
+          errors.append(entry)
+      return errors
   ```
 
   > `app.py` 顶部已 `import json`（`_json_object` 在用），`JSONResponse` 已在
