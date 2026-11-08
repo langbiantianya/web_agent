@@ -546,3 +546,84 @@ def test_collect_graph_issues_keeps_model_path_free_of_shape_issues():
     definition = WorkflowDefinition.model_validate(LINEAR)
     payload = definition.model_dump(by_alias=True, exclude_none=True)
     assert collect_graph_issues(payload) == []
+
+
+# ------------------------------------------------- 边源点字段归一（from / from_）
+
+
+def test_collect_graph_issues_treats_from_underscore_like_from():
+    """``from_`` 作键的边必须与 ``from`` 作键产出**完全一样**的 issue 列表。
+
+    ``WorkflowEdge`` 开了 ``populate_by_name=True``，两种键 pydantic 都收；
+    图校验若只认 ``from``，就会出现「画布说非法、保存接口却放行」——
+    校验端点与保存路径对同一份数据给出不同结论。
+    """
+    nodes = [
+        {"id": "a", "type": "agent", "agentCode": "planner"},
+        {"id": "b", "type": "agent", "agentCode": "writer"},
+    ]
+    with_alias = {"entry": "a", "nodes": nodes, "edges": [{"from": "a", "to": "b"}]}
+    with_field_name = {
+        "entry": "a",
+        "nodes": nodes,
+        "edges": [{"from_": "a", "to": "b"}],
+    }
+    assert collect_graph_issues(with_field_name) == collect_graph_issues(with_alias)
+    assert collect_graph_issues(with_field_name) == []
+
+
+def test_collect_graph_issues_reports_real_source_for_from_underscore():
+    """``from_`` 作键且**真的**指向不存在的节点时，消息里要有真实源点 id。
+
+    归一之前这里会读出空串，消息变成「edge 引用了不存在的节点： -> b」，
+    用户既看不到是哪条边、也看不到源点是谁。
+    """
+    payload = {
+        "entry": "a",
+        "nodes": [
+            {"id": "a", "type": "agent", "agentCode": "planner"},
+            {"id": "b", "type": "agent", "agentCode": "writer"},
+        ],
+        "edges": [{"from_": "ghost", "to": "b"}],
+    }
+    messages = [issue.message for issue in collect_graph_issues(payload)]
+    assert "edge 引用了不存在的节点：ghost -> b" in messages
+
+
+def test_model_validate_accepts_from_underscore_key():
+    """模型层要收 ``from_`` 作键的边——这是 ``populate_by_name=True`` 的既有行为。
+
+    本次只让图校验跟上模型层，不改模型层的收键规则。
+    """
+    definition = WorkflowDefinition.model_validate({
+        "entry": "a",
+        "nodes": [
+            {"id": "a", "type": "agent", "agentCode": "planner"},
+            {"id": "b", "type": "agent", "agentCode": "writer"},
+        ],
+        "edges": [{"from_": "a", "to": "b"}],
+    })
+    assert definition.edges[0].from_ == "a"
+
+
+def test_from_key_messages_unchanged():
+    """用 ``from`` 作键的既有路径，消息必须逐字不变。
+
+    显式钉住，防止后续改动悄悄漂移：归一只该影响 ``from_`` 作键的负载。
+    """
+    payload = {
+        "entry": "a",
+        "nodes": [
+            {"id": "a", "type": "agent", "agentCode": "planner"},
+            {"id": "b", "type": "agent", "agentCode": "writer"},
+        ],
+        "edges": [{"from": "ghost", "to": "b"}],
+    }
+    issues = collect_graph_issues(payload)
+    assert [issue.message for issue in issues] == [
+        "edge 引用了不存在的节点：ghost -> b",
+        "以下节点从 entry 走不到（孤立节点）：b",
+    ]
+    with pytest.raises(ValidationError) as excinfo:
+        WorkflowDefinition.model_validate(payload)
+    assert "edge 引用了不存在的节点：ghost -> b" in str(excinfo.value)

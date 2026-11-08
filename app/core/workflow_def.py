@@ -154,6 +154,17 @@ class GraphIssue:
     edge_refs: tuple[str, ...] = ()
 
 
+def _edge_src(edge: dict) -> str:
+    """取一条边的源点节点 id。
+
+    ``WorkflowEdge`` 的源点字段叫 ``from_``、别名是 ``from``，而模型开了
+    ``populate_by_name=True``——所以两种键 pydantic 都收。原始 payload 里
+    两种键都可能出现，这里统一成一种读法，免得图校验和保存期对同一份数据
+    得出不同结论。
+    """
+    return str(edge.get("from") or edge.get("from_") or "")
+
+
 def collect_graph_issues(payload: dict) -> list[GraphIssue]:
     """收集 definition 的全部图结构问题。
 
@@ -176,7 +187,7 @@ def collect_graph_issues(payload: dict) -> list[GraphIssue]:
     edges = normalized["edges"]
 
     for edge in edges:
-        src = str(edge.get("from") or "")
+        src = _edge_src(edge)
         dst = str(edge.get("to") or "")
         if src not in ids or dst not in ids:
             issues.append(
@@ -278,7 +289,7 @@ def _detect_cycle(payload: dict) -> list[GraphIssue]:
     adj: dict[str, list[str]] = {i: [] for i in ids}
     indeg: dict[str, int] = {i: 0 for i in ids}
     for edge in payload.get("edges") or []:
-        src = str(edge.get("from") or "")
+        src = _edge_src(edge)
         dst = str(edge.get("to") or "")
         if src in adj and dst in adj:
             adj[src].append(dst)
@@ -313,7 +324,7 @@ def _detect_orphans(payload: dict) -> list[GraphIssue]:
     entry = str(payload.get("entry") or "") or str(nodes[0].get("id"))
     adj: dict[str, list[str]] = {i: [] for i in ids}
     for edge in payload.get("edges") or []:
-        src = str(edge.get("from") or "")
+        src = _edge_src(edge)
         dst = str(edge.get("to") or "")
         if src in adj and dst in adj:
             adj[src].append(dst)
@@ -365,10 +376,10 @@ def _detect_fanin_shape(payload: dict) -> list[GraphIssue]:
         if not conditional:
             continue
         refs = tuple(
-            f"{e.get('from')}->{node_id}" for e in conditional
+            f"{_edge_src(e)}->{node_id}" for e in conditional
         )
         if len(conditional) < len(edges):
-            bad = "、".join(f"{e.get('from')} --when--> {node_id}" for e in conditional)
+            bad = "、".join(f"{_edge_src(e)} --when--> {node_id}" for e in conditional)
             issues.append(
                 GraphIssue(
                     message=(
@@ -404,7 +415,7 @@ def _detect_outgoing_mixed(payload: dict) -> list[GraphIssue]:
     """
     outgoing: dict[str, list[dict]] = {}
     for edge in payload.get("edges") or []:
-        outgoing.setdefault(str(edge.get("from") or ""), []).append(edge)
+        outgoing.setdefault(_edge_src(edge), []).append(edge)
     issues: list[GraphIssue] = []
     for node_id, edges in outgoing.items():
         conditional = [e for e in edges if e.get("when")]
@@ -445,7 +456,7 @@ def _detect_condition_problems(payload: dict) -> list[GraphIssue]:
         when = str(edge.get("when") or "")
         if not when:
             continue
-        src = str(edge.get("from") or "")
+        src = _edge_src(edge)
         dst = str(edge.get("to") or "")
         ref = f"{src}->{dst}"
         where = f"边 {src} -> {dst}"
