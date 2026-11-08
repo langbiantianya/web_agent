@@ -1280,3 +1280,124 @@ async def test_admin_workflow_validate_requires_csrf():
         assert response.json()["ok"] is False
     finally:
         await client.aclose()
+
+
+async def test_admin_workflow_validate_rejects_anonymous_client():
+    """未登录时回 403 JSON，不能 303 跳登录页（fetch 跟随后拿到的是 HTML）。"""
+    from services.admin_web.app import app as admin_asgi_app
+
+    client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=admin_asgi_app),
+        base_url="http://test",
+        follow_redirects=False,
+    )
+    try:
+        response = await client.post(
+            "/admin/workflows/validate",
+            json={
+                "definition": {
+                    "entry": "a",
+                    "nodes": [{"id": "a", "type": "agent", "agentCode": "p"}],
+                    "edges": [],
+                }
+            },
+        )
+        assert response.status_code == 403, response.text
+        body = response.json()
+        assert body["ok"] is False
+        assert body["errors"][0]["message"] == "forbidden"
+    finally:
+        await client.aclose()
+
+
+async def test_admin_workflow_validate_normalizes_pydantic_messages():
+    """pydantic 的英文内部文案要归一成中文，并带出字段定位。"""
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    try:
+        missing_code = await client.post(
+            "/admin/workflows/validate",
+            json={
+                "csrf_token": csrf,
+                "definition": {
+                    "entry": "step1",
+                    "nodes": [{"id": "step1", "type": "agent"}],
+                    "edges": [],
+                },
+            },
+        )
+        assert missing_code.status_code == 200, missing_code.text
+        errors = missing_code.json()["errors"]
+        # 我们自己的中文消息保留，但要去掉 pydantic 加的英文前缀
+        assert any(
+            item["message"]
+            == "节点 step1 是 agent 类型，必须指定 agentCode"
+            for item in errors
+        ), errors
+        assert not any(
+            "Value error" in item["message"] for item in errors
+        ), errors
+        assert any(item.get("node") == "step1" for item in errors), errors
+
+        missing_id = await client.post(
+            "/admin/workflows/validate",
+            json={
+                "csrf_token": csrf,
+                "definition": {
+                    "entry": "a",
+                    "nodes": [{"type": "agent", "agentCode": "p"}],
+                    "edges": [],
+                },
+            },
+        )
+        assert missing_id.status_code == 200, missing_id.text
+        errors = missing_id.json()["errors"]
+        assert any("缺少必填字段" in item["message"] for item in errors), errors
+
+        extra_field = await client.post(
+            "/admin/workflows/validate",
+            json={
+                "csrf_token": csrf,
+                "definition": {
+                    "entry": "a",
+                    "nodes": [
+                        {"id": "a", "type": "agent", "agentCode": "p", "x": 1}
+                    ],
+                    "edges": [],
+                },
+            },
+        )
+        assert extra_field.status_code == 200, extra_field.text
+        errors = extra_field.json()["errors"]
+        hits = [item for item in errors if "不支持的字段" in item["message"]]
+        assert hits, errors
+        assert hits[0].get("field") == "a.x", errors
+    finally:
+        await client.aclose()
+
+
+async def test_admin_workflow_validate_deduplicates_model_level_graph_issue():
+    """模型级条目与图级条目重复时只留带定位的那条。"""
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    try:
+        response = await client.post(
+            "/admin/workflows/validate",
+            json={
+                "csrf_token": csrf,
+                "definition": {
+                    "entry": "step1",
+                    "nodes": [
+                        {"id": "step1", "type": "agent", "agentCode": "planner"},
+                        {"id": "lonely", "type": "agent", "agentCode": "writer"},
+                    ],
+                    "edges": [],
+                },
+            },
+        )
+        assert response.status_code == 200, response.text
+        errors = response.json()["errors"]
+        orphans = [item for item in errors if "孤立节点" in item["message"]]
+        assert len(orphans) == 1, errors
+        assert orphans[0].get("node") == "lonely", errors
+        assert "Value error" not in orphans[0]["message"], errors
+    finally:
+        await client.aclose()
