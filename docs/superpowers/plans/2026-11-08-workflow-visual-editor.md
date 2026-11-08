@@ -1410,8 +1410,8 @@
               save_form,
               class_="stack",
           ),
+          extra_styles=["/admin/static/workflow-editor.css"],
           extra_scripts=[
-              "/admin/static/workflow-editor.css",
               "/admin/static/workflow-editor-core.js",
               "/admin/static/workflow-editor.js",
           ],
