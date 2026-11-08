@@ -1,8 +1,8 @@
 # 测试
 
 推荐用固定 Python 3.14 的测试镜像运行全量测试，避免宿主解释器与二进制依赖不匹配。
-独立 admin-web 使用的 Ludic 1.x 要求 Python >= 3.14，客户端生产镜像仍保持自己的
-运行时版本：
+独立 admin-web 使用的 Ludic 1.x 要求 Python >= 3.14；客户端与 studio 的生产镜像
+也已统一到 Python 3.14，但三者仍是各自独立的镜像：
 
 ```bash
 docker build -f Dockerfile.test -t webagent/tests:local .

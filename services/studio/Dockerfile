@@ -18,7 +18,7 @@
 # node 不在 python 镜像里，单独从一个 node 官方镜像拷二进制过来（多阶段构建）。
 FROM node:20.18.1-bookworm-slim AS node
 
-FROM python:3.11.9-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 ARG STUDIO_VERSION=2.0.0
 

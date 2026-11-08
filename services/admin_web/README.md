@@ -72,8 +72,8 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
   --env-file .env -p 127.0.0.1:8001:8001 webagent/admin-web:local
 ```
 
-`Ludic 1.x` 要求 Python 3.14，因此 admin 镜像使用独立 Python 运行时；客户端镜像版本
-不受影响。
+`Ludic 1.x` 要求 Python 3.14，因此 admin 镜像使用独立 Python 运行时；客户端镜像是
+另一个独立镜像，同样基于 Python 3.14（两者不共享基础层，也不是同一个构建）。
 
 ## 当前页面
 
