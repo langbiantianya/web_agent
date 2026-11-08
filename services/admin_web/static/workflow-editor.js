@@ -453,11 +453,18 @@
   }
 
   /**
-   * 全角字符的码点区间：CJK、假名、谚文、全角标点，以及常见的全角符号与
-   * emoji。这些字符在等宽/比例字体里都按一个 em 占位。
+   * 全角字符的码点区间：CJK、假名、谚文、全角标点，以及按 emoji 呈现的符号
+   * 与 emoji 区段。这些字符在等宽/比例字体里都按一个 em 占位。
+   *
+   * ``0x2300-0x23ff``（⌚ ⏰ ⏳）、``0x2600-0x27bf``（✈ ☀ ⚡）、
+   * ``0x2b00-0x2bff``（⭐ ⬛）与 ``0x1f000-0x1f2ff``（🀄 🃏）容易漏：
+   * 它们中大部分默认按 emoji 呈现，宽度是 1 em，按半角估会低估近一半。
    */
   const WIDE_RANGES = [
     [0x1100, 0x115f],
+    [0x2300, 0x23ff],
+    [0x2600, 0x27bf],
+    [0x2b00, 0x2bff],
     [0x2e80, 0x303e],
     [0x3041, 0x33ff],
     [0x3400, 0x4dbf],
@@ -468,6 +475,7 @@
     [0xfe30, 0xfe6f],
     [0xff00, 0xff60],
     [0xffe0, 0xffe6],
+    [0x1f000, 0x1f2ff],
     [0x1f300, 0x1faff],
     [0x20000, 0x3fffd],
   ];
@@ -500,10 +508,18 @@
    * ``maxEm`` 是显示宽度。只看字符数会在中文上溢出近一倍——13px 字号下一个
    * 汉字约 13px 宽，18 个汉字 234px，而卡片正文可用宽度只有约 176px。
    * 半角字符仍然按原来的 18/20 字走，只有全角文本会提前收口。
+   *
+   * 两个上限都按**码点**数：``value.length`` 数的是 UTF-16 码元，一个 emoji
+   * 算两个，会和下面的码点循环对不上——10 个 emoji 明明只占 10em，却会平白
+   * 多出一个省略号。
+   *
+   * ``maxEm`` 省略时不设宽度上限（而不是 NaN）：调用方忘了传参，结果应当是
+   * 「只按字符数截」，而不是「所有文本都被截」。
    */
-  function truncate(text, limit, maxEm) {
+  function truncate(text, limit, maxEm = Number.POSITIVE_INFINITY) {
     const value = String(text === undefined || text === null ? "" : text);
-    if (value.length <= limit && textEm(value) <= maxEm) {
+    const chars = Array.from(value);
+    if (chars.length <= limit && textEm(value) <= maxEm) {
       return value;
     }
     const budget = Math.max(1, limit - 1);
@@ -512,7 +528,7 @@
     let kept = "";
     let count = 0;
     let used = 0;
-    for (const char of value) {
+    for (const char of chars) {
       if (count >= budget) {
         break;
       }

@@ -1471,6 +1471,37 @@ test("用例 50：英文标题的截断行为不变（仍是 18 / 20 字）", ()
   assert.equal(subtitle.length, 20);
 });
 
+test("用例 52：emoji 与符号按 1em 计宽，没超限就不该加省略号", () => {
+  // 每个 emoji 是 2 个 UTF-16 码元、1 个码点、1em 宽。
+  // 10 个 = 20 码元，按码元数会误判成「超过 18 字」；按码点与宽度都在限内。
+  const emoji = "😀".repeat(10);
+  const watch = "⌚".repeat(10);
+  const star = "⭐".repeat(10);
+  const long = "😀".repeat(20);
+  const { dom } = boot({
+    definition: {
+      entry: "a",
+      inputTemplate: "",
+      nodes: [
+        { id: "a", type: "agent", label: emoji },
+        { id: "b", type: "agent", label: watch },
+        { id: "c", type: "agent", label: star },
+        { id: "d", type: "agent", label: long },
+      ],
+      edges: [],
+      layout: { nodes: {}, viewport: { x: 0, y: 0, scale: 1 } },
+    },
+  });
+
+  const title = (id) =>
+    findInGroup(findNodeGroup(dom, id), "title").textContent;
+  assert.equal(title("a"), emoji, "10 个 emoji 没有超限，不该被截");
+  assert.equal(title("b"), watch, "⌚ 按 emoji 呈现，宽度是 1em");
+  assert.equal(title("c"), star, "⭐ 同上");
+  // 超限时按码点截，不会劈开代理对。
+  assert.equal(title("d"), `${"😀".repeat(12)}…`);
+});
+
 // ------------------------------------------------- 整组定位（环）
 
 const cycleDefinition = {

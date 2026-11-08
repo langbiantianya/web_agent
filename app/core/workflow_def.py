@@ -375,13 +375,17 @@ def _detect_cycle(payload: dict) -> list[GraphIssue]:
     }
     node_ids = tuple(sorted(component_of))
     edge_refs: list[str] = []
+    seen_refs: set[str] = set()
     for edge in payload.get("edges") or []:
         src = _edge_src(edge)
         dst = str(edge.get("to") or "")
         # 只有同一分量内部的边才在环上；跨分量的边是两团环之间的路，不在环里。
         if component_of.get(src) is not None and component_of.get(src) == component_of.get(dst):
             ref = f"{src}->{dst}"
-            if ref not in edge_refs:
+            # 用 set 记已见：列表成员判断在重复边多的大图上会退化成 O(E²)，
+            # 而这条路径的输入是任意客户端 JSON，边上限只受请求体大小约束。
+            if ref not in seen_refs:
+                seen_refs.add(ref)
                 edge_refs.append(ref)
     return [
         GraphIssue(
