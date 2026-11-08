@@ -466,3 +466,83 @@ def test_validate_graph_message_unchanged_after_refactor():
     text = str(excinfo.value)
     assert "upstream.missing" in text
     assert "不存在" in text
+
+
+# ------------------------------------------------- 畸形负载的防御（V4.8）
+
+
+def test_collect_graph_issues_survives_malformed_payload():
+    """畸形负载不能把规则层变成 500：形状问题要报成 issue，而不是抛异常。
+
+    ``collect_graph_issues`` 是校验端点唯一的规则来源，输入是任意客户端
+    JSON。``nodes`` / ``edges`` 不一定是数组，元素不一定是对象——这些都必须
+    被安全地报出来。
+    """
+    cases = [
+        {"nodes": ["x"], "edges": []},
+        {"nodes": [None], "edges": []},
+        {"nodes": [{"id": "a"}], "edges": ["x"]},
+        {"nodes": {}, "edges": []},
+        {"nodes": [], "edges": {}},
+        {"nodes": "abc", "edges": []},
+        {"nodes": [{"id": "a"}], "edges": [None]},
+    ]
+    for payload in cases:
+        issues = collect_graph_issues(payload)
+        assert issues, f"畸形负载应产出 issue：{payload}"
+        assert all(i.message for i in issues), f"issue 必须带文案：{payload}"
+
+
+def test_collect_graph_issues_reports_shape_problems_instead_of_skipping():
+    """畸形部分要**报出来**——静默跳过会让畸形节点从错误列表里消失。
+
+    用户以为图是干净的，保存下去才在别处炸——那正是这层要避免的。
+    """
+    issues = collect_graph_issues({"nodes": ["x", None], "edges": []})
+    messages = [i.message for i in issues]
+    assert any("nodes[0]" in m for m in messages)
+    assert any("nodes[1]" in m for m in messages)
+
+    issues = collect_graph_issues({"nodes": [{"id": "a"}], "edges": ["x"]})
+    assert any("edges[0]" in m for m in messages + [i.message for i in issues])
+
+    issues = collect_graph_issues({"nodes": {}, "edges": []})
+    assert [i.message for i in issues] == ["nodes 必须是数组"]
+
+    issues = collect_graph_issues({"nodes": [], "edges": {}})
+    assert [i.message for i in issues] == ["edges 必须是数组"]
+
+
+def test_collect_graph_issues_rejects_nodes_without_valid_id():
+    """没有合法字符串 id 的节点不能被当成 id="None"。
+
+    否则两个都缺 id 的节点会互相顶替，图结构被算错；而在模型路径上 pydantic
+    本就会拦下这种节点（``id`` 必须是长度 ≥1 的字符串），所以这条防御在模型
+    路径上是 no-op。
+    """
+    issues = collect_graph_issues(
+        {"nodes": [{"agentCode": "x"}, {"agentCode": "y"}], "edges": []}
+    )
+    messages = [i.message for i in issues]
+    # 两个缺 id 的节点各报一条，不合并、不顶替
+    assert len(messages) == 2
+    assert any("nodes[0]" in m for m in messages)
+    assert any("nodes[1]" in m for m in messages)
+    # 也不能被当成 id="None" 参与图结构计算
+    assert not any("None" in m for m in messages)
+
+    # 非字符串 id 同样不算合法 id
+    for bad_id in (123, "", None):
+        issues = collect_graph_issues({"nodes": [{"id": bad_id}], "edges": []})
+        assert issues and "缺少合法 id" in issues[0].message
+
+
+def test_collect_graph_issues_keeps_model_path_free_of_shape_issues():
+    """模型路径上防御必须是 no-op：pydantic 保证形状合法，产出的 issue 恒为空。
+
+    这条守住「防御不得影响既有消息」的前提：一旦模型路径上冒出形状 issue，
+    ``_validate_graph`` 抛出的第一条消息就会变。
+    """
+    definition = WorkflowDefinition.model_validate(LINEAR)
+    payload = definition.model_dump(by_alias=True, exclude_none=True)
+    assert collect_graph_issues(payload) == []

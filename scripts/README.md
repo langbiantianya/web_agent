@@ -63,6 +63,17 @@ python scripts/check_docstrings.py
 
 新增函数必须写 docstring。参数、返回值和异常语义较复杂时，使用 Google 风格字段说明。
 
+## 行为差分
+
+```bash
+python scripts/diff_workflow_def_behavior.py --base a1bdbc8
+```
+
+`diff_workflow_def_behavior.py` 从 base commit 反向重建改造前的 `app/core/workflow_def.py`，
+与当前文件在同一进程里分别加载，对 35 个显式用例 + 231 个缺陷组合用例跑校验，
+逐字比对 pydantic `ValidationError` 的消息。用于证明「图结构校验从「遇错即抛」
+改成「一次收集全部问题」之后，给用户看的中文文案一个字都没变。
+
 ## 相关文档
 
 - [测试说明](../tests/README.md)

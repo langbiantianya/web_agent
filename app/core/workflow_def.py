@@ -22,7 +22,7 @@ V3.1 起节点还有两种类型（见 :class:`NodeType`）：``agent``（默认
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -163,11 +163,17 @@ def collect_graph_issues(payload: dict) -> list[GraphIssue]:
     这里是图结构规则的**唯一一份实现**：保存期的 ``WorkflowDefinition``
     校验与画布的实时校验都走它，不存在「运行期一套、校验端点一套」的
     分叉。
+
+    输入是**任意**客户端 JSON，形状不一定对得上 definition：``nodes`` /
+    ``edges`` 可能不是数组，元素可能不是对象，节点也可能没有 id。畸形部分
+    由 :func:`_sanitize_payload` 挑出来单独报成 issue，剩下的才交给图规则
+    ——图规则因此不必到处防着畸形输入，畸形部分也不会从错误列表里消失。
     """
-    issues: list[GraphIssue] = []
-    ids = {str(n.get("id")) for n in payload.get("nodes") or []}
-    entry = str(payload.get("entry") or "")
-    edges = payload.get("edges") or []
+    normalized, shape_issues = _sanitize_payload(payload)
+    issues: list[GraphIssue] = list(shape_issues)
+    ids = {n["id"] for n in normalized["nodes"]}
+    entry = str(normalized.get("entry") or "")
+    edges = normalized["edges"]
 
     for edge in edges:
         src = str(edge.get("from") or "")
@@ -188,13 +194,74 @@ def collect_graph_issues(payload: dict) -> list[GraphIssue]:
             )
         )
 
-    issues.extend(_detect_cycle(payload))
-    issues.extend(_detect_orphans(payload))
-    issues.extend(_detect_fanin_shape(payload))
-    issues.extend(_detect_outgoing_mixed(payload))
-    issues.extend(_detect_condition_problems(payload))
-    issues.extend(_detect_template_problems(payload))
+    issues.extend(_detect_cycle(normalized))
+    issues.extend(_detect_orphans(normalized))
+    issues.extend(_detect_fanin_shape(normalized))
+    issues.extend(_detect_outgoing_mixed(normalized))
+    issues.extend(_detect_condition_problems(normalized))
+    issues.extend(_detect_template_problems(normalized))
     return issues
+
+
+def _sanitize_payload(payload: dict) -> tuple[dict, list[GraphIssue]]:
+    """把任意客户端 JSON 归一成图规则能安全处理的形状。
+
+    ``collect_graph_issues`` 是校验端点唯一的规则来源，而它拿到的是**任意**
+    客户端 JSON：``nodes`` / ``edges`` 可能不是数组，元素可能不是对象，节点
+    也可能没有合法的字符串 id。
+
+    畸形部分**单独报成 issue**而不是静默跳过——静默跳过会让畸形节点从错误
+    列表里消失，用户以为图是干净的。
+
+    模型路径（``WorkflowDefinition`` 构造出的实例）上 pydantic 已保证
+    ``nodes`` / ``edges`` 都是对象数组、节点都带非空字符串 id，因此这里的每
+    一项检查在模型路径上都是 no-op：产出的 issue 恒为空，归一后的
+    ``nodes`` / ``edges`` 与输入逐元素相同。
+    """
+    issues: list[GraphIssue] = []
+
+    if not isinstance(payload, dict):
+        return {"nodes": [], "edges": []}, [
+            GraphIssue(message="definition 必须是对象")
+        ]
+
+    raw_nodes = payload.get("nodes")
+    if raw_nodes is None:
+        raw_nodes = []
+    elif not isinstance(raw_nodes, list):
+        issues.append(GraphIssue(message="nodes 必须是数组"))
+        raw_nodes = []
+
+    raw_edges = payload.get("edges")
+    if raw_edges is None:
+        raw_edges = []
+    elif not isinstance(raw_edges, list):
+        issues.append(GraphIssue(message="edges 必须是数组"))
+        raw_edges = []
+
+    # 节点没有合法 id 就没法参与图结构计算：与其当成 id="None" 让两个缺 id 的
+    # 节点互相顶替，不如单独报出来。
+    nodes: list[dict] = []
+    for index, node in enumerate(raw_nodes):
+        if not isinstance(node, dict):
+            issues.append(GraphIssue(message=f"nodes[{index}] 不是对象，已跳过"))
+            continue
+        node_id = node.get("id")
+        if not isinstance(node_id, str) or not node_id:
+            issues.append(GraphIssue(message=f"nodes[{index}] 缺少合法 id，已跳过"))
+            continue
+        nodes.append(node)
+
+    # 边的 from/to 缺失不影响安全：后面的「edge 引用了不存在的节点」规则会
+    # 自然接手，不必在这里另立一条。
+    edges: list[dict] = []
+    for index, edge in enumerate(raw_edges):
+        if not isinstance(edge, dict):
+            issues.append(GraphIssue(message=f"edges[{index}] 不是对象，已跳过"))
+            continue
+        edges.append(edge)
+
+    return {**payload, "nodes": nodes, "edges": edges}, issues
 
 
 def _detect_cycle(payload: dict) -> list[GraphIssue]:
