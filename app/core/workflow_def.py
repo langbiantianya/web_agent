@@ -275,13 +275,74 @@ def _sanitize_payload(payload: dict) -> tuple[dict, list[GraphIssue]]:
     return {**payload, "nodes": nodes, "edges": edges}, issues
 
 
+def _cycle_components(
+    ids: list[str], adj: dict[str, list[str]]
+) -> list[list[str]]:
+    """求图里**真正成环**的强连通分量。
+
+    只有满足下面两条之一的分量才算环：分量里有 ≥2 个节点（互相可达），或者
+    单个节点带自环。其余分量都是拓扑序上正常的一段。
+
+    环的**下游**不能算进来：那条路径上的节点入度同样不为零，但它们自己不在
+    环上，把它们标红只会让人以为问题出在那儿。
+
+    实现用迭代式 Kosaraju：递归版在大图上会把解释器栈打爆，definition 的
+    节点数虽然通常不多，但校验端点的输入是任意客户端 JSON，不该赌这个。
+    """
+    order: list[str] = []
+    visited: set[str] = set()
+    for start in ids:
+        if start in visited:
+            continue
+        visited.add(start)
+        stack: list[tuple[str, int]] = [(start, 0)]
+        while stack:
+            node, index = stack[-1]
+            followers = adj.get(node, [])
+            if index < len(followers):
+                nxt = followers[index]
+                stack[-1] = (node, index + 1)
+                if nxt not in visited:
+                    visited.add(nxt)
+                    stack.append((nxt, 0))
+                continue
+            order.append(node)
+            stack.pop()
+
+    reverse: dict[str, list[str]] = {i: [] for i in ids}
+    for src, followers in adj.items():
+        for dst in followers:
+            reverse[dst].append(src)
+
+    components: list[list[str]] = []
+    assigned: set[str] = set()
+    for start in reversed(order):
+        if start in assigned:
+            continue
+        assigned.add(start)
+        component: list[str] = []
+        stack = [start]
+        while stack:
+            node = stack.pop()
+            component.append(node)
+            for nxt in reverse.get(node, []):
+                if nxt not in assigned:
+                    assigned.add(nxt)
+                    stack.append(nxt)
+        # 单点分量只有带自环才算环。
+        if len(component) > 1 or component[0] in adj.get(component[0], []):
+            components.append(component)
+    return components
+
+
 def _detect_cycle(payload: dict) -> list[GraphIssue]:
     """检测环。
 
     拓扑排序必须能覆盖全部节点，否则执行顺序无法确定（还会触发
     ``recursion_limit``）。
 
-    消息与改造前的 ``ValueError`` 文本逐字一致。
+    消息与改造前的 ``ValueError`` 文本逐字一致；定位信息（环上的节点与边）
+    是 V4.8 新增的，画布靠它把红框画在环上，而不是整张图一起报错。
     """
     # 节点 id 去重：adj/indeg 是按 id 建键的字典，重复 id 若留在 ids 里会让
     # len(ids) 虚高，把无环的图误判成有环。改造前这里用的是 {n.id for n in nodes}。
@@ -303,9 +364,32 @@ def _detect_cycle(payload: dict) -> list[GraphIssue]:
             indeg[nxt] -= 1
             if indeg[nxt] == 0:
                 ready.append(nxt)
-    if seen != len(ids):
-        return [GraphIssue(message="definition 存在环，无法确定执行顺序")]
-    return []
+    if seen == len(ids):
+        return []
+
+    components = _cycle_components(ids, adj)
+    component_of = {
+        node: index
+        for index, component in enumerate(components)
+        for node in component
+    }
+    node_ids = tuple(sorted(component_of))
+    edge_refs: list[str] = []
+    for edge in payload.get("edges") or []:
+        src = _edge_src(edge)
+        dst = str(edge.get("to") or "")
+        # 只有同一分量内部的边才在环上；跨分量的边是两团环之间的路，不在环里。
+        if component_of.get(src) is not None and component_of.get(src) == component_of.get(dst):
+            ref = f"{src}->{dst}"
+            if ref not in edge_refs:
+                edge_refs.append(ref)
+    return [
+        GraphIssue(
+            message="definition 存在环，无法确定执行顺序",
+            node_ids=node_ids,
+            edge_refs=tuple(edge_refs),
+        )
+    ]
 
 
 def _detect_orphans(payload: dict) -> list[GraphIssue]:

@@ -627,3 +627,145 @@ def test_from_key_messages_unchanged():
     with pytest.raises(ValidationError) as excinfo:
         WorkflowDefinition.model_validate(payload)
     assert "edge 引用了不存在的节点：ghost -> b" in str(excinfo.value)
+
+
+# ------------------------------------------------- 环的定位信息（V4.8 收尾）
+
+
+def test_collect_graph_issues_locates_cycle_nodes_and_edges():
+    """环上的节点与边都要被指出来（设计验收 6）。
+
+    修复前这条 issue 只有一句文案：画布拿不到 id，成环时既不会标红任何节点，
+    错误条里也只能让管理员自己在一串中文里找名字。
+    """
+    payload = {
+        "entry": "a",
+        "nodes": [
+            {"id": "a", "type": "agent", "agentCode": "planner"},
+            {"id": "b", "type": "agent", "agentCode": "writer"},
+            {"id": "c", "type": "agent", "agentCode": "writer"},
+            {"id": "tail", "type": "agent", "agentCode": "writer"},
+        ],
+        "edges": [
+            {"from": "a", "to": "b"},
+            {"from": "b", "to": "c"},
+            {"from": "c", "to": "a"},
+            # 环的下游：它自己不在环上，不能算进 node_ids。
+            {"from": "c", "to": "tail"},
+        ],
+    }
+    issues = collect_graph_issues(payload)
+    assert [i.message for i in issues] == ["definition 存在环，无法确定执行顺序"]
+    cycle = issues[0]
+    assert cycle.node_ids == ("a", "b", "c")
+    assert "tail" not in cycle.node_ids
+    assert set(cycle.edge_refs) == {"a->b", "b->c", "c->a"}
+
+
+def test_collect_graph_issues_locates_self_loop():
+    """自环同样是环：节点要自己被指出来，边也要。"""
+    payload = {
+        "entry": "a",
+        "nodes": [{"id": "a", "type": "agent", "agentCode": "planner"}],
+        "edges": [{"from": "a", "to": "a"}],
+    }
+    issues = collect_graph_issues(payload)
+    assert [i.message for i in issues] == ["definition 存在环，无法确定执行顺序"]
+    assert issues[0].node_ids == ("a",)
+    assert issues[0].edge_refs == ("a->a",)
+
+
+def test_collect_graph_issues_locates_parallel_cycles_together():
+    """两个互不相连的环一起报，节点集合取并集。"""
+    payload = {
+        "entry": "a",
+        "nodes": [{"id": i, "type": "agent", "agentCode": "x"} for i in "abcd"],
+        "edges": [
+            {"from": "a", "to": "b"},
+            {"from": "b", "to": "a"},
+            {"from": "c", "to": "d"},
+            {"from": "d", "to": "c"},
+        ],
+    }
+    issues = collect_graph_issues(payload)
+    cycle = next(i for i in issues if "存在环" in i.message)
+    assert cycle.node_ids == ("a", "b", "c", "d")
+    assert set(cycle.edge_refs) == {"a->b", "b->a", "c->d", "d->c"}
+
+
+def test_every_rule_issue_carries_location():
+    """节点/边级别的每条 issue 都要带 node_ids 或 edge_refs（设计验收 12）。
+
+    形状类（``nodes`` 不是数组…）与模板类（``inputTemplate`` 引用了未知变量）
+    issue 指向的是数组位置或定义级字段，没有节点/边可指，不在本用例范围内。
+    """
+    nodes = [
+        {"id": "a", "type": "agent", "agentCode": "planner"},
+        {"id": "b", "type": "agent", "agentCode": "writer"},
+        {"id": "c", "type": "agent", "agentCode": "writer"},
+        {"id": "lonely", "type": "agent", "agentCode": "writer"},
+    ]
+    cases = {
+        "孤立节点": {
+            "entry": "a",
+            "nodes": nodes,
+            "edges": [{"from": "a", "to": "b"}],
+        },
+        "入边混条件边": {
+            "entry": "a",
+            "nodes": nodes[:3],
+            "edges": [
+                {"from": "a", "to": "c"},
+                {"from": "b", "to": "c", "when": 'upstream.a == "x"'},
+            ],
+        },
+        "出边混用": {
+            "entry": "a",
+            "nodes": nodes[:3],
+            "edges": [
+                {"from": "a", "to": "b", "when": 'upstream.a == "x"'},
+                {"from": "a", "to": "c"},
+            ],
+        },
+        "when 语法错误": {
+            "entry": "a",
+            "nodes": nodes[:2],
+            "edges": [{"from": "a", "to": "b", "when": 'contains(upstream.a, "x"'}],
+        },
+        "when 引用未知变量": {
+            "entry": "a",
+            "nodes": nodes[:3],
+            "edges": [
+                {"from": "a", "to": "c"},
+                {"from": "b", "to": "c", "when": "nope"},
+            ],
+        },
+        "when 引用不存在的 upstream": {
+            "entry": "a",
+            "nodes": nodes[:2],
+            "edges": [
+                {"from": "a", "to": "b", "when": 'upstream.missing == "x"'},
+            ],
+        },
+        "边指向不存在的节点": {
+            "entry": "a",
+            "nodes": nodes[:2],
+            "edges": [{"from": "a", "to": "ghost"}],
+        },
+        "entry 不存在": {
+            "entry": "ghost",
+            "nodes": nodes[:2],
+            "edges": [{"from": "a", "to": "b"}],
+        },
+        "成环": {
+            "entry": "a",
+            "nodes": nodes[:2],
+            "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "a"}],
+        },
+    }
+    for name, payload in cases.items():
+        issues = collect_graph_issues(payload)
+        assert issues, f"夹具应当产出 issue：{name}"
+        assert all(
+            issue.node_ids or issue.edge_refs for issue in issues
+        ), f"{name} 的 issue 没有定位：{[i.message for i in issues]}"

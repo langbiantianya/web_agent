@@ -1194,6 +1194,45 @@ async def test_admin_workflow_validate_endpoint_reports_graph_issues():
         await client.aclose()
 
 
+async def test_admin_workflow_validate_endpoint_locates_whole_cycle():
+    """成环时端点给出环上**全部**节点与边，画布才能一次标红整个环。
+
+    修复前这条 issue 在响应里既没有 ``node`` 也没有 ``edge``，画布拿不到任何
+    定位，管理员只能自己对着句子里的「存在环」猜是哪一段出了问题。
+    """
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    try:
+        response = await client.post(
+            "/admin/workflows/validate",
+            json={
+                "csrf_token": csrf,
+                "definition": {
+                    "entry": "a",
+                    "nodes": [
+                        {"id": "a", "type": "agent", "agentCode": "planner"},
+                        {"id": "b", "type": "agent", "agentCode": "writer"},
+                        {"id": "c", "type": "agent", "agentCode": "writer"},
+                    ],
+                    "edges": [
+                        {"from": "a", "to": "b"},
+                        {"from": "b", "to": "c"},
+                        {"from": "c", "to": "a"},
+                    ],
+                },
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["ok"] is False
+        cycle = next(i for i in body["errors"] if "存在环" in i["message"])
+        assert cycle["nodes"] == ["a", "b", "c"]
+        assert cycle["node"] == "a"
+        assert set(cycle["edges"]) == {"a->b", "b->c", "c->a"}
+        assert cycle["edge"] == "a->b"
+    finally:
+        await client.aclose()
+
+
 async def test_admin_workflow_validate_endpoint_accepts_valid_definition():
     """合法定义返回 ok=true。"""
     client, _, _, csrf = await _create_seeded_logged_in_super_admin()

@@ -1112,9 +1112,14 @@ def _definition_errors(definition: dict) -> list[dict]:
     for issue in graph_issues:
         entry = {"message": issue.message}
         if issue.node_ids:
+            # 单值 ``node`` / ``edge`` 先于整组存在，保留给按单值取用的调用方；
+            # 整组 ``nodes`` / ``edges`` 让画布能把整个环、整组孤立节点一次标红，
+            # 而不是只红一个节点让管理员自己顺着箭头找。
             entry["node"] = issue.node_ids[0]
+            entry["nodes"] = list(issue.node_ids)
         if issue.edge_refs:
             entry["edge"] = issue.edge_refs[0]
+            entry["edges"] = list(issue.edge_refs)
         errors.append(entry)
     return errors
 
