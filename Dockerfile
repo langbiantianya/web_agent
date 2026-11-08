@@ -13,7 +13,7 @@
 # 2. **版本钉死**：基础镜像用具体版本号，不用 ``latest``。
 # 3. **非 root**：uid 1000，与 studio 一致。
 
-FROM python:3.11.9-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 # PIP_INDEX_URL 做成构建参数：默认走官方源，国内构建时用
 # `--build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/` 换镜像。
