@@ -740,6 +740,23 @@
           await client.aclose()
 
 
+  async def test_admin_workflow_validate_rejects_malformed_definition():
+      """形状不对的负载必须拿到 400，不能让校验端点 500。"""
+      client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+      try:
+          response = await client.post(
+              "/admin/workflows/validate",
+              json={
+                  "csrf_token": csrf,
+                  "definition": {"entry": "a", "nodes": {"a": {}}, "edges": []},
+              },
+          )
+          assert response.status_code == 400, response.text
+          assert response.json()["ok"] is False
+      finally:
+          await client.aclose()
+
+
   async def test_admin_workflow_validate_requires_csrf():
       """缺 CSRF 时拒绝。"""
       client, _, _, _ = await _create_seeded_logged_in_super_admin()
@@ -808,6 +825,16 @@
           if not isinstance(definition, dict):
               return JSONResponse(
                   {"ok": False, "errors": [{"message": "definition_required"}]},
+                  status_code=400,
+              )
+          # 端点接收任意 JSON：``nodes`` / ``edges`` 类型不对时，
+          # collect_graph_issues 会把它当 list 迭代并炸在 500 上。
+          # 这里先挡掉形状不对的负载，让它们拿到 400 而不是服务端异常。
+          if not isinstance(definition.get("nodes"), list) or not isinstance(
+              definition.get("edges", []), list
+          ):
+              return JSONResponse(
+                  {"ok": False, "errors": [{"message": "definition_shape_invalid"}]},
                   status_code=400,
               )
           authorized = (
