@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.core.workflow_def import (
     WorkflowDefinition,
-    WorkflowEdge,
     WorkflowNode,
     render_template,
 )
@@ -370,6 +371,22 @@ def test_workflow_node_accepts_optional_label():
     assert WorkflowNode(id="s", type="agent", agentCode="p", label="意图识别").label == (
         "意图识别"
     )
+    # label 的全部价值在画布上区分节点，所以它必须能穿过真实落库路径
+    # （app/api/routes/workflow.py 用 model_dump(by_alias=True, exclude_none=True) 存库）。
+    definition = WorkflowDefinition.model_validate(
+        {
+            "entry": "s",
+            "nodes": [
+                {"id": "s", "type": "agent", "agentCode": "p", "label": "意图识别"}
+            ],
+            "edges": [],
+        }
+    )
+    dumped = definition.model_dump(by_alias=True, exclude_none=True)
+    assert dumped["nodes"][0]["label"] == "意图识别"
+    # label 上限 128：超长必须在配置期就被拒，不能存进去再让画布去兜。
+    with pytest.raises(ValueError):
+        WorkflowNode(id="s", type="agent", agentCode="p", label="x" * 129)
 
 
 def test_workflow_definition_keeps_top_level_layout_key():
@@ -385,5 +402,9 @@ def test_workflow_definition_keeps_top_level_layout_key():
     }
     definition = WorkflowDefinition.model_validate(payload)
     dumped = definition.model_dump(by_alias=True, exclude_none=True)
-    assert dumped["layout"]["nodes"]["step1"] == {"x": 80, "y": 120}
-    assert dumped["layout"]["viewport"]["scale"] == 1
+    assert dumped["layout"] == payload["layout"]
+    # dict 相等分不出 80 与 80.0，坐标被改写成浮点会悄悄通过；再比一次 JSON 文本，
+    # 把「键集合、结构、数值类型」一起锁住。
+    assert json.dumps(dumped["layout"], sort_keys=True) == json.dumps(
+        payload["layout"], sort_keys=True
+    )
