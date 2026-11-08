@@ -19,7 +19,22 @@
 - **写操作必须走既有鉴权链**：所有 POST 都要经过 `_origin_ok` + `_require_csrf`（Cookie/请求体/数据库 Session 三方一致）+ `_can_edit_resource`（页面可见性 + 组件权限）。新增端点不得绕过。
 - **既有错误消息逐字不变**：`WorkflowDefinition` 抛出的 `ValueError` 文本在本次改造前后必须完全一致，`tests/test_workflow_def.py` 的既有断言不允许修改。
 - **画布脚本只在编排页加载**：`/admin/workflows` 列表页不得加载 `workflow-editor*.js` / `workflow-editor.css`。
-- **本地 `.venv` 不可用**（`cffi` 为 cp314 编译、当前解释器是 3.15，且 pip 无网络）。Python 测试一律在服务器测试镜像里跑：
+- **测试在本地虚拟环境跑**。`.venv` 里有一批为 cp314 编译的二进制扩展，已全部换成
+  cp315 版本（`cffi` / `uuid-utils` / `xxhash` / `grpcio` / `ormsgpack` / `asyncmy` 等）。
+  本机 Python 是 3.15，**必须禁用 pytest 插件自动加载**，否则 `langsmith` 插件会在
+  导入期打断收集（`-p no:langsmith` 不管用，要用环境变量）：
+
+  ```powershell
+  cd C:\Users\lbty\project\web_agent
+  $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
+  .venv\Scripts\python.exe -m pytest <测试文件> -q -p pytest_asyncio.plugin -p pytest_timeout
+  ```
+
+  本地基线：`tests/test_workflow_def.py` + `tests/test_admin_web.py` = **54 passed**；
+  全量 `tests/` 可收集 **813** 个用例。
+
+  服务器测试镜像（`webagent/tests:oauth-fix`）仍可用，用于需要真实 PostgreSQL 的
+  端到端校验：
 
   ```bash
   # 服务器 100.114.77.27
@@ -28,7 +43,7 @@
     python -m pytest tests/test_admin_web.py tests/test_workflow_def.py -q -p no:langsmith --timeout=300
   ```
 
-  改完服务端源码后必须重建测试镜像再跑（见 Task 2 Step 0）。
+  改完服务端源码后必须重建测试镜像再跑。
 
 - **JS 测试在本地跑**：`node --test tests/js/workflow-editor-core.test.mjs` （本机 Node v24）。
 
@@ -190,7 +205,7 @@
   ```
   规则、检查顺序、消息文本与改造前**逐字一致**。
 
-- [ ] **Step 0: 重建服务器测试镜像**
+- [ ] **Step 0: 重建服务器测试镜像**（仅当需要在服务器上跑时；本地已可跑）
 
   ```bash
   ssh -o BatchMode=yes root@100.114.77.27 \
@@ -3267,16 +3282,25 @@
 
 - [ ] **Step 1: 跑全量回归**
 
+  ```powershell
+  # 本地（首选）
+  cd C:\Users\lbty\project\web_agent
+  $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
+  .venv\Scripts\python.exe -m pytest tests/test_admin_web.py tests/test_workflow_def.py `
+    tests/test_api_e2e.py tests/test_run_graph.py tests/test_migrations.py `
+    -q -p pytest_asyncio.plugin -p pytest_timeout
+
+  # JS
+  node --test tests/js/workflow-editor-core.test.mjs
+  ```
+
   ```bash
-  # 服务器
+  # 服务器（需要真实 PostgreSQL 的用例）
   cd /docker/web-agent-stack && docker run --rm --network host \
     -v /docker/web-agent-stack:/src -w /src webagent/tests:oauth-fix \
     python -m pytest tests/test_admin_web.py tests/test_workflow_def.py \
       tests/test_api_e2e.py tests/test_run_graph.py tests/test_migrations.py -q \
       -p no:langsmith --timeout=300
-
-  # 本地
-  node --test tests/js/workflow-editor-core.test.mjs
   ```
 
   Expected: 全部 PASS。
