@@ -1394,3 +1394,139 @@ test("用例 43：commit 之后会排队一次实时校验", async () => {
     editor.cancelValidation();
   }
 });
+
+// ------------------------------------------------- 全角文本的宽度截断
+
+/** 估算一段文本占几个 em：全角 1，其余按 0.55。测试侧独立实现，不复用产品代码。 */
+function estimateEm(text) {
+  let total = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0);
+    const wide =
+      (code >= 0x2e80 && code <= 0xa4cf) ||
+      (code >= 0xac00 && code <= 0xd7a3) ||
+      (code >= 0xf900 && code <= 0xfaff) ||
+      (code >= 0xff00 && code <= 0xff60) ||
+      (code >= 0x1f300 && code <= 0x1faff);
+    total += wide ? 1 : 0.55;
+  }
+  return total;
+}
+
+test("用例 49：中文标题按显示宽度截断，不撑破卡片", () => {
+  const long = "一".repeat(40);
+  const { dom } = boot({
+    definition: {
+      entry: "a",
+      inputTemplate: "",
+      nodes: [
+        { id: "a", type: "agent", label: long },
+        { id: "b", type: "approval", prompt: long },
+      ],
+      edges: [],
+      layout: { nodes: {}, viewport: { x: 0, y: 0, scale: 1 } },
+    },
+  });
+
+  // 卡片正文可用宽度约 176px，标题字号 13px → 13em；省略号也要占位。
+  const title = findInGroup(findNodeGroup(dom, "a"), "title").textContent;
+  assert.ok(title.endsWith("…"), `应当以省略号结尾：${title}`);
+  assert.equal(title, `${"一".repeat(12)}…`);
+  assert.ok(
+    estimateEm(title) <= 13,
+    `标题估算宽度 ${estimateEm(title)}em 超出卡片可用宽度`,
+  );
+
+  const subtitle = findInGroup(findNodeGroup(dom, "b"), "subtitle")
+    .textContent;
+  assert.equal(subtitle, `${"一".repeat(14)}…`);
+  assert.ok(
+    estimateEm(subtitle) <= 15,
+    `副标题估算宽度 ${estimateEm(subtitle)}em 超出卡片可用宽度`,
+  );
+});
+
+test("用例 50：英文标题的截断行为不变（仍是 18 / 20 字）", () => {
+  const long = "a".repeat(40);
+  const { dom } = boot({
+    definition: {
+      entry: "a",
+      inputTemplate: "",
+      nodes: [
+        { id: "a", type: "agent", label: long },
+        { id: "b", type: "approval", prompt: "b".repeat(40) },
+      ],
+      edges: [],
+      layout: { nodes: {}, viewport: { x: 0, y: 0, scale: 1 } },
+    },
+  });
+
+  const title = findInGroup(findNodeGroup(dom, "a"), "title").textContent;
+  assert.equal(title, `${"a".repeat(17)}…`);
+  assert.equal(title.length, 18);
+
+  const subtitle = findInGroup(findNodeGroup(dom, "b"), "subtitle")
+    .textContent;
+  assert.equal(subtitle, `${"b".repeat(19)}…`);
+  assert.equal(subtitle.length, 20);
+});
+
+// ------------------------------------------------- 整组定位（环）
+
+const cycleDefinition = {
+  entry: "a",
+  inputTemplate: "",
+  nodes: [
+    { id: "a", type: "agent", agentCode: "planner" },
+    { id: "b", type: "agent", agentCode: "planner" },
+    { id: "c", type: "agent", agentCode: "planner" },
+  ],
+  edges: [
+    { from: "a", to: "b" },
+    { from: "b", to: "c" },
+    { from: "c", to: "a" },
+  ],
+  layout: {
+    nodes: {
+      a: { x: 40, y: 40 },
+      b: { x: 336, y: 40 },
+      c: { x: 632, y: 40 },
+    },
+    viewport: { x: 0, y: 0, scale: 1 },
+  },
+};
+
+test("用例 51：成环时环上的每个节点与每条边都标红", async () => {
+  const { dom, editor } = boot({ definition: cycleDefinition, validation: true });
+  const fake = stubFetch(() =>
+    fakeResponse({
+      ok: false,
+      errors: [
+        {
+          message: "definition 存在环，无法确定执行顺序",
+          node: "a",
+          nodes: ["a", "b", "c"],
+          edge: "a->b",
+          edges: ["a->b", "b->c", "c->a"],
+        },
+      ],
+    }),
+  );
+  try {
+    await editor.runValidation();
+
+    for (const id of ["a", "b", "c"]) {
+      assert.ok(
+        findNodeGroup(dom, id).classList.contains("is-error"),
+        `环上的节点 ${id} 应当被标红`,
+      );
+    }
+    const marked = findByClass(dom, "workflow-edge").filter((edge) =>
+      edge.classList.contains("is-error"),
+    );
+    assert.equal(marked.length, 3, "环上的三条边都应当被标红");
+  } finally {
+    fake.restore();
+    editor.cancelValidation();
+  }
+});

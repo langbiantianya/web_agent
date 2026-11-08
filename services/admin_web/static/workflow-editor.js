@@ -323,12 +323,36 @@
     return state.model.edges.find((edge) => edgeKey(edge) === target) || null;
   }
 
+  /** 一条 issue 指到的全部节点 id。
+   *
+   * 服务端既给整组 ``nodes`` 也给首个 ``node``（老字段）；两个都认，缺整组时
+   * 退回单值，老客户端不会因为字段升级而丢高亮。
+   */
+  function issueNodes(issue) {
+    if (!issue) {
+      return [];
+    }
+    if (Array.isArray(issue.nodes) && issue.nodes.length) {
+      return issue.nodes;
+    }
+    return issue.node ? [issue.node] : [];
+  }
+
+  /** 一条 issue 指到的全部边引用（``from->to``），同上兼容整组与单值。 */
+  function issueEdges(issue) {
+    if (!issue) {
+      return [];
+    }
+    if (Array.isArray(issue.edges) && issue.edges.length) {
+      return issue.edges;
+    }
+    return issue.edge ? [issue.edge] : [];
+  }
+
   /** 这条边是否被服务端指出了问题。 */
   function hasEdgeIssue(edge) {
     const ref = `${edge.from}->${edge.to}`;
-    return state.issues.some(
-      (issue) => issue && issue.edge && issue.edge === ref,
-    );
+    return state.issues.some((issue) => issueEdges(issue).includes(ref));
   }
 
   /** 画节点。 */
@@ -347,7 +371,7 @@
       ) {
         group.classList.add("is-selected");
       }
-      if (state.issues.some((issue) => issue.node === node.id)) {
+      if (state.issues.some((issue) => issueNodes(issue).includes(node.id))) {
         group.classList.add("is-error");
       }
       if (drag && drag.kind === "node" && drag.nodeId === node.id) {
@@ -374,14 +398,14 @@
         el(
           "text",
           { class: "title", x: 12, y: 44 },
-          truncate(node.label || node.outputKey || node.id, 18),
+          truncate(node.label || node.outputKey || node.id, 18, 13),
         ),
       );
       group.appendChild(
         el(
           "text",
           { class: "subtitle", x: 12, y: 60 },
-          truncate(nodeSubtitle(node), 20),
+          truncate(nodeSubtitle(node), 20, 15),
         ),
       );
       if (state.model.entry === node.id) {
@@ -429,15 +453,78 @@
   }
 
   /**
+   * 全角字符的码点区间：CJK、假名、谚文、全角标点，以及常见的全角符号与
+   * emoji。这些字符在等宽/比例字体里都按一个 em 占位。
+   */
+  const WIDE_RANGES = [
+    [0x1100, 0x115f],
+    [0x2e80, 0x303e],
+    [0x3041, 0x33ff],
+    [0x3400, 0x4dbf],
+    [0x4e00, 0x9fff],
+    [0xa000, 0xa4cf],
+    [0xac00, 0xd7a3],
+    [0xf900, 0xfaff],
+    [0xfe30, 0xfe6f],
+    [0xff00, 0xff60],
+    [0xffe0, 0xffe6],
+    [0x1f300, 0x1faff],
+    [0x20000, 0x3fffd],
+  ];
+
+  /** 单个字符占几个 em：全角 1，半角按 0.55 估。 */
+  function charEm(char) {
+    const code = char.codePointAt(0);
+    for (const [low, high] of WIDE_RANGES) {
+      if (code >= low && code <= high) {
+        return 1;
+      }
+    }
+    return 0.55;
+  }
+
+  /** 一段文本大约占几个 em。 */
+  function textEm(text) {
+    let total = 0;
+    for (const char of text) {
+      total += charEm(char);
+    }
+    return total;
+  }
+
+  /**
    * 截断过长文本。SVG 的 text 不会自动省略，超长会溢出卡片，
    * 所以这里自己截（设计文档 :205「副标题单行省略」）。
+   *
+   * 同时看两个上限：``limit`` 是字符数（可读性，别让一行塞太多字），
+   * ``maxEm`` 是显示宽度。只看字符数会在中文上溢出近一倍——13px 字号下一个
+   * 汉字约 13px 宽，18 个汉字 234px，而卡片正文可用宽度只有约 176px。
+   * 半角字符仍然按原来的 18/20 字走，只有全角文本会提前收口。
    */
-  function truncate(text, limit) {
+  function truncate(text, limit, maxEm) {
     const value = String(text === undefined || text === null ? "" : text);
-    if (value.length <= limit) {
+    if (value.length <= limit && textEm(value) <= maxEm) {
       return value;
     }
-    return `${value.slice(0, Math.max(1, limit - 1))}…`;
+    const budget = Math.max(1, limit - 1);
+    // 省略号按一个全角字符预留，宁可少留半个字也不要把卡片撑破。
+    const widthBudget = Math.max(0, maxEm - 1);
+    let kept = "";
+    let count = 0;
+    let used = 0;
+    for (const char of value) {
+      if (count >= budget) {
+        break;
+      }
+      const em = charEm(char);
+      if (used + em > widthBudget) {
+        break;
+      }
+      kept += char;
+      count += 1;
+      used += em;
+    }
+    return `${kept}…`;
   }
 
   /** 把当前 model 写回隐藏的 definition 字段。 */
