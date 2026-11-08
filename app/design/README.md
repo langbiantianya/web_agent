@@ -19,6 +19,7 @@
 | V4.5 | [备份恢复、沙箱准入与成本闭环](v4.5-recovery-governance.md) | PostgreSQL PITR、自定义 seccomp、共享配额、真实资源成本、MCP OAuth |
 | V4.6 | [用户 OAuth 登录与会话历史归属](v4.6-user-oauth-conversation.md) | OIDC 登录、本地用户、服务端会话、会话 owner 隔离与迁移方案 |
 | V4.7 | [独立 admin-web、Casbin RBAC 与 Ludic SSR](v4.7-oauth-admin.md) | 独立容器、OAuth `admin_user`、账号密码超级管理员、Casbin、页面/组件权限、三主题、六类业务页与旧管理栈退役 |
+| V4.8 | [Workflow 可视化编排器](v4.8-workflow-visual-editor.md) | 拖拽画布编排、节点 `label`、definition 顶层 `layout` 坐标、服务端校验端点与结构化问题定位、撤销重做与自动布局 |
 
 跨项目版本历史、已移除方案和任务导航见 [设计总目录](../../docs/design/README.md)。未完成事项只在 [TODO](../../docs/design/TODO.md) 中维护。
 
@@ -35,4 +36,5 @@
 - 配置数据库恢复、自定义 seccomp、跨 studio 配额、成本费率或 MCP OAuth：读 V4.5。
 - 设计或实现终端用户登录、Cookie 会话和用户历史隔离：读 V4.6。
 - 设计或实现独立 admin-web 容器、平台超级管理员、Casbin、Ludic SSR、UI 权限和主题：读 V4.7。
+- 设计或实现工作流的拖拽画布编排、节点属性、条件边和实时校验：读 V4.8。
 - 修改 studio 契约：同时读 [V4 调用侧](v4-tools-skills.md) 和 [studio 服务侧](../../services/studio/design/v4-current.md)。
