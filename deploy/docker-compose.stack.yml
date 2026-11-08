@@ -1,0 +1,104 @@
+# 单机完整栈：客户端 8000 + 管理端 8001 + studio 9000。
+#
+# 数据服务（MySQL / Redis / Postgres）**不在**本文件里——它们是独立的 compose
+# 项目，生命周期长于应用：重建应用不该连带重启数据库。
+#
+#   docker compose -f deploy/docker-compose.stack.yml --env-file .env up -d --build
+#
+# `--env-file .env` 只影响 compose 自己的**变量插值**（下面服务里的 `${...}`）；
+# 容器内部的环境变量走 `env_file: ../.env`。两个都指向仓库根的那份 `.env`，
+# 免得出现「插值读到一套、容器里是另一套」的分裂。
+#
+# 端口一律绑 `0.0.0.0`：本栈是要被外部浏览器访问的，绑回环等于没部署。
+services:
+  # ---------------------------------------------------------------- studio
+  #
+  # 客户端启动时就要连它（`STUDIO_EXEC_REQUIRED=true`），所以客户端必须等它
+  # healthy。镜像是「执行模型指定的代码」的边界，运行期加固（只读 rootfs、
+  # 禁出网、drop capabilities）属于调度器职责，这里只保留 fast 档所需的资源上限。
+  studio:
+    build:
+      context: ..
+      dockerfile: services/studio/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        APT_MIRROR: ${APT_MIRROR:-}
+    image: webagent/studio:2.0.0
+    container_name: webagent-studio
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:9000:9000"
+    environment:
+      STUDIO_HOST: "0.0.0.0"
+      STUDIO_PORT: "9000"
+      STUDIO_MAX_CONCURRENCY: "4"
+      STUDIO_MAX_QUEUE: "16"
+      STUDIO_MAX_TIMEOUT_MS: "60000"
+      STUDIO_PROFILE: "fast"
+      STUDIO_VERSION: "2.0.0"
+    tmpfs:
+      - /tmp:size=128m
+    mem_limit: 1g
+    pids_limit: 512
+
+  # ---------------------------------------------------------------- 客户端
+  #
+  # `run.py` 启动时先跑 `alembic upgrade head`，所以数据库必须已经起来。
+  # 这里不给 depends_on：数据服务是另一个 compose 项目，跨项目 depends_on
+  # 不生效，靠部署顺序保证。
+  web-client:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: webagent/app:0.2.0
+    container_name: webagent-client
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      # 容器网络内的服务名；写 IP 反而会被 NAT 绕回宿主机。
+      STUDIO_EXEC_ADDR: studio:9000
+      STUDIO_EXEC_REQUIRED: "true"
+    depends_on:
+      studio:
+        condition: service_healthy
+    mem_limit: 2g
+    pids_limit: 512
+
+  # ---------------------------------------------------------------- 管理端
+  #
+  # 只读 rootfs：任何需要写盘的东西都必须落到 /tmp 的 tmpfs 或挂载卷。
+  admin-web:
+    build:
+      context: ..
+      dockerfile: Dockerfile.admin
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: webagent/admin-web:0.1.0
+    container_name: webagent-admin
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 256
+    ports:
+      - "0.0.0.0:8001:8001"
+    env_file:
+      - ../.env
+    environment:
+      ADMIN_DATABASE_URL: ${ADMIN_DATABASE_URL:-}
+      ADMIN_PUBLIC_BASE_URL: ${ADMIN_PUBLIC_BASE_URL:-http://127.0.0.1:8001}
+      # http 直连时**必须** false：true 时浏览器不会回传会话 Cookie，
+      # 表现是「登录成功但立刻掉回登录页」，且不报错。
+      ADMIN_SESSION_COOKIE_SECURE: ${ADMIN_SESSION_COOKIE_SECURE:-false}
+      ADMIN_WEB_PORT: "8001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
