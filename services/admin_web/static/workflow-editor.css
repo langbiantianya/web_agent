@@ -1,1 +1,241 @@
-/* Workflow 画布编排器样式占位，Task 6 填充。 */
+/* Workflow 画布编排器。颜色一律走 admin.css 已有的 CSS 变量，
+   这样三套主题与日夜模式自动跟随，不另起一套调色板。 */
+
+.workflow-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workflow-editor-toolbar h1 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.workflow-editor-toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.workflow-editor-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: start;
+}
+
+.workflow-editor-canvas-wrap {
+  min-height: 620px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  overflow: hidden;
+}
+
+.workflow-editor-canvas {
+  position: relative;
+  height: 620px;
+  cursor: grab;
+  background-image:
+    linear-gradient(to right, var(--color-border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--color-border) 1px, transparent 1px);
+  background-size: 24px 24px;
+  touch-action: none;
+}
+
+.workflow-editor-canvas.is-panning {
+  cursor: grabbing;
+}
+
+.workflow-editor-canvas.is-node-dragging {
+  cursor: grabbing;
+}
+
+.workflow-editor-canvas.is-readonly {
+  cursor: default;
+}
+
+.workflow-editor-canvas svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.workflow-node {
+  cursor: move;
+}
+
+.workflow-node rect.body {
+  fill: var(--color-bg-surface);
+  stroke: var(--color-border);
+  stroke-width: 1;
+  rx: 8;
+}
+
+.workflow-node.is-selected rect.body {
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}
+
+.workflow-node.is-error rect.body {
+  stroke: var(--color-danger);
+  stroke-width: 2;
+}
+
+.workflow-node.is-dragging rect.body {
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}
+
+.workflow-node text.title {
+  fill: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.workflow-node text.subtitle {
+  fill: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+/* 入口节点左侧的标记 */
+.workflow-node text.entry-mark {
+  fill: var(--color-accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.workflow-node text.badge {
+  fill: var(--color-accent-text);
+  font-size: 10px;
+}
+
+.workflow-node rect.badge-bg {
+  fill: var(--color-accent);
+  rx: 4;
+}
+
+.workflow-node circle.port {
+  fill: var(--color-bg-surface);
+  stroke: var(--color-accent);
+  stroke-width: 2;
+  cursor: crosshair;
+}
+
+.workflow-edge path {
+  fill: none;
+  stroke: var(--color-text-secondary);
+  stroke-width: 2;
+}
+
+.workflow-edge.is-conditional path {
+  stroke: var(--color-warning);
+  stroke-dasharray: 6 4;
+}
+
+.workflow-edge.is-selected path {
+  stroke: var(--color-accent);
+  stroke-width: 3;
+}
+
+.workflow-edge.is-error path {
+  stroke: var(--color-danger);
+  stroke-width: 3;
+}
+
+.workflow-edge text {
+  fill: var(--color-text-secondary);
+  font-size: 10px;
+}
+
+/* 边上的箭头头部 */
+.workflow-arrow-head {
+  fill: var(--color-text-secondary);
+  stroke: none;
+}
+
+.workflow-editor-palette-panel,
+.workflow-editor-inspector-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workflow-palette {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workflow-editor-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workflow-editor-inspector label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.workflow-editor-inspector input,
+.workflow-editor-inspector select,
+.workflow-editor-inspector textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.workflow-editor-errorbar {
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-surface);
+  padding: 12px 16px;
+  background: var(--color-bg-surface);
+}
+
+.workflow-editor-errors {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--color-danger);
+  font-size: 13px;
+}
+
+.workflow-editor-json-panel {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.workflow-editor-json {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.workflow-editor-state {
+  display: none;
+}
+
+.workflow-editor-save-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workflow-editor-save-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+@media (max-width: 1100px) {
+  .workflow-editor-layout {
+    grid-template-columns: 1fr;
+  }
+}
