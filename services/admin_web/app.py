@@ -908,6 +908,7 @@ _PYDANTIC_MESSAGE_WITH_FIELD: dict[str, str] = {
     "string_type": "字段 {field} 必须是字符串",
     "int_type": "字段 {field} 必须是整数",
     "int_parsing": "字段 {field} 必须是整数",
+    "int_from_float": "字段 {field} 必须是整数",
     "bool_type": "字段 {field} 必须是布尔值",
     "too_long": "字段 {field} 长度超出限制",
     "string_too_long": "字段 {field} 长度超出限制",
@@ -916,6 +917,8 @@ _PYDANTIC_MESSAGE_WITH_FIELD: dict[str, str] = {
     "string_too_short": "字段 {field} 长度不足",
     "greater_than_equal": "字段 {field} 小于允许的最小值",
     "less_than_equal": "字段 {field} 大于允许的最大值",
+    "list_type": "字段 {field} 必须是数组",
+    "model_type": "字段 {field} 必须是对象",
 }
 
 #: pydantic 错误类型 → 中文文案模板（定位不到字段时用）。
@@ -925,6 +928,7 @@ _PYDANTIC_MESSAGE_NO_FIELD: dict[str, str] = {
     "string_type": "字段必须是字符串",
     "int_type": "字段必须是整数",
     "int_parsing": "字段必须是整数",
+    "int_from_float": "字段必须是整数",
     "bool_type": "字段必须是布尔值",
     "too_long": "字段长度超出限制",
     "string_too_long": "字段长度超出限制",
@@ -933,6 +937,8 @@ _PYDANTIC_MESSAGE_NO_FIELD: dict[str, str] = {
     "string_too_short": "字段长度不足",
     "greater_than_equal": "字段小于允许的最小值",
     "less_than_equal": "字段大于允许的最大值",
+    "list_type": "字段必须是数组",
+    "model_type": "字段必须是对象",
 }
 
 
@@ -982,7 +988,9 @@ def _pydantic_field_path(loc: tuple, nodes: list) -> str | None:
 def _pydantic_message(error_type: str, raw: str, field: str | None) -> str:
     """把 pydantic 的英文内部文案翻成中文。
 
-    未知错误类型保留原始 ``msg`` 兜底——不吞掉信息。
+    未覆盖的错误类型**不再把英文原文透出去**——后台是中文界面，
+    英文内部文案不该出现在管理员眼前。原始 ``type`` 与 ``msg`` 改记到
+    日志，信息不丢，只是从响应挪到服务端。
     """
     if error_type == "value_error":
         # 我们自己抛的 ValueError，消息本来就是中文，只去掉英文前缀
@@ -995,7 +1003,12 @@ def _pydantic_message(error_type: str, raw: str, field: str | None) -> str:
         message = _PYDANTIC_MESSAGE_NO_FIELD.get(error_type)
         if message is not None:
             return message
-    return raw
+    logger.warning(
+        "workflow definition 校验出现未归一的 pydantic 错误类型：type=%r msg=%r",
+        error_type,
+        raw,
+    )
+    return f"字段 {field} 不合法" if field else "定义不合法"
 
 
 def _definition_errors(definition: dict) -> list[dict]:

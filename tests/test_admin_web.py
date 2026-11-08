@@ -1401,3 +1401,72 @@ async def test_admin_workflow_validate_deduplicates_model_level_graph_issue():
         assert "Value error" not in orphans[0]["message"], errors
     finally:
         await client.aclose()
+
+
+async def test_admin_workflow_validate_normalizes_fractional_int_message():
+    """整数字段收到小数时也不能漏出 pydantic 的英文文案。"""
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    try:
+        response = await client.post(
+            "/admin/workflows/validate",
+            json={
+                "csrf_token": csrf,
+                "definition": {
+                    "entry": "a",
+                    "nodes": [
+                        {
+                            "id": "a",
+                            "type": "agent",
+                            "agentCode": "p",
+                            "requiredApprovals": 1.5,
+                        }
+                    ],
+                    "edges": [],
+                },
+            },
+        )
+        assert response.status_code == 200, response.text
+        errors = response.json()["errors"]
+        hits = [
+            item
+            for item in errors
+            if item.get("field") == "a.requiredApprovals"
+        ]
+        assert hits, errors
+        assert hits[0]["message"] == "字段 a.requiredApprovals 必须是整数", errors
+        assert hits[0].get("node") == "a", errors
+        assert not any(
+            "Input should be" in item["message"] for item in errors
+        ), errors
+    finally:
+        await client.aclose()
+
+
+def test_admin_workflow_validate_shape_messages_are_localized():
+    """形状类负载的 pydantic 文案也不能是英文。"""
+    from services.admin_web.app import _definition_errors
+
+    for definition in (
+        {"entry": "a", "nodes": {"a": {}}, "edges": []},
+        {"entry": "a", "nodes": ["x"], "edges": []},
+        {"entry": "a", "nodes": [None], "edges": []},
+        {"entry": "a", "nodes": [], "edges": {"a": {}}},
+    ):
+        errors = _definition_errors(definition)
+        messages = " ".join(item["message"] for item in errors)
+        assert "Input should be a valid list" not in messages, errors
+        assert "Input should be a valid dictionary" not in messages, errors
+
+
+def test_admin_workflow_validate_unknown_error_type_falls_back_to_chinese():
+    """未覆盖的 pydantic 错误类型也要给中文，不能把英文原文透出去。"""
+    from services.admin_web.app import _pydantic_message
+
+    assert (
+        _pydantic_message("some_unknown_type", "Input should be ...", "a.x")
+        == "字段 a.x 不合法"
+    )
+    assert (
+        _pydantic_message("some_unknown_type", "Input should be ...", None)
+        == "定义不合法"
+    )
