@@ -54,17 +54,29 @@
   /** definition → model。 */
   function toModel(definition) {
     const def = definition || {};
-    const nodes = (def.nodes || []).map(normalizeNode);
-    const edges = (def.edges || []).map(normalizeEdge);
+    // nodes / edges 可能不是数组（服务端只保证键存在，不保证类型），
+    // 非数组一律按空数组处理，绝不抛异常把画布打挂。
+    const rawNodes = Array.isArray(def.nodes) ? def.nodes : [];
+    const rawEdges = Array.isArray(def.edges) ? def.edges : [];
+    const nodes = rawNodes.map(normalizeNode);
+    const edges = rawEdges.map(normalizeEdge);
     const layout = def.layout || {};
-    const layoutNodes = {};
-    Object.keys(layout.nodes || {}).forEach((id) => {
-      const point = layout.nodes[id] || {};
-      layoutNodes[id] = {
-        x: Number(point.x || 0),
-        y: Number(point.y || 0),
-      };
-    });
+    // 节点 id 来自用户数据，可能正好叫 __proto__。
+    // 普通对象上写 "__proto__" 会触发原型 setter，键被静默吞掉，
+    // 所以这里用无原型对象承载，保证 own property 语义。
+    const layoutNodes = Object.create(null);
+    const rawLayoutNodes = layout.nodes;
+    if (rawLayoutNodes && typeof rawLayoutNodes === "object") {
+      Object.keys(rawLayoutNodes).forEach((id) => {
+        const owned = Object.prototype.hasOwnProperty.call(rawLayoutNodes, id);
+        const point = owned && rawLayoutNodes[id] ? rawLayoutNodes[id] : {};
+        const safe = point && typeof point === "object" ? point : {};
+        layoutNodes[id] = {
+          x: Number(safe.x || 0),
+          y: Number(safe.y || 0),
+        };
+      });
+    }
     const viewport = layout.viewport || {};
     return {
       entry: String(def.entry || (nodes[0] ? nodes[0].id : "")),
@@ -86,6 +98,10 @@
 
   /** model → definition，输出里不出现 null 字段。 */
   function toDefinition(model) {
+    // 裸 model 可能没有 layout，按空布局兜底，避免取属性时抛异常。
+    const layout = model.layout || {};
+    const layoutNodes = layout.nodes || {};
+    const layoutViewport = layout.viewport || { x: 0, y: 0, scale: 1 };
     return {
       entry: model.entry || "",
       inputTemplate: model.inputTemplate || "",
@@ -106,8 +122,8 @@
         when: edge.when || "",
       })),
       layout: {
-        nodes: model.layout.nodes,
-        viewport: model.layout.viewport,
+        nodes: layoutNodes,
+        viewport: layoutViewport,
       },
     };
   }
@@ -195,7 +211,10 @@
   function computeLayout(model) {
     const ids = model.nodes.map((node) => node.id);
     const idSet = new Set(ids);
-    const predecessors = {};
+    // 节点 id 由用户数据决定，可能叫 __proto__ 之类。
+    // 普通对象上以这些 id 建键会触发原型 setter，键被静默吞掉甚至抛错，
+    // 所以凡是「以 id 为键」的字典一律用无原型对象。
+    const predecessors = Object.create(null);
     ids.forEach((id) => {
       predecessors[id] = [];
     });
@@ -204,7 +223,7 @@
         predecessors[edge.to].push(edge.from);
       }
     });
-    const level = {};
+    const level = Object.create(null);
     ids.forEach((id) => {
       level[id] = 0;
     });
@@ -224,7 +243,7 @@
         break;
       }
     }
-    const buckets = {};
+    const buckets = Object.create(null);
     ids.forEach((id) => {
       const key = String(level[id]);
       if (!buckets[key]) {
@@ -235,7 +254,7 @@
     const levels = Object.keys(buckets)
       .map(Number)
       .sort((left, right) => left - right);
-    const positions = {};
+    const positions = Object.create(null);
     levels.forEach((depth, column) => {
       const bucket = buckets[String(depth)];
       bucket.forEach((id, row) => {
