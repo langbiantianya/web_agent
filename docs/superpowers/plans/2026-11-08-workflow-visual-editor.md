@@ -599,8 +599,31 @@
   以及旧 `_validate_graph` 里内联的边端点 / entry 存在性检查（这些逻辑已经
   在 `collect_graph_issues` 里）。
 
-  > **保留** `_topo_order` / `_check_reachable` 之外的公开属性：`entry_id`、
-  > `node_by_id`、`topo_order`、`template_vars`、`render_input` 一律不动。
+  > **保留不动**：`_topo_order`、`entry_id`、`node_by_id`、`topo_order`、
+  > `template_vars`、`render_input`。
+  >
+  > **已核实**：这五个私有方法**没有任何测试或外部代码直接调用**，
+  > 删除是安全的。
+
+- [ ] **Step 4b: 修掉指向被删方法的 docstring 交叉引用**
+
+  删除私有方法后，有四处 Sphinx 交叉引用会指向不存在的成员，必须一起改掉
+  （否则文档构建出现坏引用）：
+
+  | 文件 | 原文 | 改成 |
+  | --- | --- | --- |
+  | `app/core/run_graph.py` | `:meth:`WorkflowDefinition._check_outgoing_uniform`` | `:func:`collect_graph_issues`` |
+  | `app/core/run_graph.py` | `:meth:`WorkflowDefinition._validate_conditions`` | `:func:`collect_graph_issues`` |
+  | `app/core/expr.py` | `:meth:`WorkflowDefinition._validate_conditions`` | `:func:`collect_graph_issues`` |
+  | `app/core/workflow_def.py` | `:meth:`_validate_template_vars``（在 `template_vars` 的 docstring 里） | `:func:`collect_graph_issues`` |
+
+  改完跑一遍：
+
+  ```bash
+  grep -rn "_check_outgoing_uniform\|_validate_conditions\|_validate_template_vars\|_check_reachable\|_check_fanin_shape" app/ tests/
+  ```
+
+  Expected: 无输出。
 
 - [ ] **Step 5: 跑测试确认通过**
 
