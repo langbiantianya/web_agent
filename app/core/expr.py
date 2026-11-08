@@ -27,7 +27,7 @@ RCE 能力交给任何能调 ``PUT /api/workflows/{code}`` 的人。这里用一
 比较规则刻意保守：**类型不同一律为 False，不抛错**。把数字和字符串比大小在
 任何语言里都没有明确答案，与其猜一个方向，不如让条件不成立走 else 分支——
 那是用户能看见、能改的行为。真正的拼写错误由配置期校验拦（见
-:meth:`WorkflowDefinition._validate_conditions`），不会拖到运行期。
+:func:`collect_graph_issues`），不会拖到运行期。
 """
 
 from __future__ import annotations

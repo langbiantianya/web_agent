@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from app.core.workflow_def import (
     WorkflowDefinition,
     WorkflowNode,
+    collect_graph_issues,
     render_template,
 )
 
@@ -408,3 +410,59 @@ def test_workflow_definition_keeps_top_level_layout_key():
     assert json.dumps(dumped["layout"], sort_keys=True) == json.dumps(
         payload["layout"], sort_keys=True
     )
+
+
+# ------------------------------------------------- 结构化图校验（V4.8）
+
+
+def test_collect_graph_issues_reports_all_problems_with_targets():
+    """一次收集全部问题，并给每条问题标出节点或边。"""
+    payload = {
+        "entry": "step1",
+        "nodes": [
+            {"id": "step1", "type": "agent", "agentCode": "planner"},
+            {"id": "review", "type": "agent", "agentCode": "writer"},
+            {"id": "lonely", "type": "agent", "agentCode": "writer"},
+        ],
+        "edges": [
+            {"from": "step1", "to": "review", "when": "upstream.nope == \"x\""},
+        ],
+    }
+    issues = collect_graph_issues(payload)
+    messages = [issue.message for issue in issues]
+    assert any("lonely" in m for m in messages)
+    assert any("upstream.nope" in m for m in messages)
+    orphan = next(i for i in issues if "lonely" in i.message)
+    assert "lonely" in orphan.node_ids
+    bad_edge = next(i for i in issues if "upstream.nope" in i.message)
+    assert "step1->review" in bad_edge.edge_refs
+
+
+def test_collect_graph_issues_is_empty_for_valid_graph():
+    """合法图没有 issue。"""
+    payload = {
+        "entry": "a",
+        "nodes": [
+            {"id": "a", "type": "agent", "agentCode": "planner"},
+            {"id": "b", "type": "agent", "agentCode": "writer"},
+        ],
+        "edges": [{"from": "a", "to": "b"}],
+    }
+    assert collect_graph_issues(payload) == []
+
+
+def test_validate_graph_message_unchanged_after_refactor():
+    """改造后 WorkflowDefinition 抛出的消息与既有断言逐字一致。"""
+    payload = {
+        "entry": "a",
+        "nodes": [
+            {"id": "a", "type": "agent", "agentCode": "planner"},
+            {"id": "b", "type": "agent", "agentCode": "writer"},
+        ],
+        "edges": [{"from": "a", "to": "b", "when": "upstream.missing == \"x\""}],
+    }
+    with pytest.raises(ValidationError) as excinfo:
+        WorkflowDefinition.model_validate(payload)
+    text = str(excinfo.value)
+    assert "upstream.missing" in text
+    assert "不存在" in text

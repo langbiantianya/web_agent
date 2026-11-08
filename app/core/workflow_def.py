@@ -22,6 +22,7 @@ V3.1 起节点还有两种类型（见 :class:`NodeType`）：``agent``（默认
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
@@ -137,6 +138,339 @@ class WorkflowEdge(BaseModel):
     when: str = Field(default="", max_length=200)
 
 
+@dataclass(frozen=True)
+class GraphIssue:
+    """一条图结构问题，附带定位信息。
+
+    ``message`` 与改造前 ``ValueError`` 的文本逐字一致——它是给管理员看的
+    唯一文案来源，前端不另造说法。
+
+    ``node_ids`` / ``edge_refs`` 让画布能把错误高亮到具体节点或边，
+    而不是让用户在一句中文里自己找名字。
+    """
+
+    message: str
+    node_ids: tuple[str, ...] = ()
+    edge_refs: tuple[str, ...] = ()
+
+
+def collect_graph_issues(payload: dict) -> list[GraphIssue]:
+    """收集 definition 的全部图结构问题。
+
+    规则、检查顺序与错误文案与 ``WorkflowDefinition`` 校验期完全一致；
+    区别只在于这里**收集全部**问题并带上定位，而不是遇到第一条就抛。
+
+    这里是图结构规则的**唯一一份实现**：保存期的 ``WorkflowDefinition``
+    校验与画布的实时校验都走它，不存在「运行期一套、校验端点一套」的
+    分叉。
+    """
+    issues: list[GraphIssue] = []
+    ids = {str(n.get("id")) for n in payload.get("nodes") or []}
+    entry = str(payload.get("entry") or "")
+    edges = payload.get("edges") or []
+
+    for edge in edges:
+        src = str(edge.get("from") or "")
+        dst = str(edge.get("to") or "")
+        if src not in ids or dst not in ids:
+            issues.append(
+                GraphIssue(
+                    message=f"edge 引用了不存在的节点：{src} -> {dst}",
+                    node_ids=tuple(sorted({src, dst} - ids)),
+                    edge_refs=(f"{src}->{dst}",),
+                )
+            )
+    if entry and entry not in ids:
+        issues.append(
+            GraphIssue(
+                message=f"entry 节点不存在：{entry}",
+                node_ids=(entry,),
+            )
+        )
+
+    issues.extend(_detect_cycle(payload))
+    issues.extend(_detect_orphans(payload))
+    issues.extend(_detect_fanin_shape(payload))
+    issues.extend(_detect_outgoing_mixed(payload))
+    issues.extend(_detect_condition_problems(payload))
+    issues.extend(_detect_template_problems(payload))
+    return issues
+
+
+def _detect_cycle(payload: dict) -> list[GraphIssue]:
+    """检测环。
+
+    拓扑排序必须能覆盖全部节点，否则执行顺序无法确定（还会触发
+    ``recursion_limit``）。
+
+    消息与改造前的 ``ValueError`` 文本逐字一致。
+    """
+    # 节点 id 去重：adj/indeg 是按 id 建键的字典，重复 id 若留在 ids 里会让
+    # len(ids) 虚高，把无环的图误判成有环。改造前这里用的是 {n.id for n in nodes}。
+    ids = list(dict.fromkeys(str(n.get("id")) for n in payload.get("nodes") or []))
+    adj: dict[str, list[str]] = {i: [] for i in ids}
+    indeg: dict[str, int] = {i: 0 for i in ids}
+    for edge in payload.get("edges") or []:
+        src = str(edge.get("from") or "")
+        dst = str(edge.get("to") or "")
+        if src in adj and dst in adj:
+            adj[src].append(dst)
+            indeg[dst] += 1
+    ready = [i for i in ids if indeg[i] == 0]
+    seen = 0
+    while ready:
+        cur = ready.pop(0)
+        seen += 1
+        for nxt in adj[cur]:
+            indeg[nxt] -= 1
+            if indeg[nxt] == 0:
+                ready.append(nxt)
+    if seen != len(ids):
+        return [GraphIssue(message="definition 存在环，无法确定执行顺序")]
+    return []
+
+
+def _detect_orphans(payload: dict) -> list[GraphIssue]:
+    """检测从 entry 走不到的孤立节点。
+
+    孤立节点是最阴险的一种配置错误：保存不报错、图能编译，但那个节点永远
+    不会被执行，用户却以为它在流程里。与其在运行日志里让人猜，不如在保存
+    时直接指出来。
+
+    消息与改造前的 ``ValueError`` 文本逐字一致。
+    """
+    ids = {str(n.get("id")) for n in payload.get("nodes") or []}
+    if not ids:
+        return []
+    nodes = payload.get("nodes") or []
+    entry = str(payload.get("entry") or "") or str(nodes[0].get("id"))
+    adj: dict[str, list[str]] = {i: [] for i in ids}
+    for edge in payload.get("edges") or []:
+        src = str(edge.get("from") or "")
+        dst = str(edge.get("to") or "")
+        if src in adj and dst in adj:
+            adj[src].append(dst)
+    seen = {entry}
+    queue = [entry]
+    while queue:
+        cur = queue.pop()
+        for nxt in adj.get(cur, []):
+            if nxt not in seen:
+                seen.add(nxt)
+                queue.append(nxt)
+    orphans = ids - seen
+    if orphans:
+        return [
+            GraphIssue(
+                message=(
+                    "以下节点从 entry 走不到（孤立节点）："
+                    + "、".join(sorted(orphans))
+                ),
+                node_ids=tuple(sorted(orphans)),
+            )
+        ]
+    return []
+
+
+def _detect_fanin_shape(payload: dict) -> list[GraphIssue]:
+    """检测汇聚节点入边混条件边。
+
+    LangGraph 对多入边节点的处理是「等齐所有入边才触发」。若其中一条是
+    条件边而这次没命中，汇聚节点就会永远等不到——run 静默地少跑一段，
+    最后还以 done 收尾。
+
+    例外是「所有入边都是条件边」：那就得靠运行期再判一次，超出本版范围，
+    因此直接拒绝并说明怎么办。
+
+    消息与改造前的 ``ValueError`` 文本逐字一致。
+    """
+    ids = {str(n.get("id")) for n in payload.get("nodes") or []}
+    incoming: dict[str, list[dict]] = {i: [] for i in ids}
+    for edge in payload.get("edges") or []:
+        dst = str(edge.get("to") or "")
+        if dst in incoming:
+            incoming[dst].append(edge)
+    issues: list[GraphIssue] = []
+    for node_id, edges in incoming.items():
+        if len(edges) < 2:
+            continue
+        conditional = [e for e in edges if e.get("when")]
+        if not conditional:
+            continue
+        refs = tuple(
+            f"{e.get('from')}->{node_id}" for e in conditional
+        )
+        if len(conditional) < len(edges):
+            bad = "、".join(f"{e.get('from')} --when--> {node_id}" for e in conditional)
+            issues.append(
+                GraphIssue(
+                    message=(
+                        f"节点 {node_id} 是汇聚节点（{len(edges)} 条入边），"
+                        f"但入边里混了条件边（{bad}）：条件不成立时它会永远等不到。"
+                        f"请把入边全部改成无条件边，或让条件节点直接连到 {node_id} 的下游。"
+                    ),
+                    node_ids=(node_id,),
+                    edge_refs=refs,
+                )
+            )
+        else:
+            issues.append(
+                GraphIssue(
+                    message=(
+                        f"节点 {node_id} 的 {len(edges)} 条入边全是条件边："
+                        f"本版不支持「多条条件边汇聚到同一节点」，请改成无条件汇聚。"
+                    ),
+                    node_ids=(node_id,),
+                    edge_refs=refs,
+                )
+            )
+    return issues
+
+
+def _detect_outgoing_mixed(payload: dict) -> list[GraphIssue]:
+    """检测同一节点出边混用条件与无条件。
+
+    混用时「无条件那部分到底还走不走」要靠读者自己推断，语义不明确；
+    LangGraph 虽然能跑，但排查起来很痛苦。明确二选一更好。
+
+    消息与改造前的 ``ValueError`` 文本逐字一致。
+    """
+    outgoing: dict[str, list[dict]] = {}
+    for edge in payload.get("edges") or []:
+        outgoing.setdefault(str(edge.get("from") or ""), []).append(edge)
+    issues: list[GraphIssue] = []
+    for node_id, edges in outgoing.items():
+        conditional = [e for e in edges if e.get("when")]
+        if conditional and len(conditional) < len(edges):
+            issues.append(
+                GraphIssue(
+                    message=(
+                        f"节点 {node_id} 的出边里条件边与无条件边混用："
+                        f"请统一成「全无条件（并行）」或「全条件（分支）」。"
+                    ),
+                    node_ids=(node_id,),
+                )
+            )
+    return issues
+
+
+def _detect_condition_problems(payload: dict) -> list[GraphIssue]:
+    """检测 when 表达式的语法错误与未知变量。
+
+    变量校验是这里最有价值的一条：``upstream.plan`` 里 ``plan`` 拼错、或引用了
+    一个已被删掉的节点，表达式照样能通过语法检查，运行期只会安静地求值成
+    ``None`` → 条件为假 → **走错分支**。分支选错不会有任何报错，只会在生产里
+    表现为「为什么走了 else 分支」，所以这类错误必须挡在保存时。
+
+    语法只认两种写法：``user_input`` 与 ``upstream.<outputKey>``。刻意**不**
+    放行裸 ``plan``：求值期的 scope 只有这两个根（见 run_graph 的路由函数），
+    裸名会求值成 ``None``；而放行它还会引出「某个节点恰好叫 ``user_input``」
+    这类遮蔽问题。与其留一个静默为假的写法，不如保存时直接告诉正确写法。
+
+    消息与改造前的 ``ValueError`` 文本逐字一致。
+    """
+    keys = {
+        str(n.get("outputKey") or n.get("id"))
+        for n in payload.get("nodes") or []
+    }
+    issues: list[GraphIssue] = []
+    for edge in payload.get("edges") or []:
+        when = str(edge.get("when") or "")
+        if not when:
+            continue
+        src = str(edge.get("from") or "")
+        dst = str(edge.get("to") or "")
+        ref = f"{src}->{dst}"
+        where = f"边 {src} -> {dst}"
+        try:
+            expr.check_syntax(when)
+        except expr.ExprError as exc:
+            issues.append(
+                GraphIssue(
+                    message=f"{where} 的 when 表达式有语法错误：{exc}",
+                    node_ids=(src, dst),
+                    edge_refs=(ref,),
+                )
+            )
+            continue
+        for path in expr.variables(when):
+            if path[0] == "user_input":
+                continue
+            if path[0] != "upstream":
+                hint = f"；请写成 upstream.{path[0]}" if path[0] in keys else ""
+                issues.append(
+                    GraphIssue(
+                        message=(
+                            f"{where} 的 when 引用了未知变量 {path[0]}{hint}；"
+                            f"可用：user_input、upstream.<outputKey>"
+                        ),
+                        node_ids=(src, dst),
+                        edge_refs=(ref,),
+                    )
+                )
+                break
+            if len(path) == 1:
+                continue
+            if path[1] not in keys:
+                issues.append(
+                    GraphIssue(
+                        message=(
+                            f"{where} 的 when 引用了不存在的 upstream.{path[1]}；"
+                            f"本图可用的 outputKey：{'、'.join(sorted(keys))}"
+                        ),
+                        node_ids=(src, dst),
+                        edge_refs=(ref,),
+                    )
+                )
+                break
+    return issues
+
+
+def _detect_template_problems(payload: dict) -> list[GraphIssue]:
+    """检测 inputTemplate 里的未知变量与点号写法。
+
+    运行期对未知变量的处理是「原样保留」，这是**故意**的：模板由人写，
+    一次拼错不该让整条 run 失败。但原样保留的代价是 ``{{pan}}`` 会原封不动
+    出现在发给模型的 prompt 里，看起来像模型在胡说。把它挡在保存时，用户
+    改个字段名就行，总比事后对着 prompt 猜要省事。
+
+    顺带拦 ``{{upstream.plan}}`` 这种带点的写法：模板语法里点号没有意义，
+    它几乎总是「以为能这么写」的误解，直接告诉正确写法。
+
+    消息与改造前的 ``ValueError`` 文本逐字一致。
+    """
+    template = str(payload.get("inputTemplate") or "")
+    if not template:
+        return []
+    dotted = re.findall(r"\{\{\s*([\w.]+)\s*\.\w+\s*\}\}", template)
+    if dotted:
+        return [
+            GraphIssue(
+                message=(
+                    f"inputTemplate 里的 {{{{{dotted[0]}.xxx}}}} 不支持点号访问；"
+                    f"单独引用某个上游产出请直接写 {{{{{dotted[0]}}}}}，"
+                    f"全部上游写 {{{{upstream}}}}"
+                )
+            )
+        ]
+    known = {"user_input", "upstream"} | {
+        str(n.get("outputKey") or n.get("id")) for n in payload.get("nodes") or []
+    }
+    used = set(_VAR_RE.findall(template))
+    unknown = sorted(used - known)
+    if unknown:
+        return [
+            GraphIssue(
+                message=(
+                    f"inputTemplate 引用了未知变量：{'、'.join(unknown)}；"
+                    f"可用：user_input、upstream、"
+                    f"{'、'.join(sorted(known - {'user_input', 'upstream'})) or '（本图暂无上游产出）'}"
+                )
+            )
+        ]
+    return []
+
+
 class WorkflowDefinition(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
@@ -167,188 +501,18 @@ class WorkflowDefinition(BaseModel):
     def _validate_graph(self) -> WorkflowDefinition:
         """model 级校验：一次把「这张图能不能跑」判干净。
 
-        依次检查：
-
-        1. edge 端点存在、entry 节点存在；
-        2. 无环（拓扑排序必须覆盖全部节点）；
-        3. 从 entry 出发能走到每个节点（无孤立死配置）；
-        4. 汇聚节点的入边不许混条件边（LangGraph 会永远等不到）；
-        5. 同一节点的出边不许条件与无条件混用；
-        6. 条件表达式语法正确、且只引用本图里真实存在的 outputKey；
-        7. inputTemplate 里的变量全部可解析（含拒绝 ``{{upstream.x}}`` 这种
-           误解写法）。
-
-        全部在配置期失败而不是执行期：definition 由用户手写，跑一半才发现编排
-        不了，前面的 token、钱和时间都已经花出去了。
+        规则实现在 :func:`collect_graph_issues` 里——**只有一份**。
+        这里只负责把它转成 pydantic 能包住的 ``ValueError``，且消息文本与
+        改造前逐字一致，既有测试断言不需要改。
 
         Raises:
-            ValueError: 上述任一条不满足。由 pydantic 包装为 ValidationError。
+            ValueError: 图结构有问题。由 pydantic 包装为 ValidationError 上抛。
         """
-        ids = {n.id for n in self.nodes}
-        for e in self.edges:
-            if e.from_ not in ids or e.to not in ids:
-                raise ValueError(f"edge 引用了不存在的节点：{e.from_} -> {e.to}")
-        if self.entry and self.entry not in ids:
-            raise ValueError(f"entry 节点不存在：{self.entry}")
-
-        # 无环：拓扑排序必须能覆盖全部节点
-        order = self._topo_order()
-        if len(order) != len(ids):
-            raise ValueError("definition 存在环，无法确定执行顺序")
-
-        self._check_reachable(ids, order)
-        self._check_fanin_shape(ids)
-        self._check_outgoing_uniform()
-        self._validate_conditions()
-        self._validate_template_vars()
+        payload = self.model_dump(by_alias=True, exclude_none=True)
+        issues = collect_graph_issues(payload)
+        if issues:
+            raise ValueError(issues[0].message)
         return self
-
-    def _check_reachable(self, ids: set[str], order: list[WorkflowNode]) -> None:
-        """每个节点都必须从 entry 走得到。
-
-        孤立节点是最阴险的一种配置错误：保存不报错、图能编译，但那个节点永远
-        不会被执行，用户却以为它在流程里。与其在运行日志里让人猜，不如在保存
-        时直接指出来。
-
-        Raises:
-            ValueError: 存在走不到的节点。
-        """
-        adj: dict[str, list[str]] = {i: [] for i in ids}
-        for e in self.edges:
-            adj[e.from_].append(e.to)
-
-        seen = {self.entry_id}
-        queue = [self.entry_id]
-        while queue:
-            cur = queue.pop()
-            for nxt in adj[cur]:
-                if nxt not in seen:
-                    seen.add(nxt)
-                    queue.append(nxt)
-
-        orphans = ids - seen
-        if orphans:
-            raise ValueError(
-                f"以下节点从 entry 走不到（孤立节点）：{'、'.join(sorted(orphans))}"
-            )
-
-    def _check_fanin_shape(self, ids: set[str]) -> None:
-        """汇聚节点的入边必须全是无条件边。
-
-        LangGraph 对多入边节点的处理是「等齐所有入边才触发」。若其中一条是
-        条件边而这次没命中，汇聚节点就会永远等不到——run 静默地少跑一段，
-        最后还以 done 收尾。
-
-        例外是「所有入边都是条件边」：那就得靠运行期再判一次，超出本版范围，
-        因此直接拒绝并说明怎么办。
-        """
-        incoming: dict[str, list[WorkflowEdge]] = {i: [] for i in ids}
-        for e in self.edges:
-            incoming[e.to].append(e)
-
-        for node_id, edges in incoming.items():
-            if len(edges) < 2:
-                continue
-            conditional = [e for e in edges if e.when]
-            if not conditional:
-                continue
-            if len(conditional) < len(edges):
-                bad = "、".join(f"{e.from_} --when--> {node_id}" for e in conditional)
-                raise ValueError(
-                    f"节点 {node_id} 是汇聚节点（{len(edges)} 条入边），但入边里混了条件边"
-                    f"（{bad}）：条件不成立时它会永远等不到。请把入边全部改成无条件边，"
-                    f"或让条件节点直接连到 {node_id} 的下游。"
-                )
-            raise ValueError(
-                f"节点 {node_id} 的 {len(edges)} 条入边全是条件边："
-                f"本版不支持「多条条件边汇聚到同一节点」，请改成无条件汇聚。"
-            )
-
-    def _check_outgoing_uniform(self) -> None:
-        """同一个节点的出边不许条件与无条件混用。
-
-        混用时「无条件那部分到底还走不走」要靠读者自己推断，语义不明确；
-        LangGraph 虽然能跑，但排查起来很痛苦。明确二选一更好。
-        """
-        outgoing: dict[str, list[WorkflowEdge]] = {}
-        for e in self.edges:
-            outgoing.setdefault(e.from_, []).append(e)
-
-        for node_id, edges in outgoing.items():
-            conditional = [e for e in edges if e.when]
-            if conditional and len(conditional) < len(edges):
-                raise ValueError(
-                    f"节点 {node_id} 的出边里条件边与无条件边混用："
-                    f"请统一成「全无条件（并行）」或「全条件（分支）」。"
-                )
-
-    def _validate_conditions(self) -> None:
-        """逐条校验 ``when`` 表达式：语法 + 变量引用。
-
-        变量校验是这里最有价值的一条：``upstream.plan`` 里 ``plan`` 拼错、或引用了
-        一个已被删掉的节点，表达式照样能通过语法检查，运行期只会安静地求值成
-        ``None`` → 条件为假 → **走错分支**。分支选错不会有任何报错，只会在生产里
-        表现为「为什么走了 else 分支」，所以这类错误必须挡在保存时。
-
-        语法只认两种写法：``user_input`` 与 ``upstream.<outputKey>``。刻意**不**
-        放行裸 ``plan``：求值期的 scope 只有这两个根（见 run_graph 的路由函数），
-        裸名会求值成 ``None``；而放行它还会引出「某个节点恰好叫 ``user_input``」
-        这类遮蔽问题。与其留一个静默为假的写法，不如保存时直接告诉正确写法。
-        """
-        keys = {n.outputKey or n.id for n in self.nodes}
-        for e in self.edges:
-            if not e.when:
-                continue
-            where = f"边 {e.from_} -> {e.to}"
-            try:
-                expr.check_syntax(e.when)
-            except expr.ExprError as exc:
-                raise ValueError(f"{where} 的 when 表达式有语法错误：{exc}") from exc
-
-            for path in expr.variables(e.when):
-                if path[0] == "user_input":
-                    continue
-                if path[0] != "upstream":
-                    hint = f"；请写成 upstream.{path[0]}" if path[0] in keys else ""
-                    raise ValueError(
-                        f"{where} 的 when 引用了未知变量 {path[0]}{hint}；"
-                        f"可用：user_input、upstream.<outputKey>"
-                    )
-                if len(path) == 1:
-                    continue
-                if path[1] not in keys:
-                    raise ValueError(
-                        f"{where} 的 when 引用了不存在的 upstream.{path[1]}；"
-                        f"本图可用的 outputKey：{'、'.join(sorted(keys))}"
-                    )
-
-    def _validate_template_vars(self) -> None:
-        """校验 ``inputTemplate`` 里用到的变量在保存时就能解析。
-
-        运行期对未知变量的处理是「原样保留」，这是**故意**的：模板由人写，
-        一次拼错不该让整条 run 失败。但原样保留的代价是 ``{{pan}}`` 会原封不动
-        出现在发给模型的 prompt 里，看起来像模型在胡说。把它挡在保存时，用户
-        改个字段名就行，总比事后对着 prompt 猜要省事。
-
-        顺带拦 ``{{upstream.plan}}`` 这种带点的写法：模板语法里点号没有意义，
-        它几乎总是「以为能这么写」的误解，直接告诉正确写法。
-        """
-        dotted = re.findall(r"\{\{\s*([\w.]+)\s*\.\w+\s*\}\}", self.inputTemplate)
-        if dotted:
-            raise ValueError(
-                f"inputTemplate 里的 {{{{{dotted[0]}.xxx}}}} 不支持点号访问；"
-                f"单独引用某个上游产出请直接写 {{{{{dotted[0]}}}}}，"
-                f"全部上游写 {{{{upstream}}}}"
-            )
-
-        known = {"user_input", "upstream"} | {n.outputKey or n.id for n in self.nodes}
-        unknown = sorted(self.template_vars() - known)
-        if unknown:
-            raise ValueError(
-                f"inputTemplate 引用了未知变量：{'、'.join(unknown)}；"
-                f"可用：user_input、upstream、"
-                f"{'、'.join(sorted(known - {'user_input', 'upstream'})) or '（本图暂无上游产出）'}"
-            )
 
     @property
     def entry_id(self) -> str:
@@ -420,7 +584,7 @@ class WorkflowDefinition(BaseModel):
     def template_vars(self) -> set[str]:
         """收集 ``inputTemplate`` 里用到的全部 ``{{变量}}``。
 
-        由 :meth:`_validate_template_vars` 在保存时消费：``user_input`` /
+        由 :func:`collect_graph_issues` 在保存时消费：``user_input`` /
         ``upstream`` 是保留变量，其余名字必须落在某个节点的 outputKey 上，否则
         运行期只会把 ``{{xxx}}`` 原样发给模型看。
         """
@@ -440,7 +604,7 @@ class WorkflowDefinition(BaseModel):
 
         未知变量保持原样（交给 :func:`render_template` 的既定行为）而不是替换成
         空串——拼错的名字要能一眼看出来，静默抹掉只会得到一个莫名其妙少了一段
-        的 prompt。保存期的 ``_validate_template_vars`` 会把拼错挡在前面。
+        的 prompt。保存期的 ``collect_graph_issues`` 会把拼错挡在前面。
         """
         variables: dict[str, Any] = dict(upstream)
         variables["user_input"] = user_input

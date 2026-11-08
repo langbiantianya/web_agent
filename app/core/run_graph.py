@@ -364,8 +364,8 @@ def build_run_graph(
     - **条件出边**：整组交给 ``add_conditional_edges``，由路由函数逐条求值决定
       去哪儿。一条都不成立时返回 ``END``，否则这条分支会悬着不结束。
 
-    同一节点的出边不会条件与无条件混用——那是 :meth:`WorkflowDefinition.
-    _check_outgoing_uniform` 在配置期就拒掉的，所以这里不用处理混合情况。
+    同一节点的出边不会条件与无条件混用——那是 :func:`collect_graph_issues`
+    在配置期就拒掉的，所以这里不用处理混合情况。
 
     节点名用 ``node.id``，它同时是事件里的 ``node`` 字段、``upstream`` 的键和
     ``run_step`` 的外键，用它当图节点名能让日志里的图和业务数据对得上。
@@ -428,7 +428,7 @@ def _make_router(edges: list, user_input: str):
     就是「这条路不用走了」，而不是出错。
 
     条件表达式在配置期已做过语法与变量校验（见
-    :meth:`WorkflowDefinition._validate_conditions`），运行期再抛
+    :func:`collect_graph_issues`），运行期再抛
     :class:`~app.core.expr.ExprError` 就意味着校验漏了，让它原样冒泡比静默走
     else 分支好排查得多。
     """
