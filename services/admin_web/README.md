@@ -85,6 +85,8 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
 - `/admin/platform-admins`：仅 `owner_slot=superAdmin` 可访问的账号管理。
 - `/admin/preferences`：Fluent、Cloudscape、Material 主题及深浅色/密度。
 - `/admin/workflows`：Workflow 图定义、启停和删除。
+- `/admin/workflows/{code}`：Workflow 画布编排器（拖拽节点、连线、条件边、
+  属性检查器、实时校验、撤销重做、自动布局）。
 - `/admin/agents`：租户内 Agent、模型、提示词、工具与 Skill 绑定。
 - `/admin/skills`：技能草稿/发布状态、正文修订和归档。
 - `/admin/mcp`：MCP 连接、启停、删除和工具目录刷新。
@@ -108,6 +110,8 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
 - 同一浏览器同时存在普通用户 Session 时，后台 API 使用
   `X-Admin-CSRF-Token`，防止两套身份共用 `X-CSRF-Token` 时相互覆盖。
 - 页面和组件权限在 SSR 阶段分别过滤；组件隐藏不作为 API 授权边界。
+- 画布编排器的校验走 `POST /admin/workflows/validate`，与保存共用同一份
+  `app/core/workflow_def.py` 规则；前端不自行判断图是否合法。
 - 只允许枚举主题、色温、密度、页面 key、组件 key 和权限 object/action。
 - 用户权限配置使用非空 `binding_scope` 唯一键，兼容 SQLite、PostgreSQL 和 MySQL
   对 `NULL` 唯一约束的不同语义。

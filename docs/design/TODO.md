@@ -59,3 +59,11 @@ attempt 清理和存量会话归属处理。
 - [ ] **P2：超大工具结果对象存储归档**
   工具审计结果默认最多保存 64K 字符。需要无限归档时，应接对象存储，并补齐签名下载、
   生命周期、访问控制和租户隔离；数据库账本继续只保存可查询摘要。
+
+## 已完成
+
+- [x] **P1：Workflow 编排可视化**
+  手写 definition JSON 的后台编辑器已替换为拖拽画布编排器
+  （`/admin/workflows/{code}`），见 [V4.8](../../app/design/v4.8-workflow-visual-editor.md)。
+  图结构校验规则仍只有一份（`app/core/workflow_def.py`），后台通过
+  `POST /admin/workflows/validate` 拿结构化问题，客户端 API 契约不变。
