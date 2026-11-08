@@ -108,7 +108,8 @@ async def update_provider(
     if "client_secret" in changed:
         secret_marker = changed.pop("client_secret")
     if "scopes" in changed:
-        changed["scopes"] = " ".join(changed["scopes"])
+        # 显式传 null 表示清空 scope 列表，不能直接 join。
+        changed["scopes"] = " ".join(changed["scopes"] or [])
     for key in (
         "auto_create",
         "role_claim_required",

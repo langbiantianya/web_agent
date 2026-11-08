@@ -819,6 +819,126 @@ async def test_admin_web_dynamically_scopes_providers_for_client_and_admin():
         await client.aclose()
 
 
+async def test_admin_web_clears_provider_endpoint_fields_and_survives_null_scopes():
+    """清空 endpoint 必须真正落库，scope 传 null 不能让更新接口 500。"""
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    tag = uuid.uuid4().hex[:8]
+    code = f"clear-{tag}"
+    base_form = {
+        "csrf_token": csrf,
+        "issuer": "https://id.example.com",
+        "client_id": "configured-client",
+        "client_secret": "provider-secret-value",
+        "token_auth_method": "client_secret_basic",
+        "scopes": "openid profile email",
+        "username_claim": "preferred_username",
+        "role_claim": "groups",
+        "role_claim_required": "1",
+        "role_sync_max_age_seconds": "1800",
+        "auto_create": "1",
+        "enabled": "1",
+        "client_login_enabled": "1",
+        "admin_login_enabled": "1",
+    }
+    try:
+        created = await client.post(
+            "/admin/oauth-providers",
+            data={
+                **base_form,
+                "code": code,
+                "display_name": "Clearable IdP",
+                "discovery_url": "https://id.example.com/.well-known/openid-configuration",
+                "authorization_endpoint": "https://id.example.com/authorize",
+            },
+        )
+        assert created.status_code == 303, created.text
+        async with AdminSessionLocal() as db:
+            row = await db.scalar(
+                sa.select(OAuthProvider).where(OAuthProvider.code == code)
+            )
+            assert row is not None
+            assert row.discovery_url
+            assert row.authorization_endpoint
+
+        # 表单里清空 endpoint 后必须真正置空，而不是保留旧值。
+        updated = await client.post(
+            f"/admin/oauth-providers/{code}/update",
+            data={
+                **base_form,
+                "code": code,
+                "display_name": "Clearable IdP",
+                "discovery_url": "",
+                "authorization_endpoint": "",
+                "token_endpoint": "",
+                "jwks_uri": "",
+            },
+        )
+        assert updated.status_code == 303, updated.text
+        async with AdminSessionLocal() as db:
+            row = await db.scalar(
+                sa.select(OAuthProvider).where(OAuthProvider.code == code)
+            )
+            assert row is not None
+            assert row.discovery_url is None
+            assert row.authorization_endpoint is None
+            assert row.token_endpoint is None
+            assert row.jwks_uri is None
+    finally:
+        await client.aclose()
+
+
+async def test_oauth_provider_api_update_accepts_null_scopes():
+    """管理 API 显式传 scopes=null 时只清空 scope，不抛 TypeError。"""
+    from app.repo.oauth_provider_repo import oauth_provider_repo
+
+    async with AdminSessionLocal() as db:
+        await seed_registry(db)
+        tag = uuid.uuid4().hex[:8]
+        code = f"api-null-{tag}"
+        row = await oauth_provider_repo.create(
+            db,
+            tenant_id="default",
+            code=code,
+            client_secret=None,
+            display_name="API Null Scopes",
+            issuer="https://id.example.com",
+            client_id="api-client",
+            scopes="openid profile",
+            username_claim="preferred_username",
+            role_claim="groups",
+            role_sync_max_age_seconds=1800,
+            auto_create=1,
+            role_claim_required=1,
+            client_login_enabled=1,
+            admin_login_enabled=1,
+            enabled=1,
+        )
+        assert row is not None
+        try:
+            # 直接调用管理 API 路由，确保 null scope 不会变成 500。
+            from app.api.routes.oauth_provider import update_provider
+            from app.schemas.oauth_provider import OAuthProviderUpdate
+
+            updated = await update_provider(
+                code,
+                OAuthProviderUpdate(scopes=None),
+                db=db,
+                admin=AdminPrincipal(
+                    kind="platform_super_admin",
+                    principal_id=1,
+                    user_id=None,
+                    tenant_id="default",
+                    username="superAdmin",
+                    session_id=1,
+                ),
+            )
+            assert updated.scopes == []
+            await db.refresh(row)
+            assert row.scopes == ""
+        finally:
+            await db.rollback()
+
+
 async def test_admin_web_manages_workflow_agent_and_llm_without_client_api():
     """后台创建、修改和切换资源时直接使用共享仓储，不经过旧管理 API。"""
     client, _, _, csrf = await _create_seeded_logged_in_super_admin()

@@ -31,6 +31,11 @@ attempt 清理和存量会话归属处理。
   [V4.6 方案](../../app/design/v4.6-user-oauth-conversation.md) 中的 OIDC、PKCE、
   HttpOnly 服务端会话、CSRF、供应商管理和 conversation owner 隔离已经实现，
   并已通过专用 PostgreSQL 测试库验证。
+  动态供应商配置（管理员配置一个或多个 provider，不写死）已在专用测试部署上对一个
+  真实 OIDC IdP 完成端到端联调：admin 新建第二个 provider 后，客户端 `/api/auth/providers`
+  与 admin 登录页按 `client_login_enabled` / `admin_login_enabled` 正确分流，新 provider
+  的 authorization-code 登录成功；同时修复了 endpoint 字段无法清空和 `scopes: null`
+  导致管理接口 500 的两个缺陷，并补充回归测试。
   上线前仍需用实际 `AUTH_DEFAULT_TENANT` 对应的 IdP 完成浏览器联调，并增加
   start/callback 限频、过期 `oauth_login_attempt` 周期清理和 provider 故障监控。
 

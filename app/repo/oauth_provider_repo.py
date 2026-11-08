@@ -8,6 +8,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.crypto import encrypt
 from app.models.oauth import OAuthProvider
 
+# 这些列允许被管理端显式置空；其余列传 None 表示“不修改”，避免把
+# 必填列写成 NULL。
+NULLABLE_PROVIDER_FIELDS = frozenset(
+    {
+        "discovery_url",
+        "authorization_endpoint",
+        "token_endpoint",
+        "jwks_uri",
+    }
+)
+
 
 class OAuthProviderRepo:
     async def get(
@@ -61,10 +72,17 @@ class OAuthProviderRepo:
         client_secret: str | None | object = ...,
         **fields,
     ) -> OAuthProvider:
-        """局部更新供应商；省略 secret 表示保持原值，空串表示清除。"""
+        """局部更新供应商；省略 secret 表示保持原值，空串表示清除。
+
+        普通字段用 ``None`` 表示“不修改”。可空列（endpoint 等）用 ``None``
+        表示“显式置空”，这样管理端清空 discovery URL 才能真正落库。
+        """
         for key, value in fields.items():
-            if value is not None:
-                setattr(row, key, value)
+            if value is None:
+                if key in NULLABLE_PROVIDER_FIELDS:
+                    setattr(row, key, None)
+                continue
+            setattr(row, key, value)
         if client_secret is not ...:
             row.client_secret_cipher = (
                 encrypt(client_secret)
