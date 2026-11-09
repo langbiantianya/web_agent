@@ -631,3 +631,110 @@ def test_field_order_is_explicit_for_every_resource() -> None:
         "api_key",
         "priority",
     ]
+
+
+def test_edit_overrides_are_absent_from_element_tree() -> None:
+    """三态覆盖项必须在**元素树**层区分「属性不存在」与「属性是假值」。
+
+    HTML 层区分不了这两者：``<input name="x">`` 既可能是「压根不发
+    required 属性」，也可能是「发了 required 但值是假值」，渲染出的
+    HTML 完全一样。但元素树不同：``{'name': 'x'}`` vs
+    ``{'name': 'x', 'required': 'false'}``——渲染快照比的是元素树，所以
+    这层形态必须单独锁住。
+
+    （本轮只追加用例，不改既有的三态用例。）
+    """
+
+    def tree_attrs(element: object) -> dict[str, str]:
+        """控件（``render_field`` 返回值的第二个子节点）的元素树属性。"""
+        return element.children[1].aliased_attrs  # type: ignore[attr-defined]
+
+    # 1) edit_required=False ⇒ 树里**没有** required 键（不是 "false"）。
+    never = render_field(
+        Field("name", "Name", required=True, edit_required=False), "x", mode="edit"
+    )
+    assert tree_attrs(never) == {"name": "name", "value": "x"}
+    assert "required" not in tree_attrs(never)
+
+    # 2) edit_required=True ⇒ 树里是 required: "true"。
+    edit_only = render_field(
+        Field("name", "Name", required=False, edit_required=True), "x", mode="edit"
+    )
+    assert tree_attrs(edit_only)["required"] == "true"
+
+    # textarea 同样成立（Skill body 就是这么表达的）。
+    area = render_field(
+        Field("body", "Body", kind="textarea", edit_required=True), "x", mode="edit"
+    )
+    assert tree_attrs(area)["required"] == "true"
+
+    # 3) edit_min_value="" ⇒ 树里**没有** min 键（创建态仍有）。
+    min_field = Field(
+        "priority", "Priority", kind="number", min_value="0", edit_min_value=""
+    )
+    min_edit = render_field(min_field, "1", mode="edit")
+    min_create = render_field(min_field, "1", mode="create")
+    assert "min" not in tree_attrs(min_edit)
+    assert tree_attrs(min_create)["min"] == "0"
+
+    # 4) edit_max_value="" ⇒ 树里**没有** max 键（创建态仍有）。
+    max_field = Field(
+        "timeout_sec", "Timeout", kind="number", max_value="600", edit_max_value=""
+    )
+    max_edit = render_field(max_field, "30", mode="edit")
+    max_create = render_field(max_field, "30", mode="create")
+    assert "max" not in tree_attrs(max_edit)
+    assert tree_attrs(max_create)["max"] == "600"
+
+
+def test_agent_edit_form_renders_empty_system_prompt_for_none() -> None:
+    """``system_prompt=None`` 必须渲染成**空内容**，不是字面量 ``"None"``。
+
+    这是 Task 8 唯一被声明的**行为修正**：旧实现写的是
+    ``textarea(row.system_prompt, ...)``，ludic 会把 ``None`` 渲染成
+    字面量 ``"None"`` 的文本内容；现在 ``row.system_prompt or ""`` 让内容
+    为空。ORM 里该列是 ``nullable=False``（真实环境不可达），但这条差异
+    值得一条测试钉住。
+    """
+    from types import SimpleNamespace
+
+    from app.core.admin_auth import AdminPrincipal
+    from services.admin_web.views.agents import agents_page
+
+    row = SimpleNamespace(
+        code="agent-none-prompt",
+        name="Agent None Prompt",
+        model="gpt-4.1-mini",
+        base_url=None,
+        tools=[],
+        skills=[],
+        system_prompt=None,
+        enabled=True,
+        version=1,
+    )
+    html = agents_page(
+        principal=AdminPrincipal(
+            kind="platform_super_admin",
+            principal_id=1,
+            user_id=None,
+            tenant_id=None,
+            username="superAdmin",
+            session_id=1,
+            is_owner=True,
+        ),
+        csrf="csrf-token",
+        pages=[],
+        theme="fluent",
+        color_mode="light",
+        density="comfortable",
+        rows=[row],
+        can_write=True,
+    ).to_html()
+
+    match = re.search(
+        r'<textarea[^>]*name="system_prompt"[^>]*>(.*?)</textarea>', html, re.DOTALL
+    )
+    assert match is not None, "agents 编辑表单里没有 system_prompt 的 textarea"
+    content = match.group(1)
+    assert content == ""
+    assert "None" not in content

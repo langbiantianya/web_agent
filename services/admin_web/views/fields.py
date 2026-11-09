@@ -56,6 +56,8 @@ class Field:
     **各配置项对哪些 kind 有效**（无效的那部分是**静默丢弃**，不报错）：
 
     - ``value``：全部 kind（语义见 :func:`render_field`）；
+    - ``modes``：全部 kind（决定字段出现在哪些表单；``render_form`` 用
+      ``mode in field.modes`` 过滤，不在当前模式里的字段整条不渲染）；
     - ``required``：``text`` 系与 ``textarea``；``select`` 忽略；
     - ``edit_required``：``text`` 系与 ``textarea``；``select`` 忽略。
       ``None`` = 继承 ``required``；``True`` = 编辑态必填；``False`` =
@@ -63,6 +65,7 @@ class Field:
     - ``placeholder``：``text`` 系；``textarea`` / ``select`` 忽略；
     - ``edit_placeholder``：``text`` 系；``textarea`` / ``select`` 忽略。
       空串 = 继承 ``placeholder``；
+    - ``edit_label``：全部 kind（只改标签文案；为空时回落 ``label``）；
     - ``autocomplete``：``text`` 系；``textarea`` / ``select`` 忽略；
     - ``min_value`` / ``max_value``：``text`` 系（实际只有 ``number`` 用）；
     - ``edit_min_value`` / ``edit_max_value``：``text`` 系；
@@ -160,7 +163,11 @@ def _control(field: Field, value: object | None, *, mode: str) -> Any:
             max_value = field.edit_max_value
 
     if field.kind == "textarea":
-        rows = field.edit_rows if mode == "edit" and field.edit_rows else field.rows
+        rows = (
+            field.edit_rows
+            if mode == "edit" and field.edit_rows is not None
+            else field.rows
+        )
         attrs.update(name=field.name, rows=rows)
         if required:
             attrs["required"] = True
@@ -267,8 +274,8 @@ def render_form(
 
     - **input 系**（``text`` / ``password`` / ``email`` / ``tel`` /
       ``number`` / ``url``）：值为 ``None`` ⇒ 控件**不带** value 属性；
-      其余取值都带上 value 属性。注意 ``False`` 不是缺省——它走 ludic
-      的 bool 分支，**HTML 上没有** ``value`` 属性（元素树里是
+      除 ``False`` 外（见下），其余取值都带上 value 属性。``False`` 走
+      ludic 的 bool 分支，**HTML 上没有** ``value`` 属性（元素树里是
       ``"false"``），但语义上是「有这个值」；
     - **textarea**：取值落成**文本子节点**（不是 value 属性）；值为
       ``None`` ⇒ **没有**子节点；
