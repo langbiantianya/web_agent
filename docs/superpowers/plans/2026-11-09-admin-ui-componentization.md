@@ -571,11 +571,17 @@
       platform_admins_page,
       preferences_page,
       roles_page,
+      shell,
       skills_page,
       workflow_editor_page,
       workflows_page,
   )
   ```
+
+  > **执行修订（2026-11-09）**：原清单漏了 `shell`，而
+  > `test_views_package_still_exports_every_page` 明确要求 `shell` 可从
+  > `services.admin_web.views` 取到（`views.py` 里有 18 个公开页面/外壳函数，
+  > 再导出必须覆盖全部 18 个）。
 
   创建 `services/admin_web/routes/__init__.py`：
 
@@ -640,8 +646,10 @@
   .venv\Scripts\python.exe -m pytest tests/test_admin_structure.py -q -p pytest_asyncio.plugin -p pytest_timeout
   ```
 
-  Expected: `test_old_views_module_is_gone` 与 `test_app_module_is_small` 仍然 FAIL
-  （预期如此，要到 Task 7 / Task 9 才可能通过）；其余应当仍然 FAIL，
+  Expected: `test_legacy_views_module_is_gone` 与 `test_app_module_is_small` 仍然 FAIL
+  （预期如此，要到 Task 7 / Task 9 才可能通过）；`test_views_package_still_exports_every_page`
+  应当**通过**（改名让位的安全契约：中途任何一步都不能让
+  `from services.admin_web.views import X` 失效）；其余应当仍然 FAIL，
   因为业务域模块还没建。**本任务不要求这个测试全绿**——它是后续任务的
   RED 契约。
 
