@@ -70,7 +70,7 @@ services/admin_web/
   app.py           ~150 行   app 创建 / lifespan / 安全响应头中间件 / 静态挂载 / register_all
   common.py        ~250 行   跨域工具（原 app.py 内的私有辅助函数）
   routes/          12 个域模块 + __init__.py
-  views/           15 个模块 + __init__.py
+  views/           16 个模块 + __init__.py
   accounts.py security.py notifications.py oauth_admin.py audit.py db.py rbac.py registry.py
                    ↑ 现有模块，本次不动
 ```
@@ -116,7 +116,11 @@ def register_all(app) -> None:
 | `fields.py` | `Field` 描述与表单渲染（见 §5） |
 | `login.py` / `dashboard.py` | 登录页、概览页 |
 | `workflows.py` / `agents.py` / `skills.py` / `mcp.py` / `llm.py` / `audit.py` | 各业务页面 |
-| `oauth_providers.py` / `access.py` / `platform_admins.py` / `preferences.py` | 其余页面 |
+| `oauth_providers.py` / `access.py` / `roles.py` / `platform_admins.py` / `preferences.py` | 其余页面 |
+
+> `access.py` 与 `roles.py` 是拆开的：页面权限 + 组件权限放 `access.py`（共用同一套
+> 权限模型），租户角色与 OAuth 声明映射放 `roles.py`。两者合在一个模块会有
+> **395 行**，超过「任何单文件不超过 350 行」的上限。
 
 `views/__init__.py` 只做再导出，保持 `from services.admin_web.views import agents_page`
 这类调用点可用（内部路径调整后统一从这里出）。

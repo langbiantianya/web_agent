@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 `services/admin_web/app.py`（3373 行）与 `views.py`（2303 行）拆成 `routes/`（12 个域模块）与 `views/`（15 个模块）两个按业务域切分的包，并把表单字段改为数据驱动、消除创建/编辑双写，同时建立渲染快照防止重构悄悄改变页面结构。
+**Goal:** 把 `services/admin_web/app.py`（3373 行）与 `views.py`（2303 行）拆成 `routes/`（12 个域模块）与 `views/`（16 个模块）两个按业务域切分的包，并把表单字段改为数据驱动、消除创建/编辑双写，同时建立渲染快照防止重构悄悄改变页面结构。
 
 **Architecture:** 视图层与路由层分成两个平行的包，一一对应同名业务域模块；路由模块用 `register(app)` 暴露、装饰器写法保持不变，注册顺序固化在 `routes/__init__.py` 的一个元组里；表单字段抽成 `Field` 描述，创建与编辑共用一份定义。渲染回归保护走 **Python 元素树快照**（不是 HTML 文本解析），零新依赖。
 
@@ -414,6 +414,7 @@
       "audit",
       "oauth_providers",
       "access",
+      "roles",
       "platform_admins",
       "preferences",
   )
@@ -1561,6 +1562,7 @@
 - Create: `services/admin_web/views/dashboard.py`
 - Create: `services/admin_web/views/oauth_providers.py`
 - Create: `services/admin_web/views/access.py`
+- Create: `services/admin_web/views/roles.py`
 - Create: `services/admin_web/views/platform_admins.py`
 - Create: `services/admin_web/views/preferences.py`
 - Delete: `services/admin_web/views_legacy.py`
@@ -1572,21 +1574,56 @@
 - Produces:
   - `views/login.py`：`login_page`
   - `views/dashboard.py`：`dashboard`
-  - `views/oauth_providers.py`：`_provider_form`、`oauth_providers_page`
-  - `views/access.py`：`_permission_datalist`、`_permission_editor`、`access_pages_page`、`access_components_page`、`roles_page`、`mappings_page`
+  - `views/oauth_providers.py`：`oauth_providers_page`（`_provider_form` 是模块内私有助手）
+  - `views/access.py`：`access_pages_page`、`access_components_page`（`_permission_datalist` / `_permission_editor` 是模块内私有助手）
+  - `views/roles.py`：`roles_page`、`mappings_page`
   - `views/platform_admins.py`：`platform_admins_page`
   - `views/preferences.py`：`preferences_page`
+
+> **执行修订（2026-11-09，控制器发现行数硬冲突）**：本任务原计划把 6 个函数
+> （`_permission_datalist`、`_permission_editor`、`access_pages_page`、
+> `access_components_page`、`roles_page`、`mappings_page`）全塞进 `views/access.py`。
+> 控制器用 AST 实测了各函数的源码行数：
+>
+> | 函数 | 行数 |
+> | --- | --- |
+> | `access_pages_page` | 63 |
+> | `_permission_datalist` | 18 |
+> | `_permission_editor` | 77 |
+> | `access_components_page` | 70 |
+> | `roles_page` | 49 |
+> | `mappings_page` | 94 |
+>
+> 合计 **359 行**，加上导入块与 docstring 约 **395 行**，**超过 350 行的硬上限**
+> （`tests/test_admin_structure.py::test_module_stays_small` 会红，设计文档
+> §3 也明写「任何单文件不超过 350 行」）。
+>
+> 两个硬约束（逐字搬家 + 单文件 ≤350 行）在原切分下**不可同时满足**，
+> 必须改切分。**控制器决定拆成两个模块**：
+>
+> - `views/access.py` —— 页面权限 + 组件权限（`access_pages_page`、
+>   `access_components_page` + 两个私有助手），函数体 220 行 + 导入约 40 行
+>   ≈ **260 行**；
+> - `views/roles.py` —— 角色与 OAuth 声明映射（`roles_page`、`mappings_page`），
+>   函数体 139 行 + 导入约 36 行 ≈ **175 行**。
+>
+> 语义上也说得通：`roles_page`（租户自定义角色）与 `mappings_page`
+> （OAuth 声明 → 租户角色的映射）本来就更贴「角色」，而不是「访问控制页面」。
+> 代价是 `views/` 从 **15 个模块变成 16 个**，结构契约测试的 `VIEW_MODULES`
+> 清单要加一项 `roles`（该测试是本次重构自建的契约测试，不是 V4.8 之前的
+> 既有测试；加一项只会**加强**行数守卫，不会放松）。
 
 - [ ] **Step 1: 逐个创建剩余页面模块**
 
   从 `services/admin_web/views_legacy.py` 搬入（逐字复制）：
 
-  | 新模块 | 搬入的函数（原行号） |
+  | 新模块 | 搬入的函数（**按函数名定位**，行号仅供参考） |
   | --- | --- |
   | `views/login.py` | `login_page` |
   | `views/dashboard.py` | `dashboard` |
   | `views/oauth_providers.py` | `_provider_form`、`oauth_providers_page` |
-  | `views/access.py` | `_permission_datalist`、`_permission_editor`、`access_pages_page`、`access_components_page`、`roles_page`、`mappings_page` |
+  | `views/access.py` | `_permission_datalist`、`_permission_editor`、`access_pages_page`、`access_components_page` |
+  | `views/roles.py` | `roles_page`、`mappings_page` |
   | `views/platform_admins.py` | `platform_admins_page` |
   | `views/preferences.py` | `preferences_page` |
 
@@ -1594,32 +1631,75 @@
   > 那是**原始 `views.py`** 的行号。Task 3 / Task 4 搬走外壳与组件后，`views_legacy.py`
   > 的行号整体位移；Task 6 又会再搬走 7 个函数，Task 7 开始时的行号已经无法预先写死。
   > **函数名才是准的**——按名字定位，不要按行号定位。
-  > Task 6 开始时的实际行号（供交叉参考）：`workflows_page` `:334`、`workflow_editor_page` `:418`、
-  > `agents_page` `:637`、`skills_page` `:750`、`mcp_page` `:865`、`llm_page` `:974`、`audit_page` `:1075`。
+  > Task 7 开始时的实际行号（供交叉参考）：`login_page` `:77`、`dashboard` `:272`、
+  > `access_pages_page` `:335`、`_permission_datalist` `:398`、`_permission_editor` `:416`、
+  > `access_components_page` `:493`、`roles_page` `:563`、`mappings_page` `:612`、
+  > `_provider_form` `:706`、`oauth_providers_page` `:921`、
+  > `platform_admins_page` `:1012`、`preferences_page` `:1116`。
 
-  每个模块的模块级 docstring 写清这个页面管什么，例如
-  `views/access.py`：
+  每个模块的模块级 docstring 写清这个页面管什么，例如 `views/access.py`：
 
   ```python
-  """访问控制页：页面权限、组件权限、角色与声明映射。
+  """访问控制页：页面权限与组件权限。
 
-  这四块放在一个模块里，因为它们共用同一套权限模型（页面定义、组件定义、
-  租户覆盖、Casbin 角色），拆开反而要来回 import。
+  这两块放在一个模块里，因为它们共用同一套权限模型（页面定义、组件定义、
+  租户覆盖），拆开反而要来回 import。角色与 OAuth 声明映射在 ``views/roles.py``。
   """
   ```
 
-  `views/access.py` 需要从 `app.models.admin_control` 导入
-  `AdminPageDefinition` / `AdminPagePermission` /
-  `AdminComponentDefinition` / `AdminComponentPermission` /
-  `OAuthRoleMapping` / `SuperAdminAccount`，从 `app.models.admin_user` 导入
-  `AdminUser`，从 `app.models.oauth` 导入 `OAuthProvider`——**按实际用到的搬**。
+  > **控制器已用 AST 算出每个模块的精确导入清单**（口径：函数体用到的、且**不绑定**
+  > 在该函数作用域里的名字；**模块级 import 也算在内**——搬进新模块后必须重新导入，
+  > 否则就是 NameError）。照抄下表，不要自己猜：
+
+  | 新模块 | `ludic.html` 构造器 | 其它导入 |
+  | --- | --- | --- |
+  | `views/login.py` | `body` `button` `div` `form` `h1` `h2` `head` `html` `input` `label` `link` `main` `meta` `p` `script` `section` `span` `title` | `Any`、`OAuthProvider`（`app.models.oauth`）、`ADMIN_STYLESHEET` `ADMIN_UI_SCRIPT` `_flash` `_locale_switch`（`views.shell`） |
+  | `views/dashboard.py` | `a` `div` `h2` `p` `section` | `AdminPageDefinition`、`AdminPrincipal`、`Any`、`Iterable`、`_metric`（`views.components`）、`shell`（`views.shell`） |
+  | `views/access.py` | `button` `div` `form` `h1` `input` `p` `section` `small` `span` `table` `tbody` `td` `th` `thead` `tr` | `AdminPageDefinition`、`AdminPagePermission`、`AdminComponentDefinition`、`AdminComponentPermission`、`AdminPrincipal`、`Any`、`Iterable`、`shell` |
+  | `views/roles.py` | `button` `div` `form` `h1` `h2` `input` `label` `option` `p` `section` `select` `span` `table` `tbody` `td` `th` `thead` `tr` | `AdminPageDefinition`、`OAuthRoleMapping`、`OAuthProvider`、`AdminPrincipal`、`Any`、`Iterable`、`shell` |
+  | `views/oauth_providers.py` | `button` `details` `form` `input` `label` `option` `select` `small` `span` `summary` `td` `tr` | `AdminPageDefinition`、`OAuthProvider`、`AdminPrincipal`、`Any`、`Iterable`、`_csrf` `_management_page` `_toggle_and_delete`（`views.components`） |
+  | `views/platform_admins.py` | `button` `div` `form` `h1` `h2` `input` `label` `p` `section` `span` `table` `tbody` `td` `th` `thead` `tr` | `AdminPageDefinition`、`SuperAdminAccount`、`AdminPrincipal`、`Any`、`Iterable`、`shell` |
+  | `views/preferences.py` | `button` `div` `form` `h1` `input` `label` `option` `p` `section` `select` `small` `span` | `AdminPageDefinition`、`AdminPrincipal`、`Any`、`Iterable`、`shell` |
+
+  说明：
+  - `input` 与内建名冲突，**必须** `from ludic.html import input as input_`；
+  - `AdminPageDefinition` / `AdminPagePermission` / `AdminComponentDefinition` /
+    `AdminComponentPermission` / `OAuthRoleMapping` / `SuperAdminAccount` 来自
+    `app.models.admin_control`；`OAuthProvider` 来自 `app.models.oauth`；
+    `AdminPrincipal` 来自 `services.admin_web.accounts`；
+    `Any` 来自 `typing`，`Iterable` 来自 `collections.abc`；
+  - **只 import 实际用到的构造器**。本机没有 pyflakes/ruff，用 `ast` 人工核对。
+
+  > **循环导入红线**：新模块**只允许**从 `services.admin_web.views.components` /
+  > `services.admin_web.views.shell` / `services.admin_web.views.fields` 这三个
+  > **兄弟子模块**导入，**不许** `from services.admin_web.views import ...`（父包会成环），
+  > **不许**从 `services.admin_web.views_legacy` 导入。`shell` 必须**具名导入**
+  > `from services.admin_web.views.shell import shell`（`views.shell.shell` 会抛
+  > AttributeError——包属性被同名函数遮蔽）。
 
 - [ ] **Step 2: 补齐 `views/__init__.py` 的再导出**
 
-  把这 12 个名字（`login_page`、`dashboard`、`_provider_form`、
-  `oauth_providers_page`、`_permission_datalist`、`_permission_editor`、
+  把这 **9 个公开页面名**（`login_page`、`dashboard`、`oauth_providers_page`、
   `access_pages_page`、`access_components_page`、`roles_page`、`mappings_page`、
-  `platform_admins_page`、`preferences_page`）加进导入与 `__all__`。
+  `platform_admins_page`、`preferences_page`）加进**静态导入**。
+
+  > ⚠️ **这 9 个名字本来就在 `__all__` 里**（当初惰性再导出时写进去的），
+  > 所以 `__all__` 的**内容不变**、长度仍是 **31**——**不要**去改 `__all__` 凑数。
+
+  > ⚠️ **三个私有助手不进包层**：`_provider_form`、`_permission_datalist`、
+  > `_permission_editor` 各自只被**自己那个模块**里的页面用到（实测全仓无外部
+  > 调用点），它们是**模块内私有**。`views/__init__.py` 的 `__all__` 承诺的是
+  > 包层公开面，把模块私有助手抬到包层是噪声。原计划写「把这 12 个名字加进
+  > 导入与 `__all__`」——**控制器改判为 9 个**。
+
+  **同时删除 PEP 562 惰性再导出机制**（Task 7 删掉 `views_legacy.py` 后，
+  惰性分支的 `from services.admin_web import views_legacy` 就断了）：
+  - 删掉 `_LAZY_PAGE_EXPORTS`；
+  - 删掉模块级 `__getattr__`；
+  - `__dir__` 改成 `return sorted(set(globals()) | set(__all__))`；
+  - 惰性名单里的 9 个名字（`login_page`、`dashboard`、`access_pages_page`、
+    `access_components_page`、`roles_page`、`mappings_page`、`oauth_providers_page`、
+    `platform_admins_page`、`preferences_page`）全部改为静态导入。
 
 - [ ] **Step 3: 删除过渡模块 `services/admin_web/views_legacy.py`**
 
@@ -1627,28 +1707,43 @@
   git rm services/admin_web/views_legacy.py
   ```
 
-  **删除前先确认**：`views/__init__.py` 再导出了**全部** 15 个模块的函数，
+  **删除前先确认**：`views/__init__.py` 再导出了**全部 16 个模块**的公开页面函数，
   且 `services/admin_web/app.py` 的
   `from services.admin_web.views import (...)`（原 `:139`）现在能拿到
   所有名字。少一个就会在 import 时报 `ImportError`。
+
+  `app.py` 从 views 导入的**恰好 18 个**名字（`access_components_page`、
+  `access_pages_page`、`agents_page`、`audit_page`、`dashboard`、`error_page`、
+  `llm_page`、`login_page`、`mappings_page`、`mcp_page`、`oauth_providers_page`、
+  `platform_admins_page`、`preferences_page`、`roles_page`、`skills_page`、
+  `workflow_editor_page`、`workflows_page`）——一个都不能少。
 
 - [ ] **Step 4: 运行测试**
 
   Run:
   ```powershell
   $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
-  .venv\Scripts\python.exe -m pytest tests/test_admin_web.py tests/test_admin_snapshots.py tests/test_admin_structure.py -q -p pytest_asyncio.plugin -p pytest_timeout
+  .venv\Scripts\python.exe -m pytest tests/test_admin_web.py tests/test_admin_snapshots.py tests/test_admin_fields.py -q -p pytest_asyncio.plugin -p pytest_timeout
   ```
 
-  Expected: 43 passed + 34 passed；`test_admin_structure.py` 里
-  `test_old_views_module_is_gone` 现在应当 PASS；其余结构测试仍 FAIL
-  （`routes/*.py` 还没建、`app.py` 还超长——那是 Task 9 的事）。
+  Expected: **43 + 34 + 15 = 92 passed**。**快照必须逐条相等**（基线是重构前的
+  真实输出，绝不能更新）。
+
+  再跑结构契约测试：
+  ```powershell
+  .venv\Scripts\python.exe -m pytest tests/test_admin_structure.py -q -p pytest_asyncio.plugin -p pytest_timeout
+  ```
+  Expected: `test_legacy_views_module_is_gone` 现在 **PASS**；6 个 views 模块的
+  `test_views_module_exists` 全部 **PASS**（含新增的 `roles`）；
+  `test_module_stays_small` 对 16 个 views 模块全部 **PASS**。
+  仍 FAIL 的只剩 **Task 9 的活**：12 个 `routes/*.py` 模块、`test_app_module_is_small`
+  （`app.py` 还超长）、`test_routes_expose_register`。
 
 - [ ] **Step 5: 提交**
 
   ```bash
-  git add -A services/admin_web/views/ services/admin_web/views_legacy.py
-  git commit -m "refactor(admin): 剩余页面迁入 views 包并删除过渡模块 views_legacy.py" -m "旧 views.py 拆成 15 个按业务域切分的模块；views/__init__.py 做再导出，调用方（app.py）不需要改 import 路径。"
+  git add -A services/admin_web/views/ services/admin_web/views_legacy.py tests/test_admin_structure.py
+  git commit -m "refactor(admin): 剩余页面迁入 views 包并删除过渡模块 views_legacy.py" -m "旧 views.py 拆成 16 个按业务域切分的模块；views/__init__.py 做再导出并撤掉 PEP 562 惰性机制，调用方（app.py）不需要改 import 路径。"
   ```
 
 ---

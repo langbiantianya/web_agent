@@ -28,6 +28,7 @@ VIEW_MODULES = (
     "audit",
     "oauth_providers",
     "access",
+    "roles",
     "platform_admins",
     "preferences",
 )
