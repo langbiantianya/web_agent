@@ -2336,6 +2336,37 @@
   > `workflows_validate` 在 `:1128`、`workflows_post` 在 `:1209`）——照抄这个顺序。
   > `routes.json` 快照会在 Task 9 结束时**逐条比对**，顺序错了就会红。
 
+  > **各域模块的「搬入函数」清单**（控制器用 AST 从 `app.py` 抽出；`app.py` 在本
+  > 重构全程**一个字节未改**，所以行号仍然准确）：
+  >
+  > | 域模块 | 搬入的路由处理器 | 跟着搬的域内私有辅助 |
+  > | --- | --- | --- |
+  > | `routes/auth.py` | `health` `:389`、`login_get` `:404`、`super_admin_login` `:432`、`admin_oauth_start` `:483`、`admin_oauth_callback` `:536`、`logout` `:635` | — |
+  > | `routes/dashboard.py` | `dashboard_get` `:812` | — |
+  > | `routes/workflows.py` | `workflows_get` `:876`、`workflow_editor_get` `:910`、`workflows_validate` `:1128`、`workflows_post` `:1209`、`workflows_update` `:1303`、`workflows_toggle` `:1359`、`workflows_delete` `:1399` | `_strip_value_error_prefix` `:997`、`_pydantic_field_path` `:1008`、`_pydantic_message` `:1040`、`_definition_errors` `:1066`；常量 `_VALUE_ERROR_PREFIX` `:954`、`_PYDANTIC_MESSAGE_WITH_FIELD` `:957`、`_PYDANTIC_MESSAGE_NO_FIELD` `:977` |
+  > | `routes/agents.py` | `agents_get` `:1457`、`agents_post` `:1492`、`agents_update` `:1548`、`agents_toggle` `:1603`、`agents_delete` `:1644` | `_agent_form_values` `:1432` |
+  > | `routes/skills.py` | `skills_get` `:1680`、`skills_post` `:1715`、`skills_update` `:1772`、`skills_archive` `:1856` | — |
+  > | `routes/mcp.py` | `mcp_get` `:1891`、`mcp_post` `:1952`、`mcp_update` `:2021`、`mcp_toggle` `:2085`、`mcp_delete` `:2127`、`mcp_refresh` `:2162` | `_validate_mcp_connection` `:1928` |
+  > | `routes/llm.py` | `llm_get` `:2203`、`llm_post` `:2234`、`llm_update` `:2287`、`llm_toggle` `:2339`、`llm_delete` `:2379` | — |
+  > | `routes/audit.py` | `audit_get` `:2413` | — |
+  > | `routes/oauth_providers.py` | `oauth_providers_get` `:2495`、`oauth_providers_post` `:2528`、`oauth_providers_update` `:2599`、`oauth_providers_toggle` `:2670`、`oauth_providers_delete` `:2716` | `_provider_form_values` `:2457` |
+  > | `routes/access.py` | `access_pages_get` `:2763`、`access_page_permissions_post` `:2870`、`access_components_get` `:2962`、`access_component_permissions_post` `:3011`、`access_roles_get` `:3106`、`access_mappings_get` `:3136`、`access_mappings_post` `:3179` | `_parse_permissions` `:2814`、`_may_bind_permissions` `:2831`、`_target_binding_tenant` `:2853`；常量 `CRITICAL_PAGES` `:164`、`TENANT_ID_RE` `:170`、`KNOWN_PERMISSIONS` `:172` |
+  > | `routes/platform_admins.py` | `platform_admins_get` `:3263`、`platform_admins_post` `:3290`、`platform_admins_delete` `:3360`、`forgot_password` `:3402`、`reset_my_password` `:3452` | — |
+  > | `routes/preferences.py` | `preferences_get` `:3511`、`preferences_post` `:3533` | 常量 `ALLOWED_THEMES` `:161`、`ALLOWED_COLOR_MODES` `:162`、`ALLOWED_DENSITIES` `:163` |
+  >
+  > **`app.py` 最终保留**：`logger` `:159`、`STATIC_DIR` `:160`、`_rotation_loop` `:201`、
+  > `lifespan` `:217`、`app` `:238`（含 `app.mount("/admin/static", ...)`）、
+  > `security_headers` `:242`（含 `app.add_middleware(...)`）。
+  > 除此之外 app.py 里的一切都搬走 ⇒ **目标 ≤200 行**（结构契约测试的硬上限）。
+  >
+  > **循环导入红线**：`routes/*.py` **不许** import `services.admin_web.app`
+  > （那是父应用，app.py 又要 import `routes` ⇒ 成环）。所有跨域辅助从
+  > `services.admin_web.common` 取；域内辅助留在自己模块。
+  >
+  > **路由函数的写法**：每个域模块导出 `register(app)`，在里面用
+  > `@app.get(...)` / `@app.post(...)` 装饰**内部定义**的协程——与原 `app.py`
+  > 的写法逐字一致，只是把 `app` 从模块级常量变成了 `register` 的参数。
+
 - [ ] **Step 5: 瘦身 `app.py`**
 
   `services/admin_web/app.py` 最终只保留：
