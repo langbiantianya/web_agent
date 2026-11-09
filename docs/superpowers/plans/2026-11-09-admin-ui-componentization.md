@@ -353,6 +353,7 @@
 ### Task 2: 新包骨架与结构契约测试
 
 **Files:**
+- Rename: `services/admin_web/views.py` → `services/admin_web/views_legacy.py`（**改名让位**，见 Step 3）
 - Create: `services/admin_web/views/__init__.py`
 - Create: `services/admin_web/routes/__init__.py`
 - Create: `tests/test_admin_structure.py`
@@ -434,9 +435,41 @@
       assert (ADMIN / "routes" / f"{name}.py").is_file()
 
 
-  def test_old_views_module_is_gone() -> None:
-      """旧的单文件 views.py 必须被删掉——留着它就等于没拆。"""
-      assert not (ADMIN / "views.py").exists()
+  def test_legacy_views_module_is_gone() -> None:
+      """过渡期的 views_legacy.py 必须被删掉——留着它就等于没拆完。"""
+      assert not (ADMIN / "views_legacy.py").exists()
+
+
+  def test_views_package_still_exports_every_page() -> None:
+      """改名让位期间，视图包必须仍然导出全部页面函数。
+
+      拆包是**逐步**进行的：中途任何一步都不能让
+      ``from services.admin_web.views import X`` 失效——那会让整个管理端
+      起不来，43 个既有测试当场全红。
+      """
+      import services.admin_web.views as views
+
+      for name in (
+          "login_page",
+          "dashboard",
+          "workflows_page",
+          "workflow_editor_page",
+          "agents_page",
+          "skills_page",
+          "mcp_page",
+          "llm_page",
+          "audit_page",
+          "access_pages_page",
+          "access_components_page",
+          "roles_page",
+          "mappings_page",
+          "oauth_providers_page",
+          "platform_admins_page",
+          "preferences_page",
+          "error_page",
+          "shell",
+      ):
+          assert callable(getattr(views, name, None)), name
 
 
   @pytest.mark.parametrize(
@@ -482,11 +515,19 @@
   ```
 
   Expected: 大量 FAIL（`views/*.py` 与 `routes/*.py` 还不存在，
-  `old_views_module_is_gone` 也会失败，因为 `views.py` 还在）。
+  `legacy_views_module_is_gone` 也会失败，因为 `views_legacy.py` 还在）。
 
-- [ ] **Step 3: 建包骨架**
+- [ ] **Step 3: 改名让位，再建包**
 
-  创建 `services/admin_web/views/__init__.py`：
+  **先改名，再建包**——顺序不能反。CPython 解析同名模块与包时**包优先**：
+  一旦 `views/` 目录里有了 `__init__.py`，`from services.admin_web.views import X`
+  就改指向包而不是同名模块。所以必须先把旧文件挪开（改名为 `views_legacy.py`）。
+
+  ```bash
+  git mv services/admin_web/views.py services/admin_web/views_legacy.py
+  ```
+
+  然后创建 `services/admin_web/views/__init__.py`：
 
   ```python
   """管理端页面渲染包。
@@ -497,7 +538,30 @@
 
   这里做再导出，是为了保持 ``from services.admin_web.views import
   workflows_page`` 这类调用点可用——调用方不需要知道页面住在哪个模块。
+
+  拆分是逐步进行的：还没搬走的页面暂时从 ``views_legacy`` 再导出，
+  全部搬完后（Task 7）删掉那个过渡模块。
   """
+
+  from services.admin_web.views_legacy import (
+      access_components_page,
+      access_pages_page,
+      agents_page,
+      audit_page,
+      dashboard,
+      error_page,
+      llm_page,
+      login_page,
+      mappings_page,
+      mcp_page,
+      oauth_providers_page,
+      platform_admins_page,
+      preferences_page,
+      roles_page,
+      skills_page,
+      workflow_editor_page,
+      workflows_page,
+  )
   ```
 
   创建 `services/admin_web/routes/__init__.py`：
@@ -581,7 +645,7 @@
 
 **Files:**
 - Create: `services/admin_web/views/shell.py`
-- Modify: `services/admin_web/views.py`（删掉已搬走的函数，改为从新包导入）
+- Modify: `services/admin_web/views_legacy.py`（删掉已搬走的函数，改为从新模块导入）
 - Modify: `services/admin_web/views/__init__.py`（再导出）
 - Test: `tests/test_admin_structure.py`、`tests/test_admin_snapshots.py`
 
@@ -599,7 +663,7 @@
 
 - [ ] **Step 1: 创建 `views/shell.py`**
 
-  从 `services/admin_web/views.py` 搬入以下内容（**逐字复制，不要顺手改写**）：
+  从 `services/admin_web/views_legacy.py` 搬入以下内容（**逐字复制，不要顺手改写**）：
 
   - 常量 `ADMIN_STYLESHEET`（原 `:62`）、`ADMIN_UI_SCRIPT`（原 `:63`）、`NAV_GROUP_ORDER`（原 `:64`）
   - `_flash`（原 `:73`）
@@ -651,9 +715,9 @@
 
   **只 import 上面这些**——搬的时候按实际用到的删，别把 `ludic.html` 整包搬过来。
 
-- [ ] **Step 2: 从 `views.py` 删掉已搬走的内容**
+- [ ] **Step 2: 从 `views_legacy.py` 删掉已搬走的内容**
 
-  在 `services/admin_web/views.py` 里删除上述常量与函数，并加上导入：
+  在 `services/admin_web/views_legacy.py` 里删除上述常量与函数，并加上导入：
 
   ```python
   from services.admin_web.views.shell import (
@@ -668,7 +732,10 @@
   )
   ```
 
-  注意 `views.py` 暂时**不能删**——它还要留到 Task 7。
+  注意 `views_legacy.py` 暂时**不能删**——Task 3~6 的页面函数还住在里面，
+  它要留到 Task 7 全部搬完才删。
+
+  同时把 `views/__init__.py` 里对应的再导出改成从新模块来：
 
 - [ ] **Step 3: 在 `views/__init__.py` 再导出**
 
@@ -710,7 +777,7 @@
 - [ ] **Step 5: 提交**
 
   ```bash
-  git add services/admin_web/views/shell.py services/admin_web/views.py services/admin_web/views/__init__.py
+  git add services/admin_web/views/shell.py services/admin_web/views_legacy.py services/admin_web/views/__init__.py
   git commit -m "refactor(admin): 外壳与全局片段搬进 views/shell.py" -m "shell 被每个页面依赖，放在页面模块里会形成反向依赖，所以单独成模块。内容逐字搬家，渲染快照逐条相等。"
   ```
 
@@ -720,7 +787,7 @@
 
 **Files:**
 - Create: `services/admin_web/views/components.py`
-- Modify: `services/admin_web/views.py`
+- Modify: `services/admin_web/views_legacy.py`
 - Modify: `services/admin_web/views/__init__.py`
 - Test: `tests/test_admin_snapshots.py`、`tests/test_admin_structure.py`
 
@@ -734,7 +801,7 @@
 
 - [ ] **Step 1: 创建 `views/components.py`**
 
-  从 `services/admin_web/views.py` 搬入（逐字复制）：
+  从 `services/admin_web/views_legacy.py` 搬入（逐字复制）：
 
   - `_metric`（原 `:486`）
   - `_management_page`（原 `:495`）
@@ -780,7 +847,7 @@
   from services.admin_web.views.shell import shell
   ```
 
-- [ ] **Step 2: 从 `views.py` 删掉已搬走的四个函数并改导入**
+- [ ] **Step 2: 从 `views_legacy.py` 删掉已搬走的四个函数并改导入**
 
   ```python
   from services.admin_web.views.components import (
@@ -817,7 +884,7 @@
 - [ ] **Step 5: 提交**
 
   ```bash
-  git add services/admin_web/views/components.py services/admin_web/views.py services/admin_web/views/__init__.py
+  git add services/admin_web/views/components.py services/admin_web/views_legacy.py services/admin_web/views/__init__.py
   git commit -m "refactor(admin): 通用 UI 组件搬进 views/components.py" -m "指标卡、CSRF 隐藏域、启停删除按钮组、业务页骨架——四个跨页面复用的片段单独成模块，页面函数只写「这个页面有什么」。"
   ```
 
@@ -1190,7 +1257,7 @@
 - Create: `services/admin_web/views/mcp.py`
 - Create: `services/admin_web/views/llm.py`
 - Create: `services/admin_web/views/audit.py`
-- Modify: `services/admin_web/views.py`
+- Modify: `services/admin_web/views_legacy.py`
 - Modify: `services/admin_web/views/__init__.py`
 - Test: `tests/test_admin_snapshots.py`、`tests/test_admin_web.py`
 
@@ -1206,7 +1273,7 @@
 
 - [ ] **Step 1: 逐个创建页面模块**
 
-  从 `services/admin_web/views.py` 搬入（**逐字复制函数体，不改逻辑**）：
+  从 `services/admin_web/views_legacy.py` 搬入（**逐字复制函数体，不改逻辑**）：
 
   | 新模块 | 搬入的函数（原行号） |
   | --- | --- |
@@ -1261,9 +1328,9 @@
   `views/workflows.py` 额外需要 `views.shell.shell`（`workflow_editor_page` 自己拼外壳，
   不走 `_management_page`），`views/audit.py` 需要 `views.shell.shell`。
 
-- [ ] **Step 2: 从 `views.py` 删掉已搬走的函数**
+- [ ] **Step 2: 从 `views_legacy.py` 删掉已搬走的函数**
 
-  删除上述 7 个函数，并在 `views.py` 顶部加导入：
+  删除上述 7 个函数，并在 `views_legacy.py` 顶部加导入：
 
   ```python
   from services.admin_web.views.agents import agents_page
@@ -1292,13 +1359,13 @@
 - [ ] **Step 5: 提交**
 
   ```bash
-  git add services/admin_web/views/ services/admin_web/views.py
+  git add services/admin_web/views/ services/admin_web/views_legacy.py
   git commit -m "refactor(admin): 资源类页面按业务域搬进 views 包" -m "workflows / agents / skills / mcp / llm / audit 六个页面各自成模块。内容逐字搬家，渲染快照逐条相等。"
   ```
 
 ---
 
-### Task 7: views 其余页面迁移并删除旧 views.py
+### Task 7: views 其余页面迁移并删除 views_legacy.py
 
 **Files:**
 - Create: `services/admin_web/views/login.py`
@@ -1307,7 +1374,7 @@
 - Create: `services/admin_web/views/access.py`
 - Create: `services/admin_web/views/platform_admins.py`
 - Create: `services/admin_web/views/preferences.py`
-- Delete: `services/admin_web/views.py`
+- Delete: `services/admin_web/views_legacy.py`
 - Modify: `services/admin_web/views/__init__.py`
 - Test: `tests/test_admin_structure.py`、`tests/test_admin_snapshots.py`、`tests/test_admin_web.py`
 
@@ -1323,7 +1390,7 @@
 
 - [ ] **Step 1: 逐个创建剩余页面模块**
 
-  从 `services/admin_web/views.py` 搬入（逐字复制）：
+  从 `services/admin_web/views_legacy.py` 搬入（逐字复制）：
 
   | 新模块 | 搬入的函数（原行号） |
   | --- | --- |
@@ -1358,10 +1425,10 @@
   `access_pages_page`、`access_components_page`、`roles_page`、`mappings_page`、
   `platform_admins_page`、`preferences_page`）加进导入与 `__all__`。
 
-- [ ] **Step 3: 删除旧 `services/admin_web/views.py`**
+- [ ] **Step 3: 删除过渡模块 `services/admin_web/views_legacy.py`**
 
   ```bash
-  git rm services/admin_web/views.py
+  git rm services/admin_web/views_legacy.py
   ```
 
   **删除前先确认**：`views/__init__.py` 再导出了**全部** 15 个模块的函数，
@@ -1384,8 +1451,8 @@
 - [ ] **Step 5: 提交**
 
   ```bash
-  git add -A services/admin_web/views/ services/admin_web/views.py
-  git commit -m "refactor(admin): 剩余页面迁入 views 包并删除旧 views.py" -m "views.py 拆成 15 个按业务域切分的模块；views/__init__.py 做再导出，调用方（app.py）不需要改 import 路径。"
+  git add -A services/admin_web/views/ services/admin_web/views_legacy.py
+  git commit -m "refactor(admin): 剩余页面迁入 views 包并删除过渡模块 views_legacy.py" -m "旧 views.py 拆成 15 个按业务域切分的模块；views/__init__.py 做再导出，调用方（app.py）不需要改 import 路径。"
   ```
 
 ---
