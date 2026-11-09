@@ -21,6 +21,8 @@
 - **不碰 `app/core/workflow_def.py`**（图规则唯一实现）与 V4.8 的编排页改动。
 - **不碰 `admin.css`**。
 - **路由注册顺序是行为的一部分**：Starlette 首个匹配 path 的路由胜出。
+- **搬家的定位方式**：计划里各「搬入函数」清单带的历史行号取自**原始 `views.py`**，会随前序搬家整体位移
+  （Task 3 评审就查出过 Task 4 的行号失准）。**函数名才是准的**——按名字定位，不要按行号定位。
 - **既有测试的红线仍成立**：V4.8 之前的测试一个字节都不许改。
 - 验证命令统一为：
   ```powershell
@@ -1380,12 +1382,12 @@
 
   | 新模块 | 搬入的函数（原行号） |
   | --- | --- |
-  | `views/workflows.py` | `workflows_page`（`:589`）、`workflow_editor_page`（`:673`） |
-  | `views/agents.py` | `agents_page`（`:892`） |
-  | `views/skills.py` | `skills_page`（`:1005`） |
-  | `views/mcp.py` | `mcp_page`（`:1120`） |
-  | `views/llm.py` | `llm_page`（`:1229`） |
-  | `views/audit.py` | `audit_page`（`:1330`） |
+  | `views/workflows.py` | `workflows_page`（`:334`）、`workflow_editor_page`（`:418`） |
+  | `views/agents.py` | `agents_page`（`:637`） |
+  | `views/skills.py` | `skills_page`（`:750`） |
+  | `views/mcp.py` | `mcp_page`（`:865`） |
+  | `views/llm.py` | `llm_page`（`:974`） |
+  | `views/audit.py` | `audit_page`（`:1075`） |
 
   每个模块按这个模板写头部（以 `views/agents.py` 为例，其余同构）：
 
@@ -1507,12 +1509,19 @@
 
   | 新模块 | 搬入的函数（原行号） |
   | --- | --- |
-  | `views/login.py` | `login_page`（`:228`） |
-  | `views/dashboard.py` | `dashboard`（`:423`） |
-  | `views/oauth_providers.py` | `_provider_form`（`:1801`）、`oauth_providers_page`（`:2016`） |
-  | `views/access.py` | `_permission_datalist`（`:1493`）、`_permission_editor`（`:1511`）、`access_pages_page`（`:1430`）、`access_components_page`（`:1588`）、`roles_page`（`：1658`）、`mappings_page`（`:1707`） |
-  | `views/platform_admins.py` | `platform_admins_page`（`:2107`） |
-  | `views/preferences.py` | `preferences_page`（`:2211`） |
+  | `views/login.py` | `login_page` |
+  | `views/dashboard.py` | `dashboard` |
+  | `views/oauth_providers.py` | `_provider_form`、`oauth_providers_page` |
+  | `views/access.py` | `_permission_datalist`、`_permission_editor`、`access_pages_page`、`access_components_page`、`roles_page`、`mappings_page` |
+  | `views/platform_admins.py` | `platform_admins_page` |
+  | `views/preferences.py` | `preferences_page` |
+
+  > **执行修订（2026-11-09）**：本表原先带「原 `:228` / `:423` / `:1801` …」等行号，
+  > 那是**原始 `views.py`** 的行号。Task 3 / Task 4 搬走外壳与组件后，`views_legacy.py`
+  > 的行号整体位移；Task 6 又会再搬走 7 个函数，Task 7 开始时的行号已经无法预先写死。
+  > **函数名才是准的**——按名字定位，不要按行号定位。
+  > Task 6 开始时的实际行号（供交叉参考）：`workflows_page` `:334`、`workflow_editor_page` `:418`、
+  > `agents_page` `:637`、`skills_page` `:750`、`mcp_page` `:865`、`llm_page` `:974`、`audit_page` `:1075`。
 
   每个模块的模块级 docstring 写清这个页面管什么，例如
   `views/access.py`：
