@@ -967,7 +967,7 @@
 **Interfaces:**
 - Consumes: Task 3 的校验端点（前端用）；Task 1 的 `label` 与 `layout`
 - Produces:
-  - `shell(..., extra_scripts: list[str] | None = None)` —— 追加 `<script src=...>`
+  - `shell(..., extra_scripts: list[str] | None = None, extra_styles: list[str] | None = None)` —— 追加 `<script src=...>` 与 `<link rel="stylesheet" href=...>`
   - `workflow_editor_page(*, principal, csrf, pages, workflow, agents, theme, color_mode, density, can_write, flash=None) -> Any`
   - `GET /admin/workflows/{code}` —— 200 渲染画布页；无权限或不存在 404
   - `POST /admin/workflows` —— 表单字段改为 `code` / `name` / `description` / `agent_code` / `enabled`，服务端生成骨架 definition，创建后 303 跳 `/admin/workflows/{code}`
@@ -1167,7 +1167,7 @@
 
   Expected: FAIL —— 编排页 404、创建仍要求 `definition`。
 
-- [ ] **Step 3: `shell()` 支持额外脚本**
+- [ ] **Step 3: `shell()` 支持额外脚本与样式表**
 
   在 `services/admin_web/views.py` 的 `shell` 签名里加参数：
 
@@ -1185,13 +1185,16 @@
       flash: str | None = None,
       flash_kind: str = "info",
       extra_scripts: list[str] | None = None,
+      extra_styles: list[str] | None = None,
   ) -> Any:
   ```
 
-  并把 `head(...)` 里的脚本部分改成：
+  并把 `head(...)` 里的脚本部分改成（**样式表必须排在脚本之前**，编排页的
+  画布样式要先生效；`extra_styles` 追加在基础样式之后）：
 
   ```python
             link(rel="stylesheet", href=ADMIN_STYLESHEET),
+            *(link(rel="stylesheet", href=href) for href in (extra_styles or [])),
             script(src=ADMIN_UI_SCRIPT),
             *(script(src=src) for src in (extra_scripts or [])),
   ```
