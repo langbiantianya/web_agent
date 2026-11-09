@@ -760,6 +760,10 @@
 
 - [ ] **Step 3: 在 `views/__init__.py` 再导出**
 
+  **是「追加」，不是「替换」。** `views/__init__.py` 现在从 `views_legacy` 再导出 16 个页面函数
+  （`error_page` 本轮搬进 `views/shell.py`，所以 `views_legacy` 那侧变成 15 个）。
+  这一步要在**保留**页面再导出的同时，**追加** shell 侧的 8 个名字：
+
   ```python
   from services.admin_web.views.shell import (
       ADMIN_STYLESHEET,
@@ -771,6 +775,46 @@
       error_page,
       shell,
   )
+  ```
+
+  > **执行修订（2026-11-09）**：原 Step 3 写的是把 `views_legacy` 的再导出**整块换成**
+  > shell 的再导出。若照做，`login_page` / `dashboard` / `workflows_page` 等 16 个页面函数
+  > 就不再从 `services.admin_web.views` 导出，`services/admin_web/app.py` 的
+  > `from services.admin_web.views import ...` 全部失效——43 个既有后台测试当场全红，
+  > 而 `test_views_package_still_exports_every_page` 也会红。
+  > **页面再导出必须保留**，两侧合并后包层共导出 24 个名字。
+
+  合并后 `views/__init__.py` 的完整再导出与 `__all__`：
+
+  ```python
+  from services.admin_web.views.shell import (
+      ADMIN_STYLESHEET,
+      ADMIN_UI_SCRIPT,
+      NAV_GROUP_ORDER,
+      _flash,
+      _locale_switch,
+      _nav,
+      error_page,
+      shell,
+  )
+  from services.admin_web.views_legacy import (
+      access_components_page,
+      access_pages_page,
+      agents_page,
+      audit_page,
+      dashboard,
+      llm_page,
+      login_page,
+      mappings_page,
+      mcp_page,
+      oauth_providers_page,
+      platform_admins_page,
+      preferences_page,
+      roles_page,
+      skills_page,
+      workflow_editor_page,
+      workflows_page,
+  )
 
   __all__ = [
       "ADMIN_STYLESHEET",
@@ -779,10 +823,29 @@
       "_flash",
       "_locale_switch",
       "_nav",
+      "access_components_page",
+      "access_pages_page",
+      "agents_page",
+      "audit_page",
+      "dashboard",
       "error_page",
+      "llm_page",
+      "login_page",
+      "mappings_page",
+      "mcp_page",
+      "oauth_providers_page",
+      "platform_admins_page",
+      "preferences_page",
+      "roles_page",
       "shell",
+      "skills_page",
+      "workflow_editor_page",
+      "workflows_page",
   ]
   ```
+
+  `__all__` 只影响 `from services.admin_web.views import *`，不影响具名导入——
+  但它同时是一份「包层承诺了哪些名字」的自述，写全才不会误导后来者。
 
 - [ ] **Step 4: 运行测试，确认行为未变**
 
@@ -792,8 +855,12 @@
   .venv\Scripts\python.exe -m pytest tests/test_admin_web.py tests/test_admin_snapshots.py -q -p pytest_asyncio.plugin -p pytest_timeout
   ```
 
-  Expected: `test_admin_web` 43 passed；`test_admin_snapshots` 17 passed
-  （**快照逐条相等**——这是「搬过去没改坏」的证据）。
+  Expected: `test_admin_web` 43 passed；`test_admin_snapshots` **34** passed
+  （17 个空数据集页面 + 16 个非空数据集页面 + 1 个路由表，
+  **快照逐条相等**——这是「搬过去没改坏」的证据）。
+
+  另外确认 `tests/test_admin_structure.py` 里
+  `test_views_package_still_exports_every_page` 仍然**通过**（包层再导出没被搬坏）。
 
 - [ ] **Step 5: 提交**
 
