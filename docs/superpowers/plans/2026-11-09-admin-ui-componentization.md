@@ -1010,7 +1010,8 @@
     `placeholder: str = ""`、`rows: int = 8`、`autocomplete: str = ""`、
     `min_value: str | None = None`、`max_value: str | None = None`、
     `modes: tuple[str, ...] = ("create", "edit")`、
-    `edit_placeholder: str = ""`、`edit_rows: int | None = None`
+    `edit_placeholder: str = ""`、`edit_rows: int | None = None`、
+    `edit_label: str = ""`
   - `render_field(field: Field, value: object, *, mode: str) -> Any`
   - `render_form(fields: Iterable[Field], *, mode: str, values: Mapping[str, object], csrf: str, action: str, submit_label: str, layout: str = "grid") -> Any`
 
@@ -1336,6 +1337,41 @@
   ```
 
   Expected: 10 passed。
+
+  > **执行修订（2026-11-09，Task 5 完成后回写）**：本机 **ludic 是 1.0.3**（不是 2.x），
+  > 它的行为与上面那份参考实现冲突，导致**简报逐字代码跑不过简报自己的测试**。实测事实：
+  >
+  > - 空字符串属性被从 HTML **和元素树里一并丢掉** ⇒ `input_(name="x")` 与
+  >   `input_(name="x", value="")` 的 `aliased_attrs` **完全相同**；
+  > - `value=None` 渲染成字面量 `value="None"`；
+  > - `required=False` 渲染时省略，`required=True` 渲染成 `required="required"`；
+  > - `placeholder=""` 渲染时省略。
+  >
+  > **对「values 语义」的前提订正**：上面那句「`<input name="x">` 与 `<input name="x" value="">`
+  > 在 HTML 上不等价，**渲染快照会判为差异**」——前半句成立，后半句**不成立**（树基线区分不了）。
+  > 差别只在 **HTML 文本层**，要靠组件自己把空 `value` 补回来；**树基线快照守的是标签、
+  > 属性名与非空属性值、文本、children 结构、class 值**，空值/缺省的差别不在它的守卫范围内。
+  >
+  > **落地的偏离**（实现者实测驱动，逐条有据）：
+  > ① 新增 `_Input(input_)` 子类覆写 `_format_attributes`，把被丢掉的空 `value` 补回 HTML，
+  > **元素树保持与既有表单一致**——满足简报测试的 HTML 断言又不扰动 34 条快照基线。
+  > （覆写的是 ludic **私有 API**；`requirements.admin.txt` 钉死 `ludic[full]>=1.0,<2`，
+  > 升级需重跑 `tests/test_admin_fields.py`。评审已确认**无公共 API 替代路径**。）
+  > ② `kind="select"` 消费传入的 `value`：`value is not None` 时对**每个** option 发
+  > `selected=(option_value == value)`——否则编辑态下拉会丢当前选中项，
+  > 浏览器默认选中第一项，**把 `draft` 的 skill 存成 `published`**（数据损坏路径）。
+  > ③ `Field` 增加 `edit_label: str = ""`（与 `edit_placeholder` / `edit_rows` 同构的最小扩展）：
+  > `api_key` 的编辑态标签是 "Replacement API key"、创建态是 "API key"，
+  > 而 `Field` 只有一个 `label`——这是**真模型缺口**。
+  > ④ bool 值走 ludic 的 bool 分支（`str(value)` 会把 `False` 变成字面量 `"False"`）。
+  > ⑤ 复用 `views/components.py` 的 `_csrf()`，不再自己拼 CSRF 隐藏域。
+  >
+  > **给 Task 8 的三条硬提醒**：
+  > - `mcp` 的「编辑态字段集与标签不同」**不是模型缺口**：`modes` + 按模式给不同字段列表即可表达，
+  >   不为它扩模型；`radio` / 主题控件继续手写。
+  > - **空值 / 缺省的错写不会被快照报出来**，Task 8 接入后这类差异必须**人工逐字核对**。
+  > - 组件对每个空值字段都会多渲染 `value=""`（HTML 层），既有表单不会；
+  >   浏览器提交语义等价，但**不能再宣称 HTML 逐字节等价**。
 
 - [ ] **Step 5: 在 `views/__init__.py` 再导出**
 
