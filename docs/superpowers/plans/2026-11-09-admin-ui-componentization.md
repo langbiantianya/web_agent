@@ -1095,9 +1095,10 @@
   def test_absent_value_renders_no_value_attribute() -> None:
       """值缺失时**不**渲染 ``value=""``。
 
-      现有表单里 ``input_(name="tools")`` 渲染成 ``<input name="tools">``，
-      而不是 ``<input name="tools" value="">``——两者在 HTML 上不等价，
-      渲染快照会判为差异。所以「有没有值」必须由调用方显式决定。
+      ludic 1.0.3 会丢掉空字符串属性，所以 ``input_(name="tools")`` 与
+      ``input_(name="tools", value="")`` 渲染出的 **HTML 与元素树完全一样**，
+      渲染快照**判不出**这个差别。组件用 ``_Input`` 子类在 HTML 文本层把
+      ``value=""`` 补回来（元素树不动），差别要靠人工逐字核对。
       """
       element = render_field(Field("tools", "Tools"), None, mode="create")
       assert "value=" not in element.to_html()
@@ -1250,9 +1251,9 @@
   def _control(field: Field, value: object | None, *, mode: str) -> Any:
       """按 kind 造出控件本身（不含 label 包裹）。
 
-      ``value`` 为 ``None`` 表示「这个输入框不带 value 属性」——现有表单里
-      ``input_(name="tools")`` 与 ``input_(name="tools", value="")`` 渲染出的
-      HTML 不等价，必须让调用方显式区分。
+      ``value`` 为 ``None`` 表示「这个控件不带 value 属性」。ludic 1.0.3 丢掉
+      空字符串属性，所以「空 value」与「缺省」在 HTML 和元素树上都分不出来，
+      差别只在组件自己补回的 HTML 文本层。
       """
       text = None if value is None else str(value)
       if field.kind == "textarea":
@@ -1307,9 +1308,9 @@
   ) -> Any:
       """渲染整个表单。
 
-      ``values`` 里**显式给出**的键才会带上 ``value`` 属性；没给出的键渲染成
-      不带 value 的输入框。这不是细节：``<input name="x">`` 与
-      ``<input name="x" value="">`` 在 HTML 上不等价。
+      ``values`` 里**只有 ``None`` 才是缺省**：值为 ``None`` 的键渲染成不带
+      value 的输入框；``False`` **不是**缺省——它走 ludic 的 bool 分支，
+      HTML 上没有 ``value`` 属性（元素树里是 ``value: 'false'``）。
 
       ``layout`` 是约定值：``"grid"``（创建表单，双列栅格）与 ``"stack"``
       （编辑表单，纵向堆叠）。取值只影响外层 class。
@@ -1336,7 +1337,7 @@
   .venv\Scripts\python.exe -m pytest tests/test_admin_fields.py -q -p pytest_asyncio.plugin -p pytest_timeout
   ```
 
-  Expected: 10 passed。
+  Expected: 15 passed（Task 5 落地时 10 个，修复轮 1 +3，修复轮 2 +2）。
 
   > **执行修订（2026-11-09，Task 5 完成后回写）**：本机 **ludic 是 1.0.3**（不是 2.x），
   > 它的行为与上面那份参考实现冲突，导致**简报逐字代码跑不过简报自己的测试**。实测事实：
@@ -1366,12 +1367,30 @@
   > ④ bool 值走 ludic 的 bool 分支（`str(value)` 会把 `False` 变成字面量 `"False"`）。
   > ⑤ 复用 `views/components.py` 的 `_csrf()`，不再自己拼 CSRF 隐藏域。
   >
+  > **修复轮 2（Task 5 复审后追加，提交 `7b56882`）**：复审发现 `kind="select"`
+  > 配 **bool** 值时仍会退化——`str(True)` 得到 `"True"`，与 option 值 `"1"`
+  > 不相等 ⇒ 零个 `selected` ⇒ 浏览器默认选中第一项，**复现 ② 想消除的损坏路径**。
+  > 既有表单的布尔型下拉一律是 `option("Yes", value="1", selected=bool(x))` /
+  > `option("No", value="0", selected=not bool(x))`（option 值是**字符串** `"1"`/`"0"`），
+  > 所以组件在 select 分支把布尔当前值归一：`True` 命中 `"1"`（也接受 `"True"`）、
+  > `False` 命中 `"0"`（也接受 `"False"`），归一只在 select 分支生效。
+  > 另外两条：
+  > - **树形态必须与 legacy 一致**：既有表单给**每个** option 都显式带 `selected`
+  >   （一个 `'true'` 一个 `'false'`），组件也必须对每个 option 显式发 `selected`。
+  >   HTML 层**区分不了**「显式 `selected=False`」与「不发 selected」，但**元素树区分得了**，
+  >   而快照基线比的是树 ⇒ 用例必须断言 `aliased_attrs`，不能只断言 HTML。
+  > - `render_form` 的 docstring 订正为「**只有 `None` 才是缺省**」（`False` 非
+  >   `None`，但 HTML 上没有 `value` 属性）；`render_field` 的 bool 语义按 kind
+  >   拆开写（textarea + bool 会把文本 `True` 渲染进内容）。
+  >
   > **给 Task 8 的三条硬提醒**：
   > - `mcp` 的「编辑态字段集与标签不同」**不是模型缺口**：`modes` + 按模式给不同字段列表即可表达，
   >   不为它扩模型；`radio` / 主题控件继续手写。
   > - **空值 / 缺省的错写不会被快照报出来**，Task 8 接入后这类差异必须**人工逐字核对**。
   > - 组件对每个空值字段都会多渲染 `value=""`（HTML 层），既有表单不会；
   >   浏览器提交语义等价，但**不能再宣称 HTML 逐字节等价**。
+  > - **布尔型下拉的 option 值按既有约定用 `"1"` / `"0"`**（组件已能直接吃 bool，
+  >   但值必须落在 `"1"`/`"0"` 这组上，否则匹配不到任何 option）。
 
 - [ ] **Step 5: 在 `views/__init__.py` 再导出**
 
