@@ -2115,17 +2115,18 @@
 - Create: `services/admin_web/routes/access.py`
 - Create: `services/admin_web/routes/platform_admins.py`
 - Create: `services/admin_web/routes/preferences.py`
-- Modify: `services/admin_web/app.py`（从 3373 行降到 ~150 行）
+- Modify: `services/admin_web/app.py`（从 **3576** 行降到 ~150 行；原写的「3373 行」是**非空行数**，`app.py` 在本重构全程**一个字节未改**）
 - Test: `tests/test_admin_structure.py`、`tests/test_admin_snapshots.py`、`tests/test_admin_web.py`
 
 **Interfaces:**
 - Consumes: `services.admin_web.views`（页面函数）、`services.admin_web.common`（跨域辅助）
 - Produces:
-  - `services.admin_web.common`：`origin_ok`、`safe_next`、`callback_uri`、`append_query`、
-    `principal_of`、`require_csrf`、`tenant_id_of`、`flash_from_query`、`as_bool`、
-    `csv_list`、`json_object`、`can_edit_resource`、`operation_authorized`、
-    `business_redirect`、`html_error`、`login_redirect`、`unauthorized`、`not_found`
-    （**去掉下划线前缀**，因为它们现在是跨模块共享的公开辅助）
+  - `services.admin_web.common`（**21 个**公开辅助，去掉下划线前缀）：
+    `origin_ok`、`safe_next`、`callback_uri`、`append_query`、`principal_of`、
+    `preference_of`、`authenticated`、**`with_auth`**、`require_csrf`、`login_redirect`、
+    `unauthorized`、`not_found`、`html_error`、`tenant_id_of`、`flash_from_query`、
+    `as_bool`、`csv_list`、`json_object`、`can_edit_resource`、`operation_authorized`、
+    `business_redirect`
   - `services.admin_web.routes.register_all(app)`
   - 每个 `services.admin_web.routes.<域>` 暴露 `register(app)`
 
@@ -2134,28 +2135,43 @@
   从 `services/admin_web/app.py` 搬入跨域共用的辅助函数，**去掉下划线前缀**
   （它们现在是跨模块共享的公开 API）：
 
-  | 原函数（原行号） | 新名 |
-  | --- | --- |
-  | `_origin_ok`（`:261`） | `origin_ok` |
-  | `_safe_next`（`:273`） | `safe_next` |
-  | `_callback_uri`（`:289`） | `callback_uri` |
-  | `_append_query`（`:297`） | `append_query` |
-  | `_principal`（`:305`） | `principal_of` |
-  | `_preference`（`:332`） | `preference_of` |
-  | `_authenticated`（`:352`） | `authenticated` |
-  | `_require_csrf`（`:368`） | `require_csrf` |
-  | `_login_redirect`（`:383`） | `login_redirect` |
-  | `_unauthorized`（`:680`） | `unauthorized` |
-  | `_not_found`（`:688`） | `not_found` |
-  | `_html_error`（`:697`） | `html_error` |
-  | `_tenant_id`（`:716`） | `tenant_id_of` |
-  | `_flash_from_query`（`:721`） | `flash_from_query` |
-  | `_as_bool`（`:746`） | `as_bool` |
-  | `_csv`（`:753`） | `csv_list` |
-  | `_json_object`（`:762`） | `json_object` |
-  | `_can_edit_resource`（`:770`） | `can_edit_resource` |
-  | `_operation_authorized`（`:783`） | `operation_authorized` |
-  | `_business_redirect`（`:805`） | `business_redirect` |
+  | 原函数（原行号） | 新名 | 被几个域用 |
+  | --- | --- | --- |
+  | `_origin_ok`（`:261`） | `origin_ok` | 5（auth/workflows/access/platform_admins/preferences） |
+  | `_safe_next`（`:273`） | `safe_next` | 2（auth/workflows） |
+  | `_callback_uri`（`:289`） | `callback_uri` | 1（auth） |
+  | `_append_query`（`:297`） | `append_query` | 1（auth） |
+  | `_principal`（`:305`） | `principal_of` | 1（auth） |
+  | `_preference`（`:332`） | `preference_of` | 1（auth） |
+  | `_authenticated`（`:352`） | `authenticated` | 1（auth） |
+  | `_require_csrf`（`:368`） | `require_csrf` | 5 |
+  | `_login_redirect`（`:383`） | `login_redirect` | 2（auth/platform_admins） |
+  | **`_with_auth`（`:672`）** | **`with_auth`** | **11（除 auth 外全部）** |
+  | `_unauthorized`（`:680`） | `unauthorized` | 11 |
+  | `_not_found`（`:688`） | `not_found` | 11 |
+  | `_html_error`（`:697`） | `html_error` | 1（access） |
+  | `_tenant_id`（`:716`） | `tenant_id_of` | 6 |
+  | `_flash_from_query`（`:721`） | `flash_from_query` | 7 |
+  | `_as_bool`（`:746`） | `as_bool` | 6 |
+  | `_csv`（`:753`） | `csv_list` | 1（auth） |
+  | `_json_object`（`:762`） | `json_object` | 1（workflows） |
+  | `_can_edit_resource`（`:770`） | `can_edit_resource` | 6 |
+  | `_operation_authorized`（`:783`） | `operation_authorized` | 6 |
+  | `_business_redirect`（`:805`） | `business_redirect` | 6 |
+
+  > **订正（2026-11-09，控制器实测）**：原清单**漏了 `_with_auth`**。
+  > 它是**跨 11 个域、48 处调用**的认证包装（`values = await _with_auth(request)`），
+  > 留在 `app.py` 会让路由模块反向 import `app` ⇒ **循环导入**。
+  > 它与 `_authenticated` 一起搬进 `common.py`（`with_auth` / `authenticated`）。
+  > 「被几个域用」一列是控制器用 AST 算出来的自由名统计，是搬家的依据。
+
+  **模块级常量的归属**（控制器实测使用点）：
+  - `CRITICAL_PAGES`（`:164`）、`TENANT_ID_RE`（`:170`）、`KNOWN_PERMISSIONS`（`:172`）
+    **只被 access 域用**（`:2825`/`:2838`/`:2859`/`:2892`）⇒ 搬进 `routes/access.py`；
+  - `ALLOWED_THEMES`（`:161`）、`ALLOWED_COLOR_MODES`（`:162`）、
+    `ALLOWED_DENSITIES`（`:163`）**只被 preferences 域用**（`:3551-3553`）
+    ⇒ 搬进 `routes/preferences.py`；
+  - `STATIC_DIR`、`logger` 留在 `app.py`。
 
   **只搬跨域共用的**：只被一个域用到的辅助（如 `_agent_form_values`、
   `_provider_form_values`、`_parse_permissions`、`_may_bind_permissions`、
@@ -2267,7 +2283,7 @@
   | `llm` | `GET/POST /admin/llm`、`POST /admin/llm/{code}/update`、`POST /admin/llm/{code}/toggle`、`POST /admin/llm/{code}/delete` |
   | `audit` | `GET /admin/audit` |
   | `oauth_providers` | `GET/POST /admin/oauth-providers`、`POST /admin/oauth-providers/{code}/update`、`POST /admin/oauth-providers/{code}/toggle`、`POST /admin/oauth-providers/{code}/delete` |
-  | `access` | `GET /admin/access/pages`、`POST /admin/access/pages/{page_code}/permissions`、`GET /admin/access/components`、`POST /admin/access/components/{component_code}/permissions`、`GET /admin/access/roles`、`GET/POST /admin/access/mappings` |
+  | `access` | `GET /admin/access/pages`、`POST /admin/access/pages/{page_code}/permissions`、`GET /admin/access/components`、**`POST /admin/access/components/{page_code}/{component_code}/permissions`**、`GET /admin/access/roles`、`GET /admin/access/mappings`、`POST /admin/access/mappings` |
   | `platform_admins` | `GET/POST /admin/platform-admins`、`POST /admin/platform-admins/{account_id}/delete`、`POST /admin/super-admin/forgot-password`、`POST /admin/super-admin/reset-my-password` |
   | `preferences` | `GET/POST /admin/preferences` |
 
@@ -2277,6 +2293,41 @@
   `routes/access.py`，`_strip_value_error_prefix` / `_pydantic_field_path` /
   `_pydantic_message` / `_definition_errors` → `routes/workflows.py`，
   `_validate_mcp_connection` → `routes/mcp.py`。
+
+  > **权威注册顺序**（控制器从 Task 1 抓的 `tests/snapshots/admin/routes.json`
+  > 导出，共 **55** 条，含 `admin-static`；**顺序即行为**——Starlette 首个匹配的
+  > path 路由胜出）：
+  >
+  > | # | 路由 | 方法 | 路径 |
+  > | --- | --- | --- | --- |
+  > | 1 | `admin-static` | — | `/admin/static`（`app.mount`，留在 `app.py`） |
+  > | 2 | `health` | GET | `/admin/health` |
+  > | 3 | `login_get` | GET | `/admin/login` |
+  > | 4 | `super_admin_login` | POST | `/admin/login/super-admin` |
+  > | 5 | `admin_oauth_start` | POST | `/admin/login/oauth/{provider_code}` |
+  > | 6 | `admin_oauth_callback` | GET | `/admin/auth/oauth/{provider_code}/callback` |
+  > | 7 | `logout` | POST | `/admin/logout` |
+  > | 8 | `dashboard_get` | GET | `/admin/` |
+  > | 9 | `workflows_get` | GET | `/admin/workflows` |
+  > | 10 | `workflow_editor_get` | GET | `/admin/workflows/{code}` |
+  > | 11 | **`workflows_validate`** | POST | `/admin/workflows/validate` |
+  > | 12 | `workflows_post` | POST | `/admin/workflows` |
+  > | 13 | `workflows_update` | POST | `/admin/workflows/{code}/update` |
+  > | 14 | `workflows_toggle` | POST | `/admin/workflows/{code}/toggle` |
+  > | 15 | `workflows_delete` | POST | `/admin/workflows/{code}/delete` |
+  > | 16-20 | `agents_get` / `agents_post` / `agents_update` / `agents_toggle` / `agents_delete` | GET/POST | `/admin/agents`… |
+  > | 21-24 | `skills_get` / `skills_post` / `skills_update` / `skills_archive` | GET/POST | `/admin/skills`… |
+  > | 25-30 | `mcp_get` / `mcp_post` / `mcp_update` / `mcp_toggle` / `mcp_delete` / `mcp_refresh` | GET/POST | `/admin/mcp`… |
+  > | 31-35 | `llm_get` / `llm_post` / `llm_update` / `llm_toggle` / `llm_delete` | GET/POST | `/admin/llm`… |
+  > | 36 | `audit_get` | GET | `/admin/audit` |
+  > | 37-41 | `oauth_providers_get` / `…_post` / `…_update` / `…_toggle` / `…_delete` | GET/POST | `/admin/oauth-providers`… |
+  > | 42-48 | `access_pages_get` / `access_page_permissions_post` / `access_components_get` / `access_component_permissions_post` / `access_roles_get` / `access_mappings_get` / `access_mappings_post` | GET/POST | `/admin/access`… |
+  > | 49-53 | `platform_admins_get` / `…_post` / `…_delete` / `forgot_password` / `reset_my_password` | GET/POST | `/admin/platform-admins`… |
+  > | 54-55 | `preferences_get` / `preferences_post` | GET/POST | `/admin/preferences` |
+  >
+  > ⚠️ **`workflows_validate` 在 `workflows_post` 之前**（源文件里
+  > `workflows_validate` 在 `:1128`、`workflows_post` 在 `:1209`）——照抄这个顺序。
+  > `routes.json` 快照会在 Task 9 结束时**逐条比对**，顺序错了就会红。
 
 - [ ] **Step 5: 瘦身 `app.py`**
 
