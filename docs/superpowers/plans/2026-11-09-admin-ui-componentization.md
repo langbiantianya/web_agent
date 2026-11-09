@@ -1007,7 +1007,8 @@
 - Produces（`services.admin_web.views.fields`）：
   - `Field` —— 冻结 dataclass，字段：`name: str`、`label: str`、`kind: str = "text"`、
     `required: bool = False`、`options: tuple[tuple[str, str], ...] = ()`、
-    `placeholder: str = ""`、`rows: int = 8`、
+    `placeholder: str = ""`、`rows: int = 8`、`autocomplete: str = ""`、
+    `min_value: str | None = None`、`max_value: str | None = None`、
     `modes: tuple[str, ...] = ("create", "edit")`、
     `edit_placeholder: str = ""`、`edit_rows: int | None = None`
   - `render_field(field: Field, value: object, *, mode: str) -> Any`
@@ -1181,7 +1182,7 @@
   .venv\Scripts\python.exe -m pytest tests/test_admin_fields.py -q -p pytest_asyncio.plugin -p pytest_timeout
   ```
 
-  Expected: 11 failed（`ModuleNotFoundError: No module named 'services.admin_web.views.fields'`）。
+  Expected: 10 failed（`ModuleNotFoundError: No module named 'services.admin_web.views.fields'`）。
 
 - [ ] **Step 3: 实现 `views/fields.py`**
 
@@ -1334,7 +1335,7 @@
   .venv\Scripts\python.exe -m pytest tests/test_admin_fields.py -q -p pytest_asyncio.plugin -p pytest_timeout
   ```
 
-  Expected: 11 passed。
+  Expected: 10 passed。
 
 - [ ] **Step 5: 在 `views/__init__.py` 再导出**
 
