@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 from pathlib import Path
 
 import pytest
@@ -134,3 +135,47 @@ def test_register_all_is_callable() -> None:
     """routes 包导出 register_all。"""
     module = __import__("services.admin_web.routes", fromlist=["register_all"])
     assert callable(getattr(module, "register_all", None))
+
+
+def test_common_module_exposes_shared_helpers() -> None:
+    """跨域辅助集中在 common.py，且不再带下划线前缀。"""
+    module = __import__("services.admin_web.common", fromlist=["origin_ok"])
+    for name in (
+        "origin_ok",
+        "safe_next",
+        "callback_uri",
+        "append_query",
+        "principal_of",
+        "preference_of",
+        "authenticated",
+        "with_auth",
+        "require_csrf",
+        "login_redirect",
+        "unauthorized",
+        "not_found",
+        "html_error",
+        "tenant_id_of",
+        "flash_from_query",
+        "as_bool",
+        "csv_list",
+        "json_object",
+        "can_edit_resource",
+        "operation_authorized",
+        "business_redirect",
+    ):
+        assert callable(getattr(module, name, None)), name
+
+
+def test_route_modules_never_import_the_parent_app() -> None:
+    """域模块不许反向 import 应用模块——那会形成循环导入。"""
+    pattern = re.compile(r"^\s*(?:from|import)\s+services\.admin_web\.app\b", re.M)
+    for path in sorted((ADMIN / "routes").glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        assert not pattern.search(source), path.name
+
+
+def test_app_module_has_no_inline_route_handlers() -> None:
+    """app.py 只做装配：路由一律由 routes 包注册。"""
+    source = (ADMIN / "app.py").read_text(encoding="utf-8")
+    assert "@app.get(" not in source
+    assert "@app.post(" not in source
