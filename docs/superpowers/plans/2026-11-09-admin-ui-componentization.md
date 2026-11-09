@@ -847,6 +847,21 @@
   `__all__` 只影响 `from services.admin_web.views import *`，不影响具名导入——
   但它同时是一份「包层承诺了哪些名字」的自述，写全才不会误导后来者。
 
+  > **执行修订（2026-11-09，Task 3 修复轮 1）**：上面的静态再导出块**不能照抄**。
+  > 评审查出 `views_legacy` → `views.shell` → 父包 `views/__init__` → `views_legacy` 的循环导入
+  > （本任务新引入，隔离基线实测证实基线上不存在），直接
+  > `import services.admin_web.views_legacy` 会 ImportError。
+  > 控制器选定方案 A：`views/__init__.py` 改用 **PEP 562 模块级 `__getattr__`** 做惰性再导出——
+  > **16 个页面函数惰性解析**（首次访问时 `from services.admin_web import views_legacy` 取属性并写回
+  > `globals()` 缓存），shell 侧 8 名保持静态导入（不参与环），`__all__` 仍写全 24 名，另配 `__dir__`。
+  >
+  > **Task 4~7 的 `views/__init__.py` 步骤都按这个结构执行**：
+  > - 新模块（`components` / `fields` / `workflows` / `agents` / …）的名字走**静态导入**，照常追加；
+  > - 页面函数从 `views_legacy` 搬到新模块时，**同时把该名字从惰性名单里移除**——
+  >   留在名单里的名字会通过 `getattr(views_legacy, name)` 解析，而那里已经没有它了；
+  > - `__all__` 始终写全「包层承诺的名字」，总数只增不减。
+  > - Task 7 删掉 `views_legacy.py` 后，惰性分支连同 `__getattr__` 一起删除，包层回到全静态导入。
+
 - [ ] **Step 4: 运行测试，确认行为未变**
 
   Run:
