@@ -967,7 +967,7 @@
   .venv\Scripts\python.exe -m pytest tests/test_admin_web.py tests/test_admin_snapshots.py -q -p pytest_asyncio.plugin -p pytest_timeout
   ```
 
-  Expected: 43 passed + 17 passed。
+  Expected: 43 passed + 34 passed。
 
 - [ ] **Step 5: 提交**
 
@@ -1441,7 +1441,7 @@
   .venv\Scripts\python.exe -m pytest tests/test_admin_web.py tests/test_admin_snapshots.py -q -p pytest_asyncio.plugin -p pytest_timeout
   ```
 
-  Expected: 43 passed + 17 passed。**快照必须逐条相等**——任何结构变化都会
+  Expected: 43 passed + 34 passed。**快照必须逐条相等**——任何结构变化都会
   在这里变红。
 
 - [ ] **Step 5: 提交**
@@ -1532,7 +1532,7 @@
   .venv\Scripts\python.exe -m pytest tests/test_admin_web.py tests/test_admin_snapshots.py tests/test_admin_structure.py -q -p pytest_asyncio.plugin -p pytest_timeout
   ```
 
-  Expected: 43 passed + 17 passed；`test_admin_structure.py` 里
+  Expected: 43 passed + 34 passed；`test_admin_structure.py` 里
   `test_old_views_module_is_gone` 现在应当 PASS；其余结构测试仍 FAIL
   （`routes/*.py` 还没建、`app.py` 还超长——那是 Task 9 的事）。
 
@@ -1738,7 +1738,7 @@
   .venv\Scripts\python.exe -m pytest tests/test_admin_fields.py tests/test_admin_snapshots.py tests/test_admin_web.py -q -p pytest_asyncio.plugin -p pytest_timeout
   ```
 
-  Expected: `test_admin_fields` 全通过；**`test_admin_snapshots` 17 passed**
+  Expected: `test_admin_fields` 全通过；**`test_admin_snapshots` 34 passed**
   （说明接入后渲染结构与基线一致）；`test_admin_web` 43 passed。
 
   如果快照变红，先看差异明细：多半是某处标签文案、placeholder 或行数没抄对，
@@ -2002,7 +2002,7 @@
   .venv\Scripts\python.exe -m pytest tests/test_admin_web.py tests/test_admin_snapshots.py tests/test_admin_structure.py -q -p pytest_asyncio.plugin -p pytest_timeout
   ```
 
-  Expected: 43 passed + 17 passed + 结构测试全绿（路由表快照相等证明
+  Expected: 43 passed + 34 passed + 结构测试全绿（路由表快照相等证明
   路径、方法与**顺序**都没变）。
 
 - [ ] **Step 7: 全量回归**
