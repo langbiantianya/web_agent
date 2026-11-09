@@ -5,25 +5,51 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from ludic.html import (
-    button,
-    details,
-    form,
-    input as input_,
-    label,
-    small,
-    span,
-    summary,
-    td,
-    tr,
-)
+from ludic.html import details, small, span, summary, td, tr
 
 from app.models.admin_control import AdminPageDefinition
 from services.admin_web.accounts import AdminPrincipal
 from services.admin_web.views.components import (
-    _csrf,
     _management_page,
     _toggle_and_delete,
+)
+from services.admin_web.views.fields import Field, render_form
+
+# 字段**只声明一次**：创建表单与编辑表单共用同一份描述。
+#
+# 但两者的**字段顺序不同**（创建态是 code/name/base_url/api_key/priority，
+# 编辑态是 name/base_url/priority/api_key），而渲染快照比的是元素树——
+# children 的顺序变了就是差异。所以用「字段字典 + 两个显式顺序」表达，
+# 而不是「一份元组 + 展开」。
+_LLM_FIELD_MAP = {
+    "code": Field("code", "Code", required=True, modes=("create",)),
+    "name": Field("name", "Name"),
+    "base_url": Field("base_url", "Base URL", required=True, edit_required=False),
+    "api_key": Field(
+        "api_key",
+        "API key",
+        kind="password",
+        autocomplete="new-password",
+        edit_placeholder="Leave blank to keep current key",
+        edit_label="Replacement API key",
+    ),
+    "priority": Field(
+        "priority",
+        "Priority",
+        kind="number",
+        min_value="0",
+        # 编辑态显式取消 min（既有编辑表单没有这个属性）。
+        edit_min_value="",
+    ),
+}
+
+LLM_FIELDS = tuple(
+    _LLM_FIELD_MAP[name] for name in ("name", "base_url", "priority", "api_key")
+)
+
+LLM_CREATE_FIELDS = tuple(
+    _LLM_FIELD_MAP[name]
+    for name in ("code", "name", "base_url", "api_key", "priority")
 )
 
 
@@ -51,27 +77,18 @@ def llm_page(
         edit = (
             details(
                 summary("Edit endpoint"),
-                form(
-                    _csrf(csrf),
-                    label(span("Name"), input_(name="name", value=row.name or row.code)),
-                    label(span("Base URL"), input_(name="base_url", value=row.base_url)),
-                    label(
-                        span("Priority"),
-                        input_(name="priority", type="number", value=row.priority),
-                    ),
-                    label(
-                        span("Replacement API key"),
-                        input_(
-                            name="api_key",
-                            type="password",
-                            autocomplete="new-password",
-                            placeholder="Leave blank to keep current key",
-                        ),
-                    ),
-                    button("Save endpoint", type="submit", class_="btn btn-primary"),
+                render_form(
+                    LLM_FIELDS,
+                    mode="edit",
+                    values={
+                        "name": row.name or row.code,
+                        "base_url": row.base_url,
+                        "priority": row.priority,
+                    },
+                    csrf=csrf,
                     action=f"/admin/llm/{row.code}/update",
-                    method="post",
-                    class_="stack",
+                    submit_label="Save endpoint",
+                    layout="stack",
                 ),
             )
             if can_write
@@ -87,27 +104,15 @@ def llm_page(
             )
         )
     create_form = (
-        form(
-            _csrf(csrf),
-            label(span("Code"), input_(name="code", required=True)),
-            label(span("Name"), input_(name="name")),
-            label(span("Base URL"), input_(name="base_url", required=True)),
-            label(
-                span("API key"),
-                input_(
-                    name="api_key",
-                    type="password",
-                    autocomplete="new-password",
-                ),
-            ),
-            label(
-                span("Priority"),
-                input_(name="priority", type="number", value="100", min="0"),
-            ),
-            button("Create endpoint", type="submit", class_="btn btn-primary"),
+        render_form(
+            LLM_CREATE_FIELDS,
+            mode="create",
+            # 既有创建表单把优先级写死成 100。
+            values={"priority": "100"},
+            csrf=csrf,
             action="/admin/llm",
-            method="post",
-            class_="form-grid",
+            submit_label="Create endpoint",
+            layout="grid",
         )
         if can_write
         else None

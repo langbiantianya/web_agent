@@ -5,28 +5,55 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from ludic.html import (
-    button,
-    details,
-    form,
-    input as input_,
-    label,
-    option,
-    select,
-    small,
-    span,
-    summary,
-    td,
-    textarea,
-    tr,
-)
+from ludic.html import details, small, span, summary, td, tr
 
 from app.models.admin_control import AdminPageDefinition
 from services.admin_web.accounts import AdminPrincipal
 from services.admin_web.views.components import (
-    _csrf,
     _management_page,
     _toggle_and_delete,
+)
+from services.admin_web.views.fields import Field, render_form
+
+# 创建表单与编辑表单**共用**同一份字段描述：差异用 modes / edit_label /
+# edit_placeholder / edit_rows 表达，不再把字段抄两遍。
+#
+# 字段顺序是渲染结构的一部分（渲染快照比的是元素树，children 顺序变了
+# 就是差异），所以创建态与编辑态的顺序各自写死。
+AGENT_FIELDS = (
+    Field("name", "Name", required=True),
+    Field("model", "Model", required=True),
+    Field("base_url", "Base URL"),
+    Field(
+        "api_key",
+        "API key",
+        kind="password",
+        autocomplete="new-password",
+        edit_placeholder="Leave blank to keep current key",
+        edit_label="Replacement API key",
+    ),
+    Field("tools", "Tools (comma separated)"),
+    Field("skills", "Skills (comma separated)"),
+    Field(
+        "system_prompt",
+        "System prompt",
+        kind="textarea",
+        required=True,
+        rows=8,
+        edit_rows=10,
+    ),
+)
+
+AGENT_CREATE_FIELDS = (
+    Field("code", "Code", required=True, modes=("create",)),
+    *AGENT_FIELDS,
+    Field(
+        "enabled",
+        "Enabled",
+        kind="select",
+        modes=("create",),
+        options=(("Yes", "1"), ("No", "0")),
+    ),
 )
 
 
@@ -54,36 +81,24 @@ def agents_page(
         editor = (
             details(
                 summary("Edit configuration"),
-                form(
-                    _csrf(csrf),
-                    label(span("Name"), input_(name="name", value=row.name, required=True)),
-                    label(span("Model"), input_(name="model", value=row.model, required=True)),
-                    label(span("Base URL"), input_(name="base_url", value=row.base_url or "")),
-                    label(
-                        span("Replacement API key"),
-                        input_(
-                            name="api_key",
-                            type="password",
-                            autocomplete="new-password",
-                            placeholder="Leave blank to keep current key",
-                        ),
-                    ),
-                    label(
-                        span("Tools (comma separated)"),
-                        input_(name="tools", value=", ".join(row.tools or [])),
-                    ),
-                    label(
-                        span("Skills (comma separated)"),
-                        input_(name="skills", value=", ".join(row.skills or [])),
-                    ),
-                    label(
-                        span("System prompt"),
-                        textarea(row.system_prompt, name="system_prompt", rows=10, required=True),
-                    ),
-                    button("Save changes", type="submit", class_="btn btn-primary"),
+                render_form(
+                    AGENT_FIELDS,
+                    mode="edit",
+                    values={
+                        "name": row.name,
+                        "model": row.model,
+                        "base_url": row.base_url or "",
+                        "tools": ", ".join(row.tools or []),
+                        "skills": ", ".join(row.skills or []),
+                        # **有意**的 or ""：既有代码写的是 textarea(row.system_prompt, ...)，
+                        # 而 ludic 会把 None 渲染成字面量 "None" 的文本。or "" 让
+                        # 内容为空而不是 "None"（与 skills 的 row.body or "" 一致）。
+                        "system_prompt": row.system_prompt or "",
+                    },
+                    csrf=csrf,
                     action=f"/admin/agents/{row.code}/update",
-                    method="post",
-                    class_="stack",
+                    submit_label="Save changes",
+                    layout="stack",
                 ),
             )
             if can_write
@@ -99,30 +114,14 @@ def agents_page(
             )
         )
     create_form = (
-        form(
-            _csrf(csrf),
-            label(span("Code"), input_(name="code", required=True)),
-            label(span("Name"), input_(name="name", required=True)),
-            label(span("Model"), input_(name="model", required=True)),
-            label(span("Base URL"), input_(name="base_url")),
-            label(
-                span("API key"),
-                input_(name="api_key", type="password", autocomplete="new-password"),
-            ),
-            label(span("Tools (comma separated)"), input_(name="tools")),
-            label(span("Skills (comma separated)"), input_(name="skills")),
-            label(
-                span("System prompt"),
-                textarea(name="system_prompt", rows=8, required=True),
-            ),
-            label(
-                span("Enabled"),
-                select(option("Yes", value="1"), option("No", value="0"), name="enabled"),
-            ),
-            button("Create agent", type="submit", class_="btn btn-primary"),
+        render_form(
+            AGENT_CREATE_FIELDS,
+            mode="create",
+            values={},
+            csrf=csrf,
             action="/admin/agents",
-            method="post",
-            class_="form-grid",
+            submit_label="Create agent",
+            layout="grid",
         )
         if can_write
         else None

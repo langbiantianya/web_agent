@@ -5,20 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from ludic.html import (
-    button,
-    details,
-    form,
-    input as input_,
-    label,
-    option,
-    select,
-    small,
-    span,
-    summary,
-    td,
-    tr,
-)
+from ludic.html import button, details, form, small, span, summary, td, tr
 
 from app.models.admin_control import AdminPageDefinition
 from services.admin_web.accounts import AdminPrincipal
@@ -26,6 +13,47 @@ from services.admin_web.views.components import (
     _csrf,
     _management_page,
     _toggle_and_delete,
+)
+from services.admin_web.views.fields import Field, render_form
+
+# 字段**只声明一次**：创建表单与编辑表单共用同一份描述。
+#
+# 但两者的**字段顺序不同**（创建态是 code/name/transport/url/command/
+# timeout_sec，编辑态是 name/timeout_sec/command/url），而渲染快照比的是
+# 元素树——children 的顺序变了就是差异。所以用「字段字典 + 两个显式
+# 顺序」表达，而不是「一份元组 + 展开」。
+_MCP_FIELD_MAP = {
+    "code": Field("code", "Code", required=True, modes=("create",)),
+    "name": Field("name", "Name"),
+    "transport": Field(
+        "transport",
+        "Transport",
+        kind="select",
+        modes=("create",),
+        options=(("HTTP", "http"), ("stdio", "stdio")),
+    ),
+    "url": Field("url", "HTTP URL", edit_label="URL"),
+    "command": Field("command", "stdio command", edit_label="Command"),
+    "timeout_sec": Field(
+        "timeout_sec",
+        "Timeout seconds",
+        kind="number",
+        min_value="1",
+        max_value="600",
+        # 编辑态显式取消 min / max（既有编辑表单没有这两个属性）。
+        edit_min_value="",
+        edit_max_value="",
+    ),
+}
+
+MCP_FIELDS = tuple(
+    _MCP_FIELD_MAP[name]
+    for name in ("name", "timeout_sec", "command", "url")
+)
+
+MCP_CREATE_FIELDS = tuple(
+    _MCP_FIELD_MAP[name]
+    for name in ("code", "name", "transport", "url", "command", "timeout_sec")
 )
 
 
@@ -65,22 +93,19 @@ def mcp_page(
         edit = (
             details(
                 summary("Edit connection"),
-                form(
-                    _csrf(csrf),
-                    label(span("Name"), input_(name="name", value=row.name or row.code)),
-                    label(
-                        span("Timeout seconds"),
-                        input_(name="timeout_sec", type="number", value=row.timeout_sec),
-                    ),
-                    label(
-                        span("Command"),
-                        input_(name="command", value=row.command or ""),
-                    ),
-                    label(span("URL"), input_(name="url", value=row.url or "")),
-                    button("Save connection", type="submit", class_="btn btn-primary"),
+                render_form(
+                    MCP_FIELDS,
+                    mode="edit",
+                    values={
+                        "name": row.name or row.code,
+                        "timeout_sec": row.timeout_sec,
+                        "command": row.command or "",
+                        "url": row.url or "",
+                    },
+                    csrf=csrf,
                     action=f"/admin/mcp/{row.code}/update",
-                    method="post",
-                    class_="stack",
+                    submit_label="Save connection",
+                    layout="stack",
                 ),
             )
             if can_write
@@ -96,28 +121,15 @@ def mcp_page(
             )
         )
     create_form = (
-        form(
-            _csrf(csrf),
-            label(span("Code"), input_(name="code", required=True)),
-            label(span("Name"), input_(name="name")),
-            label(
-                span("Transport"),
-                select(
-                    option("HTTP", value="http"),
-                    option("stdio", value="stdio"),
-                    name="transport",
-                ),
-            ),
-            label(span("HTTP URL"), input_(name="url")),
-            label(span("stdio command"), input_(name="command")),
-            label(
-                span("Timeout seconds"),
-                input_(name="timeout_sec", type="number", value="30", min="1", max="600"),
-            ),
-            button("Register server", type="submit", class_="btn btn-primary"),
+        render_form(
+            MCP_CREATE_FIELDS,
+            mode="create",
+            # 既有创建表单把超时写死成 30。
+            values={"timeout_sec": "30"},
+            csrf=csrf,
             action="/admin/mcp",
-            method="post",
-            class_="form-grid",
+            submit_label="Register server",
+            layout="grid",
         )
         if can_write
         else None

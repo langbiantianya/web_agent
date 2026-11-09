@@ -288,3 +288,346 @@ def test_form_stack_layout() -> None:
         layout="stack",
     )
     assert "stack" in element.to_html()
+
+
+def test_edit_required_has_three_states() -> None:
+    """``edit_required`` 是三态：继承 / 编辑态必填 / 编辑态显式不必填。
+
+    ``None`` = 继承 ``required``；``True`` = 编辑态必填；``False`` =
+    编辑态**显式不必填**（不渲染 ``required`` 属性）。
+
+    ``required`` 只对 ``text`` 系与 ``textarea`` 生效，``select`` 忽略。
+    """
+    # 1) None ⇒ 继承 required：创建态与编辑态都必填。
+    inherited = Field("name", "Name", required=True)
+    assert "required" in render_field(inherited, "x", mode="create").to_html()
+    assert "required" in render_field(inherited, "x", mode="edit").to_html()
+
+    # 2) True ⇒ 编辑态必填（创建态不需要）。
+    edit_only = Field("name", "Name", required=False, edit_required=True)
+    assert "required" not in render_field(edit_only, "x", mode="create").to_html()
+    assert "required" in render_field(edit_only, "x", mode="edit").to_html()
+
+    # 3) False ⇒ 编辑态显式不必填（即便 required=True）。
+    edit_never = Field("name", "Name", required=True, edit_required=False)
+    assert "required" in render_field(edit_never, "x", mode="create").to_html()
+    assert "required" not in render_field(edit_never, "x", mode="edit").to_html()
+
+    # textarea 同样生效（Skill body 就是这么表达的）。
+    textarea_edit_only = Field(
+        "body", "Skill body", kind="textarea", edit_required=True
+    )
+    assert "required" not in render_field(textarea_edit_only, "x", mode="create").to_html()
+    assert "required" in render_field(textarea_edit_only, "x", mode="edit").to_html()
+
+    # select 忽略 required（既有规则不变）。
+    select_field = Field(
+        "status", "Status", kind="select", required=True, edit_required=True
+    )
+    assert "required" not in render_field(select_field, "x", mode="edit").to_html()
+
+
+def test_edit_min_value_can_be_cancelled() -> None:
+    """``edit_min_value=""`` 表示编辑态**显式取消** ``min`` 属性。
+
+    三态：``None`` = 继承 ``min_value``；``""`` = 取消；其余 = 改用该值。
+    """
+    # 继承：创建态与编辑态都带 min。
+    inherited = Field("priority", "Priority", kind="number", min_value="0")
+    assert 'min="0"' in render_field(inherited, "1", mode="create").to_html()
+    assert 'min="0"' in render_field(inherited, "1", mode="edit").to_html()
+
+    # 显式取消：创建态带 min，编辑态不带。
+    cancelled = Field(
+        "priority",
+        "Priority",
+        kind="number",
+        min_value="0",
+        edit_min_value="",
+    )
+    assert 'min="0"' in render_field(cancelled, "1", mode="create").to_html()
+    assert "min=" not in render_field(cancelled, "1", mode="edit").to_html()
+
+    # 改用别的值。
+    overridden = Field(
+        "priority",
+        "Priority",
+        kind="number",
+        min_value="0",
+        edit_min_value="5",
+    )
+    assert 'min="0"' in render_field(overridden, "1", mode="create").to_html()
+    assert 'min="5"' in render_field(overridden, "1", mode="edit").to_html()
+
+
+def test_edit_max_value_can_be_cancelled() -> None:
+    """``edit_max_value`` 与 ``edit_min_value`` 同语义。"""
+    inherited = Field("timeout_sec", "Timeout", kind="number", max_value="600")
+    assert 'max="600"' in render_field(inherited, "30", mode="edit").to_html()
+
+    cancelled = Field(
+        "timeout_sec",
+        "Timeout",
+        kind="number",
+        max_value="600",
+        edit_max_value="",
+    )
+    assert 'max="600"' in render_field(cancelled, "30", mode="create").to_html()
+    assert "max=" not in render_field(cancelled, "30", mode="edit").to_html()
+
+
+def test_agent_fields_cover_create_and_edit_without_duplication() -> None:
+    """Agent 的字段只声明一次，创建与编辑共用。"""
+    from services.admin_web.views.agents import AGENT_CREATE_FIELDS, AGENT_FIELDS
+
+    edit_names = {f.name for f in AGENT_FIELDS}
+    create_names = {f.name for f in AGENT_CREATE_FIELDS}
+    assert edit_names <= create_names
+    # code 只在创建时出现
+    assert "code" not in edit_names
+    assert "code" in create_names
+    # api_key 的编辑态提示单独表达，而不是抄一份字段
+    api_key = next(f for f in AGENT_FIELDS if f.name == "api_key")
+    assert api_key.edit_placeholder == "Leave blank to keep current key"
+    assert api_key.edit_label == "Replacement API key"
+
+
+def test_agent_create_form_renders_code_but_edit_form_does_not() -> None:
+    """接入后的实际渲染结果符合预期。"""
+    from services.admin_web.views.agents import AGENT_CREATE_FIELDS, AGENT_FIELDS
+
+    create_html = render_form(
+        AGENT_CREATE_FIELDS,
+        mode="create",
+        values={},
+        csrf="t",
+        action="/admin/agents",
+        submit_label="Create agent",
+    ).to_html()
+    edit_html = render_form(
+        AGENT_FIELDS,
+        mode="edit",
+        values={},
+        csrf="t",
+        action="/admin/agents/x/update",
+        submit_label="Save changes",
+        layout="stack",
+    ).to_html()
+    assert 'name="code"' in create_html
+    assert 'name="code"' not in edit_html
+    assert "Create agent" in create_html
+    assert "Save changes" in edit_html
+
+
+def test_skill_fields_cover_create_and_edit_without_duplication() -> None:
+    """Skill 的字段只声明一次，创建与编辑共用。"""
+    from services.admin_web.views.skills import SKILL_CREATE_FIELDS, SKILL_FIELDS
+
+    edit_names = {f.name for f in SKILL_FIELDS}
+    create_names = {f.name for f in SKILL_CREATE_FIELDS}
+    assert edit_names <= create_names
+    assert "code" not in edit_names
+    assert "code" in create_names
+    # enabled 只在创建时出现
+    assert "enabled" not in edit_names
+    assert "enabled" in create_names
+    # body 的编辑态行数与必填单独表达
+    body = next(f for f in SKILL_FIELDS if f.name == "body")
+    assert body.rows == 10
+    assert body.edit_rows == 14
+    assert body.required is False
+    assert body.edit_required is True
+
+
+def test_skill_create_form_renders_code_but_edit_form_does_not() -> None:
+    """接入后的实际渲染结果符合预期。"""
+    from services.admin_web.views.skills import SKILL_CREATE_FIELDS, SKILL_FIELDS
+
+    create_html = render_form(
+        SKILL_CREATE_FIELDS,
+        mode="create",
+        values={},
+        csrf="t",
+        action="/admin/skills",
+        submit_label="Create skill",
+    ).to_html()
+    edit_html = render_form(
+        SKILL_FIELDS,
+        mode="edit",
+        values={},
+        csrf="t",
+        action="/admin/skills/x/update",
+        submit_label="Save skill",
+        layout="stack",
+    ).to_html()
+    assert 'name="code"' in create_html
+    assert 'name="code"' not in edit_html
+    assert 'name="enabled"' in create_html
+    assert 'name="enabled"' not in edit_html
+    # body：创建态 10 行且不必填，编辑态 14 行且必填
+    assert 'name="body" rows="10"' in create_html
+    assert 'name="body" rows="14" required="required"' in edit_html
+
+
+def test_mcp_fields_cover_create_and_edit_without_duplication() -> None:
+    """MCP 的字段只声明一次，创建与编辑共用（顺序不同，各自显式）。"""
+    from services.admin_web.views.mcp import MCP_CREATE_FIELDS, MCP_FIELDS
+
+    edit_names = {f.name for f in MCP_FIELDS}
+    create_names = {f.name for f in MCP_CREATE_FIELDS}
+    assert edit_names <= create_names
+    assert "code" not in edit_names
+    assert "code" in create_names
+    assert "transport" not in edit_names
+    assert "transport" in create_names
+    # timeout_sec 的编辑态显式取消 min / max
+    timeout = next(f for f in MCP_FIELDS if f.name == "timeout_sec")
+    assert timeout.min_value == "1"
+    assert timeout.max_value == "600"
+    assert timeout.edit_min_value == ""
+    assert timeout.edit_max_value == ""
+
+
+def test_mcp_create_form_renders_code_but_edit_form_does_not() -> None:
+    """接入后的实际渲染结果符合预期。"""
+    from services.admin_web.views.mcp import MCP_CREATE_FIELDS, MCP_FIELDS
+
+    create_html = render_form(
+        MCP_CREATE_FIELDS,
+        mode="create",
+        values={"timeout_sec": "30"},
+        csrf="t",
+        action="/admin/mcp",
+        submit_label="Register server",
+    ).to_html()
+    edit_html = render_form(
+        MCP_FIELDS,
+        mode="edit",
+        values={},
+        csrf="t",
+        action="/admin/mcp/x/update",
+        submit_label="Save connection",
+        layout="stack",
+    ).to_html()
+    assert 'name="code"' in create_html
+    assert 'name="code"' not in edit_html
+    assert 'name="transport"' in create_html
+    assert 'name="transport"' not in edit_html
+    # 创建态带 min / max，编辑态不带
+    assert 'min="1"' in create_html
+    assert 'max="600"' in create_html
+    assert "min=" not in edit_html
+    assert "max=" not in edit_html
+
+
+def test_llm_fields_cover_create_and_edit_without_duplication() -> None:
+    """LLM 的字段只声明一次，创建与编辑共用（顺序不同，各自显式）。"""
+    from services.admin_web.views.llm import LLM_CREATE_FIELDS, LLM_FIELDS
+
+    edit_names = {f.name for f in LLM_FIELDS}
+    create_names = {f.name for f in LLM_CREATE_FIELDS}
+    assert edit_names <= create_names
+    assert "code" not in edit_names
+    assert "code" in create_names
+    # base_url：创建态必填，编辑态显式不必填
+    base_url = next(f for f in LLM_FIELDS if f.name == "base_url")
+    assert base_url.required is True
+    assert base_url.edit_required is False
+    # priority：编辑态显式取消 min
+    priority = next(f for f in LLM_FIELDS if f.name == "priority")
+    assert priority.min_value == "0"
+    assert priority.edit_min_value == ""
+
+
+def test_llm_create_form_renders_code_but_edit_form_does_not() -> None:
+    """接入后的实际渲染结果符合预期。"""
+    from services.admin_web.views.llm import LLM_CREATE_FIELDS, LLM_FIELDS
+
+    create_html = render_form(
+        LLM_CREATE_FIELDS,
+        mode="create",
+        values={"priority": "100"},
+        csrf="t",
+        action="/admin/llm",
+        submit_label="Create endpoint",
+    ).to_html()
+    edit_html = render_form(
+        LLM_FIELDS,
+        mode="edit",
+        values={},
+        csrf="t",
+        action="/admin/llm/x/update",
+        submit_label="Save endpoint",
+        layout="stack",
+    ).to_html()
+    assert 'name="code"' in create_html
+    assert 'name="code"' not in edit_html
+    # base_url：创建态 required，编辑态没有
+    assert 'name="base_url" required="required"' in create_html
+    assert 'name="base_url" required' not in edit_html
+    # priority：创建态带 min，编辑态不带
+    assert 'min="0"' in create_html
+    assert "min=" not in edit_html
+
+
+def test_field_order_is_explicit_for_every_resource() -> None:
+    """字段顺序是渲染结构的一部分，必须逐资源显式钉住。
+
+    渲染快照比的是元素树，**children 的顺序变了就是差异**。llm 与 mcp 的
+    创建态与编辑态顺序不同，所以两个顺序都要写死。
+    """
+    from services.admin_web.views.agents import AGENT_CREATE_FIELDS, AGENT_FIELDS
+    from services.admin_web.views.llm import LLM_CREATE_FIELDS, LLM_FIELDS
+    from services.admin_web.views.mcp import MCP_CREATE_FIELDS, MCP_FIELDS
+    from services.admin_web.views.skills import SKILL_CREATE_FIELDS, SKILL_FIELDS
+
+    assert [f.name for f in AGENT_FIELDS] == [
+        "name",
+        "model",
+        "base_url",
+        "api_key",
+        "tools",
+        "skills",
+        "system_prompt",
+    ]
+    assert [f.name for f in AGENT_CREATE_FIELDS] == [
+        "code",
+        "name",
+        "model",
+        "base_url",
+        "api_key",
+        "tools",
+        "skills",
+        "system_prompt",
+        "enabled",
+    ]
+    assert [f.name for f in SKILL_FIELDS] == ["description", "status", "body"]
+    assert [f.name for f in SKILL_CREATE_FIELDS] == [
+        "code",
+        "description",
+        "status",
+        "body",
+        "enabled",
+    ]
+    assert [f.name for f in MCP_FIELDS] == [
+        "name",
+        "timeout_sec",
+        "command",
+        "url",
+    ]
+    assert [f.name for f in MCP_CREATE_FIELDS] == [
+        "code",
+        "name",
+        "transport",
+        "url",
+        "command",
+        "timeout_sec",
+    ]
+    assert [f.name for f in LLM_FIELDS] == ["name", "base_url", "priority", "api_key"]
+    assert [f.name for f in LLM_CREATE_FIELDS] == [
+        "code",
+        "name",
+        "base_url",
+        "api_key",
+        "priority",
+    ]

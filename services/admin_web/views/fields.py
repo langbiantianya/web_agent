@@ -6,7 +6,8 @@
 两处，漏一处就是前后端字段对不上。
 
 这里把字段抽成一份 :class:`Field` 描述，创建与编辑共用，差异用
-``modes`` / ``edit_label`` / ``edit_placeholder`` / ``edit_rows`` 表达。
+``modes`` / ``edit_label`` / ``edit_placeholder`` / ``edit_rows`` /
+``edit_required`` / ``edit_min_value`` / ``edit_max_value`` 表达。
 
 **空值的语义交给调用方**：``value`` 为 ``None`` 表示「这个控件不带 value
 属性」，``value=""`` 表示「带一个空的 value」。ludic 1.0.3 会丢掉空字符串
@@ -43,6 +44,10 @@ class Field:
     ``edit_label`` / ``edit_placeholder`` / ``edit_rows`` 表达编辑态的差异
     （编辑态取 ``edit_*``，为空时回落到同名默认值）。
 
+    ``edit_required`` / ``edit_min_value`` / ``edit_max_value`` 是**三态**
+    覆盖项：``None`` 表示继承同名默认项；``False`` / ``""`` 表示编辑态
+    **显式取消**（不渲染对应属性）；其余取值表示编辑态改用该值。
+
     ``kind`` 覆盖现有表单用到的全部普通控件：``text`` / ``password`` /
     ``email`` / ``tel`` / ``number`` / ``url`` / ``textarea`` / ``select``。
     **不覆盖 radio**——主题选择那种带预览卡片与 checked 逻辑的控件是页面
@@ -52,11 +57,22 @@ class Field:
 
     - ``value``：全部 kind（语义见 :func:`render_field`）；
     - ``required``：``text`` 系与 ``textarea``；``select`` 忽略；
+    - ``edit_required``：``text`` 系与 ``textarea``；``select`` 忽略。
+      ``None`` = 继承 ``required``；``True`` = 编辑态必填；``False`` =
+      编辑态**显式不必填**（不渲染 ``required`` 属性）；
     - ``placeholder``：``text`` 系；``textarea`` / ``select`` 忽略；
+    - ``edit_placeholder``：``text`` 系；``textarea`` / ``select`` 忽略。
+      空串 = 继承 ``placeholder``；
     - ``autocomplete``：``text`` 系；``textarea`` / ``select`` 忽略；
     - ``min_value`` / ``max_value``：``text`` 系（实际只有 ``number`` 用）；
+    - ``edit_min_value`` / ``edit_max_value``：``text`` 系；
+      ``None`` = 继承 ``min_value`` / ``max_value``；``""`` = 编辑态
+      **显式取消**该属性（不渲染 ``min`` / ``max``）；
     - ``rows`` / ``edit_rows``：只有 ``textarea``；
     - ``options``：只有 ``select``。
+
+    ``edit_*`` 系列**只在编辑态生效**（``mode="edit"``），创建态一律用
+    同名的默认项。
 
     另外 ``kind`` 会被原样写进控件的 ``type=`` 属性（``text`` 除外，它走
     HTML 默认类型；``textarea`` / ``select`` 不写 ``type``），所以
@@ -78,6 +94,9 @@ class Field:
     edit_placeholder: str = ""
     edit_rows: int | None = None
     edit_label: str = ""
+    edit_required: bool | None = None
+    edit_min_value: str | None = None
+    edit_max_value: str | None = None
 
 
 class _Input(input_):
@@ -126,10 +145,24 @@ def _control(field: Field, value: object | None, *, mode: str) -> Any:
     attrs: dict[str, Any] = {}
     current = None if value is None else str(value)
 
+    # 编辑态的三个覆盖项：edit_required 为 None 时继承 required；
+    # edit_min_value / edit_max_value 为 None 时继承 min_value / max_value，
+    # 为空串时表示「编辑态显式取消该属性」。
+    required = field.required
+    min_value = field.min_value
+    max_value = field.max_value
+    if mode == "edit":
+        if field.edit_required is not None:
+            required = field.edit_required
+        if field.edit_min_value is not None:
+            min_value = field.edit_min_value
+        if field.edit_max_value is not None:
+            max_value = field.edit_max_value
+
     if field.kind == "textarea":
         rows = field.edit_rows if mode == "edit" and field.edit_rows else field.rows
         attrs.update(name=field.name, rows=rows)
-        if field.required:
+        if required:
             attrs["required"] = True
         # 没有值时不放空文本子节点：既有表单里的 textarea 有的是空内容、
         # 有的是压根没有子节点，这个差别会体现在渲染快照上。
@@ -170,14 +203,14 @@ def _control(field: Field, value: object | None, *, mode: str) -> Any:
         attrs["type"] = field.kind
     if placeholder:
         attrs["placeholder"] = placeholder
-    if field.required:
+    if required:
         attrs["required"] = True
     if field.autocomplete:
         attrs["autocomplete"] = field.autocomplete
-    if field.min_value is not None:
-        attrs["min"] = field.min_value
-    if field.max_value is not None:
-        attrs["max"] = field.max_value
+    if min_value:
+        attrs["min"] = min_value
+    if max_value:
+        attrs["max"] = max_value
     if value is not None:
         # bool 交给 ludic 的 bool 分支（False 不渲染该属性、True 渲染成
         # value="value"），与既有表单一致；不能 str() 成 "False"。
@@ -207,7 +240,10 @@ def render_field(field: Field, value: object | None, *, mode: str) -> Any:
     - 其它 → ``str(value)``。
 
     编辑态的标签用 ``field.edit_label``（为空时回落 ``field.label``），
-    placeholder / rows 同理回落 ``edit_placeholder`` / ``edit_rows``。
+    placeholder / rows 同理回落 ``edit_placeholder`` / ``edit_rows``；
+    ``required`` / ``min`` / ``max`` 在编辑态由 ``edit_required`` /
+    ``edit_min_value`` / ``edit_max_value`` 覆盖（三态语义见
+    :class:`Field` 的配置项生效矩阵）。
     """
     label_text = (
         field.edit_label if mode == "edit" and field.edit_label else field.label
@@ -227,11 +263,19 @@ def render_form(
 ) -> Any:
     """渲染整个表单。
 
-    ``values`` 里**只有 ``None`` 才是缺省**：值为 ``None`` 的键渲染成不带
-    value 的输入框，其余取值都会带上 value 属性。注意 ``False`` 不是
-    缺省——它走 ludic 的 bool 分支，**HTML 上没有** ``value`` 属性
-    （元素树里是 ``"false"``），但语义上是「有这个值」。另外
-    ``values.get()`` 分不清「键没给出」和「键给了但值是 ``None``」——
+    ``values`` 里的取值**按 kind 分述**（不是一条通用规则）：
+
+    - **input 系**（``text`` / ``password`` / ``email`` / ``tel`` /
+      ``number`` / ``url``）：值为 ``None`` ⇒ 控件**不带** value 属性；
+      其余取值都带上 value 属性。注意 ``False`` 不是缺省——它走 ludic
+      的 bool 分支，**HTML 上没有** ``value`` 属性（元素树里是
+      ``"false"``），但语义上是「有这个值」；
+    - **textarea**：取值落成**文本子节点**（不是 value 属性）；值为
+      ``None`` ⇒ **没有**子节点；
+    - **select**：取值只用于**匹配 option**（决定哪个 option 带
+      ``selected``），**不产生** value 属性。
+
+    另外 ``values.get()`` 分不清「键没给出」和「键给了但值是 ``None``」——
     两者都渲染成不带 value。
 
     ``layout`` 是约定值：``"grid"``（创建表单，双列栅格）与 ``"stack"``

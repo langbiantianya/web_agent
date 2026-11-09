@@ -5,25 +5,47 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from ludic.html import (
-    button,
-    details,
-    form,
-    input as input_,
-    label,
-    option,
-    select,
-    small,
-    span,
-    summary,
-    td,
-    textarea,
-    tr,
-)
+from ludic.html import button, details, form, small, span, summary, td, tr
 
 from app.models.admin_control import AdminPageDefinition
 from services.admin_web.accounts import AdminPrincipal
 from services.admin_web.views.components import _csrf, _management_page
+from services.admin_web.views.fields import Field, render_form
+
+# 创建表单与编辑表单**共用**同一份字段描述：差异用 modes / edit_rows /
+# edit_required 表达，不再把字段抄两遍。
+#
+# 字段顺序是渲染结构的一部分（渲染快照比的是元素树，children 顺序变了
+# 就是差异），所以创建态与编辑态的顺序各自写死。
+SKILL_FIELDS = (
+    Field("description", "Description", required=True),
+    Field(
+        "status",
+        "Status",
+        kind="select",
+        options=(("Published", "published"), ("Draft", "draft")),
+    ),
+    Field(
+        "body",
+        "Skill body",
+        kind="textarea",
+        rows=10,
+        edit_rows=14,
+        edit_required=True,
+    ),
+)
+
+SKILL_CREATE_FIELDS = (
+    Field("code", "Code", required=True, modes=("create",)),
+    *SKILL_FIELDS,
+    Field(
+        "enabled",
+        "Enabled",
+        kind="select",
+        modes=("create",),
+        options=(("Yes", "1"), ("No", "0")),
+    ),
+)
 
 
 def skills_page(
@@ -44,36 +66,18 @@ def skills_page(
         editor = (
             details(
                 summary("Edit skill"),
-                form(
-                    _csrf(csrf),
-                    label(
-                        span("Description"),
-                        input_(name="description", value=row.description or "", required=True),
-                    ),
-                    label(
-                        span("Status"),
-                        select(
-                            option(
-                                "Published",
-                                value="published",
-                                selected=row.status == "published",
-                            ),
-                            option(
-                                "Draft",
-                                value="draft",
-                                selected=row.status == "draft",
-                            ),
-                            name="status",
-                        ),
-                    ),
-                    label(
-                        span("Skill body"),
-                        textarea(row.body or "", name="body", rows=14, required=True),
-                    ),
-                    button("Save skill", type="submit", class_="btn btn-primary"),
+                render_form(
+                    SKILL_FIELDS,
+                    mode="edit",
+                    values={
+                        "description": row.description or "",
+                        "status": row.status,
+                        "body": row.body or "",
+                    },
+                    csrf=csrf,
                     action=f"/admin/skills/{row.code}/update",
-                    method="post",
-                    class_="stack",
+                    submit_label="Save skill",
+                    layout="stack",
                 ),
             )
             if can_write and row.status != "archived"
@@ -100,27 +104,14 @@ def skills_page(
             )
         )
     create_form = (
-        form(
-            _csrf(csrf),
-            label(span("Code"), input_(name="code", required=True)),
-            label(span("Description"), input_(name="description", required=True)),
-            label(
-                span("Status"),
-                select(
-                    option("Published", value="published"),
-                    option("Draft", value="draft"),
-                    name="status",
-                ),
-            ),
-            label(span("Skill body"), textarea(name="body", rows=10)),
-            label(
-                span("Enabled"),
-                select(option("Yes", value="1"), option("No", value="0"), name="enabled"),
-            ),
-            button("Create skill", type="submit", class_="btn btn-primary"),
+        render_form(
+            SKILL_CREATE_FIELDS,
+            mode="create",
+            values={},
+            csrf=csrf,
             action="/admin/skills",
-            method="post",
-            class_="form-grid",
+            submit_label="Create skill",
+            layout="grid",
         )
         if can_write
         else None
