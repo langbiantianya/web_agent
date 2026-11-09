@@ -1750,12 +1750,34 @@
 
 ### Task 8: fields 组件接入 —— 消除创建/编辑双写
 
+> **执行修订（2026-11-09，控制器逐字段核对后）**：本任务原计划覆盖 5 个资源
+> （agents / skills / mcp / llm / oauth_providers）。控制器把四个资源的**创建表单与
+> 编辑表单逐字段对照**（AST 提取 label / name / 属性）后，发现：
+>
+> - **`oauth_providers` 没有「双写」可消除**——它的创建表单与编辑表单**共用同一个**
+>   `_provider_form(csrf, provider, create)`，是一个函数用 `create` 布尔区分两种模式，
+>   本来就没有抄两遍。把它塞进 `Field` 抽象收益为零、风险却最大：
+>   ① 编辑态的 `code` 是**裸的 hidden input**（`input_(type="hidden", ...)`，**没有
+>   label 包裹**），而 `render_field` 永远用 `label(span(...), 控件)` 包裹 ⇒ DOM 结构
+>   必然不同 ⇒ **快照必红**；
+>   ② `clear_client_secret` 在创建态渲染成 `label(span("Clear existing client secret"), span(""))`
+>   （标签在、控件是空 span），编辑态才是完整 select ⇒ `Field` 表达不了；
+>   ③ `views/oauth_providers.py` 已经 **340 行**（上限 350，只剩 10 行余量），
+>   本任务要往里加字段常量 ⇒ **必然破 350 行**。
+>   ⇒ **控制器决定：`oauth_providers` 退出本任务范围**，`_provider_form` 保持手写。
+>
+> - **llm 与 mcp 的创建表单与编辑表单字段顺序不同** ⇒ 一个「共享的字段元组 +
+>   `*FIELDS` 展开」表达不了两个顺序（见下方 Step 3 的写法）。
+>
+> - **`Field` 缺三个能力**：`edit_required`、`edit_min_value`、`edit_max_value`
+>   （见下方 Step 0）。
+
 **Files:**
+- Modify: `services/admin_web/views/fields.py`（新增 3 个 `edit_*` 属性 + 订正 docstring）
 - Modify: `services/admin_web/views/agents.py`
 - Modify: `services/admin_web/views/skills.py`
 - Modify: `services/admin_web/views/mcp.py`
 - Modify: `services/admin_web/views/llm.py`
-- Modify: `services/admin_web/views/oauth_providers.py`
 - Test: `tests/test_admin_fields.py`、`tests/test_admin_snapshots.py`
 
 **Interfaces:**
@@ -1765,7 +1787,41 @@
   - `views/skills.py`：`SKILL_FIELDS`、`SKILL_CREATE_FIELDS`
   - `views/mcp.py`：`MCP_FIELDS`、`MCP_CREATE_FIELDS`
   - `views/llm.py`：`LLM_FIELDS`、`LLM_CREATE_FIELDS`
-  - `views/oauth_providers.py`：`PROVIDER_FIELDS`、`PROVIDER_CREATE_FIELDS`
+- `views/fields.py` 的 `Field` 新增三个属性（**本任务唯一一次模型扩展**）：
+  - `edit_required: bool | None = None` —— `None` = **继承** `required`；
+    `True` = 编辑态必填；`False` = 编辑态**显式不**必填（ludic 会省略 `required=False`）。
+  - `edit_min_value: str | None = None` —— `None` = **继承** `min_value`；
+    `""` = **显式取消**（ludic 丢弃空串属性 ⇒ 编辑态不渲染 `min`）。
+  - `edit_max_value: str | None = None` —— 同上。
+
+> **为什么 `""` 表示「显式取消」**：本仓库已经用「`value=""` vs `value=None`」表达
+> 「有值但为空」与「缺省」的区分（ludic 1.0.3 丢弃空串属性，见 Task 5 的实测记录）。
+> `min`/`max` 没有「有值但为空」的语义，`""` 只能表示「这个属性不存在」，
+> 于是 `None`（继承）与 `""`（取消）正好构成三态。
+
+- [ ] **Step 0: 扩 `Field` 的三个 `edit_*` 属性**
+
+  在 `services/admin_web/views/fields.py` 里：
+
+  1. `Field` 加三个字段（位置放在 `edit_label` 之后，**既有字段的位置不动**）：
+     ```python
+     edit_required: bool | None = None
+     edit_min_value: str | None = None
+     edit_max_value: str | None = None
+     ```
+  2. `_control()` 里按模式取值：
+     - `required`：`edit_required is None` 时用 `field.required`，否则用 `edit_required`；
+     - `min`：`min_value` 取 `field.edit_min_value`（若非 `None`）否则 `field.min_value`，
+       再判空（`""` 不写属性）；
+     - `max` 同理。
+  3. **只对 input 系生效**（`textarea` / `select` 忽略，和现有 `required`/`placeholder`
+     的规则一致），要在 docstring 的「配置项生效矩阵」里写明。
+  4. **同时订正 Task 5 复审留下的那条 Minor**：`render_form` 的 docstring 现在把
+     「只有 `None` 才是缺省」写成 kind 无关的规则，实际 textarea 的取值落成**文本
+     子节点**、select 的取值用于**匹配 option**，两者都不产生 value 属性。
+     改成按 kind 分述。
+  5. 补测试：`edit_required` 的三态、`edit_min_value=""` 的显式取消、
+     `edit_max_value` 的设置与取消。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -1785,6 +1841,7 @@
       # api_key 的编辑态提示单独表达，而不是抄一份字段
       api_key = next(f for f in AGENT_FIELDS if f.name == "api_key")
       assert api_key.edit_placeholder == "Leave blank to keep current key"
+      assert api_key.edit_label == "Replacement API key"
 
 
   def test_agent_create_form_renders_code_but_edit_form_does_not() -> None:
@@ -1814,8 +1871,8 @@
       assert "Save changes" in edit_html
   ```
 
-  同理为 skills / mcp / llm / oauth_providers 各写一条「字段只声明一次」的用例，
-  模式相同（断言创建字段集包含编辑字段集、且 `code` 不在编辑集里）。
+  同理为 skills / mcp / llm 各写一条「字段只声明一次」的用例，模式相同（断言创建
+  字段集包含编辑字段集、且 `code` 不在编辑集里）。
 
 - [ ] **Step 2: 运行测试，确认失败**
 
@@ -1842,6 +1899,7 @@
           kind="password",
           autocomplete="new-password",
           edit_placeholder="Leave blank to keep current key",
+          edit_label="Replacement API key",
       ),
       Field("tools", "Tools (comma separated)"),
       Field("skills", "Skills (comma separated)"),
@@ -1901,7 +1959,7 @@
                               "base_url": row.base_url or "",
                               "tools": ", ".join(row.tools or []),
                               "skills": ", ".join(row.skills or []),
-                              "system_prompt": row.system_prompt,
+                              "system_prompt": row.system_prompt or "",
                           },
                           csrf=csrf,
                           action=f"/admin/agents/{row.code}/update",
@@ -1916,16 +1974,89 @@
 
   **API key 的编辑态不传值**（`values` 里没有 `api_key`），保持「留空即保留原值」。
 
-- [ ] **Step 4: 对另外四个资源做同样的改造**
+  > `row.system_prompt or ""` 里的 `or ""` 是**有意**的：既有代码写的是
+  > `textarea(row.system_prompt, ...)`，而 ludic 1.0.3 会把 `None` 渲染成**字面量
+  > `"None"`** 的文本（实测 `<textarea ...>None</textarea>`，元素树里还多一个
+  > `None` 子节点）。`or ""` 让内容为空而不是 "None"。这是**一处极小的行为修正**
+  > （与 `skills` 现有的 `row.body or ""` 写法一致），快照夹具里 `system_prompt`
+  > 是非空字符串，所以**快照抓不到这处差异**——要在报告里写明。
 
-  - `skills.py`：`SKILL_FIELDS` / `SKILL_CREATE_FIELDS`，照原表单的字段与标签抄
-  - `mcp_page`：`MCP_FIELDS` / `MCP_CREATE_FIELDS`，注意它多一个 `can_refresh` 参数
-  - `llm_page`：`LLM_FIELDS` / `LLM_CREATE_FIELDS`
-  - `oauth_providers.py`：`_provider_form` 的字段抽成 `PROVIDER_FIELDS` /
-    `PROVIDER_CREATE_FIELDS`；注意它有 `create` 参数区分创建与编辑，
-    字段集合本身按 `create` 布尔切
+- [ ] **Step 4: 对另外三个资源做同样的改造**
 
-  **逐字对照原实现**：标签文案、placeholder、`required`、行数、`autocomplete`、
+  **控制器已用 AST 逐字段核对过四个资源的创建/编辑表单**，下面是**权威对照表**
+  （字段名 / 标签 / 属性，创建态 vs 编辑态）。**照抄，不要自己猜**：
+
+  | 资源 | 字段 | 创建态 | 编辑态 | 需要的机制 |
+  | --- | --- | --- | --- | --- |
+  | agents | `code` | `name,required`，标签 Code | **不出现** | `modes=("create",)` |
+  | agents | `name` | `name,required`，标签 Name | `name,value,required`，标签 Name | 值差异（`values`） |
+  | agents | `model` | `name,required`，标签 Model | `name,value,required`，标签 Model | 值差异 |
+  | agents | `base_url` | `name`（**无 value**），标签 Base URL | `name,value`，标签 Base URL | 值差异（创建态不传） |
+  | agents | `api_key` | `name,type=password,autocomplete`，标签 **API key** | 同上 + `placeholder`，标签 **Replacement API key** | `edit_placeholder` + `edit_label` |
+  | agents | `tools` | `name`（无 value） | `name,value` | 值差异 |
+  | agents | `skills` | `name`（无 value） | `name,value` | 值差异 |
+  | agents | `system_prompt` | `name,rows=8,required` | `name,rows=10,required` | `edit_rows` |
+  | agents | `enabled` | `name`，标签 Enabled，**零个 selected** | **不出现** | `modes=("create",)` + 创建态 `values` 不传 |
+  | skills | `code` | `name,required` | **不出现** | `modes=("create",)` |
+  | skills | `description` | `name,required` | `name,value,required` | 值差异 |
+  | skills | `status` | `name`，标签 Status，**零个 selected** | `name`，标签 Status，**显式 selected**（`row.status`） | 值差异（创建态不传、编辑态传 `row.status`） |
+  | skills | `body` | `name,rows=10`，**无 required** | `name,rows=14,`**`required`** | `edit_rows` + **`edit_required`** |
+  | skills | `enabled` | `name`，**零个 selected** | **不出现** | `modes=("create",)` |
+  | mcp | `code` | `name,required` | **不出现** | `modes=("create",)` |
+  | mcp | `name` | `name`（无 value） | `name,value`（`row.name or row.code`） | 值差异 |
+  | mcp | `transport` | `name`，标签 Transport，**零个 selected** | **不出现** | `modes=("create",)` + `options=(("HTTP","http"),("stdio","stdio"))` |
+  | mcp | `url` | `name`（无 value），标签 **HTTP URL** | `name,value`，标签 **URL** | `edit_label="URL"` + 值差异 |
+  | mcp | `command` | `name`（无 value），标签 **stdio command** | `name,value`，标签 **Command** | `edit_label="Command"` + 值差异 |
+  | mcp | `timeout_sec` | `name,type=number,value="30",`**`min="1",max="600"`** | `name,type=number,value`（int），**无 min/max** | **`edit_min_value=""` + `edit_max_value=""`** + 值差异 |
+  | llm | `code` | `name,required` | **不出现** | `modes=("create",)` |
+  | llm | `name` | `name`（无 value） | `name,value`（`row.name or row.code`） | 值差异 |
+  | llm | `base_url` | `name,`**`required`** | `name,value`，**无 required** | **`edit_required=False`** + 值差异 |
+  | llm | `api_key` | `name,type=password,autocomplete`，标签 **API key** | 同上 + `placeholder`，标签 **Replacement API key** | `edit_placeholder` + `edit_label` |
+  | llm | `priority` | `name,type=number,value="100",`**`min="0"`** | `name,type=number,value`（int），**无 min** | **`edit_min_value=""`** + 值差异 |
+
+  **字段顺序**：渲染快照比的是元素树，**children 的顺序变了就是差异**。逐字段核对结果：
+
+  | 资源 | 创建态顺序 | 编辑态顺序 | 两个顺序一致？ |
+  | --- | --- | --- | --- |
+  | agents | code, name, model, base_url, api_key, tools, skills, system_prompt, enabled | name, model, base_url, api_key, tools, skills, system_prompt | **一致**（去掉 code/enabled 后就是编辑态顺序）⇒ `(code, *FIELDS, enabled)` |
+  | skills | code, description, status, body, enabled | description, status, body | **一致** ⇒ `(code, *FIELDS, enabled)` |
+  | llm | code, name, base_url, api_key, priority | name, base_url, priority, api_key | **不一致**（api_key 与 priority 互换） |
+  | mcp | code, name, transport, url, command, timeout_sec | name, timeout_sec, command, url | **不一致** |
+
+  ⇒ **llm 与 mcp 必须用「字段声明一次 + 两个显式顺序」**，例如：
+
+  ```python
+  _LLM_FIELD_MAP = {
+      "code": Field("code", "Code", required=True, modes=("create",)),
+      "name": Field("name", "Name"),
+      "base_url": Field("base_url", "Base URL", required=True, edit_required=False),
+      "api_key": Field(
+          "api_key",
+          "API key",
+          kind="password",
+          autocomplete="new-password",
+          edit_placeholder="Leave blank to keep current key",
+          edit_label="Replacement API key",
+      ),
+      "priority": Field(
+          "priority",
+          "Priority",
+          kind="number",
+          min_value="0",
+          edit_min_value="",
+      ),
+  }
+
+  LLM_FIELDS = tuple(
+      _LLM_FIELD_MAP[name] for name in ("name", "base_url", "priority", "api_key")
+  )
+  LLM_CREATE_FIELDS = tuple(
+      _LLM_FIELD_MAP[name]
+      for name in ("code", "name", "base_url", "api_key", "priority")
+  )
+  ```
+
+  ⇒ **逐字对照原实现**：标签文案、placeholder、`required`、行数、`autocomplete`、
   按钮文案、表单 layout（创建 `form-grid` / 编辑 `stack`）都必须一致——渲染快照会
   逐条比对，改错一个字都会变红。
 
@@ -1947,14 +2078,21 @@
   如果快照变红，先看差异明细：多半是某处标签文案、placeholder 或行数没抄对，
   修正到与原实现一致即可，**不要**去更新快照——基线是重构前的真实输出。
 
+  > **快照守不到的两处差异**（已由控制器实测确认，人工核对）：
+  > ① 组件对每个空值字段都多渲染 `value=""`（HTML 层），既有表单不会——浏览器
+  >    提交语义等价，**元素树一致**（空串属性两边都被丢掉）⇒ 快照仍绿；
+  > ② `row.system_prompt` 为 `None` 时，既有代码渲染出字面量 `"None"`，组件渲染空
+  >    内容（见 Step 3 的说明）。
+
 - [ ] **Step 6: 提交**
 
   ```bash
   git add services/admin_web/views/ tests/test_admin_fields.py
-  git commit -m "refactor(admin): 表单改用字段定义，消除创建/编辑双写" -m "agents / skills / mcp / llm / oauth_providers 的创建表单与编辑表单现在共用一份 Field 描述，差异用 modes / edit_placeholder / edit_rows 表达。渲染快照逐条相等，说明结构未变。"
+  git commit -m "refactor(admin): 表单改用字段定义，消除创建/编辑双写" -m "agents / skills / mcp / llm 的创建表单与编辑表单现在共用一份 Field 描述，差异用 modes / edit_label / edit_placeholder / edit_rows / edit_required / edit_min_value 表达。渲染快照逐条相等，说明结构未变。"
   ```
 
 ---
+
 
 ### Task 9: routes 拆分、common.py 提取与 app.py 瘦身
 
