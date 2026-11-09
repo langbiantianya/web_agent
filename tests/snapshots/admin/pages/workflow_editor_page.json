@@ -1,0 +1,770 @@
+{
+  "attrs": {
+    "data-color-mode": "light",
+    "data-density": "comfortable",
+    "data-theme": "fluent",
+    "lang": "en"
+  },
+  "children": [
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "charset": "utf-8"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {
+            "content": "width=device-width, initial-scale=1",
+            "name": "viewport"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {},
+          "children": [
+            {
+              "text": "Snapshot Workflow · Workflow editor · web_agent Admin"
+            }
+          ],
+          "tag": "title"
+        },
+        {
+          "attrs": {
+            "href": "/admin/static/admin.css?v=login-slide-20261107-3",
+            "rel": "stylesheet"
+          },
+          "children": [],
+          "tag": "link"
+        },
+        {
+          "attrs": {
+            "href": "/admin/static/workflow-editor.css",
+            "rel": "stylesheet"
+          },
+          "children": [],
+          "tag": "link"
+        },
+        {
+          "attrs": {
+            "src": "/admin/static/admin-ui.js?v=login-slide-20261107-3"
+          },
+          "children": [],
+          "tag": "script"
+        },
+        {
+          "attrs": {
+            "src": "/admin/static/workflow-editor-core.js"
+          },
+          "children": [],
+          "tag": "script"
+        },
+        {
+          "attrs": {
+            "src": "/admin/static/workflow-editor.js"
+          },
+          "children": [],
+          "tag": "script"
+        }
+      ],
+      "tag": "head"
+    },
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "class": "topbar"
+          },
+          "children": [
+            {
+              "attrs": {
+                "class": "brand-group"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "brand",
+                    "href": "/admin/"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "brand-name"
+                      },
+                      "children": [
+                        {
+                          "text": "web_agent"
+                        }
+                      ],
+                      "tag": "span"
+                    }
+                  ],
+                  "tag": "a"
+                },
+                {
+                  "attrs": {
+                    "class": "brand-subtitle"
+                  },
+                  "children": [
+                    {
+                      "text": "Cloud Control Plane"
+                    }
+                  ],
+                  "tag": "span"
+                }
+              ],
+              "tag": "div"
+            },
+            {
+              "attrs": {
+                "class": "header-actions"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "user-role"
+                  },
+                  "children": [
+                    {
+                      "text": "Platform owner"
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "class": "user-name"
+                  },
+                  "children": [
+                    {
+                      "text": "superAdmin"
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "aria-label": "Language",
+                    "class": "locale-switch",
+                    "role": "group"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "aria-pressed": "true",
+                        "class": "locale-button",
+                        "data-admin-locale": "en",
+                        "type": "button"
+                      },
+                      "children": [
+                        {
+                          "text": "EN"
+                        }
+                      ],
+                      "tag": "button"
+                    },
+                    {
+                      "attrs": {
+                        "aria-pressed": "false",
+                        "class": "locale-button",
+                        "data-admin-locale": "zh-CN",
+                        "type": "button"
+                      },
+                      "children": [
+                        {
+                          "text": "简中"
+                        }
+                      ],
+                      "tag": "button"
+                    }
+                  ],
+                  "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "class": "header-link",
+                    "href": "/admin/preferences"
+                  },
+                  "children": [
+                    {
+                      "text": "Preferences"
+                    }
+                  ],
+                  "tag": "a"
+                },
+                {
+                  "attrs": {
+                    "action": "/admin/logout",
+                    "class": "inline-form",
+                    "method": "post"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "name": "csrf_token",
+                        "type": "hidden",
+                        "value": "<CSRF>"
+                      },
+                      "children": [],
+                      "tag": "input"
+                    },
+                    {
+                      "attrs": {
+                        "class": "btn btn-secondary",
+                        "type": "submit"
+                      },
+                      "children": [
+                        {
+                          "text": "Sign out"
+                        }
+                      ],
+                      "tag": "button"
+                    }
+                  ],
+                  "tag": "form"
+                }
+              ],
+              "tag": "div"
+            }
+          ],
+          "tag": "header"
+        },
+        {
+          "attrs": {
+            "class": "admin-layout"
+          },
+          "children": [
+            {
+              "attrs": {
+                "aria-label": "Admin navigation",
+                "class": "sidebar"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "mobile-nav"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "mobile-menu-summary"
+                      },
+                      "children": [
+                        {
+                          "text": "Menu"
+                        }
+                      ],
+                      "tag": "summary"
+                    },
+                    {
+                      "attrs": {
+                        "class": "nav-groups"
+                      },
+                      "children": [],
+                      "tag": "div"
+                    }
+                  ],
+                  "tag": "details"
+                },
+                {
+                  "attrs": {
+                    "class": "nav-groups desktop-nav"
+                  },
+                  "children": [],
+                  "tag": "div"
+                }
+              ],
+              "tag": "nav"
+            },
+            {
+              "attrs": {
+                "class": "main-content",
+                "id": "main-content"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "empty"
+                  },
+                  "children": [
+                    {
+                      "text": ""
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "class": "stack"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "surface"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "class": "workflow-editor-toolbar"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "class": "btn btn-secondary",
+                                "href": "/admin/workflows"
+                              },
+                              "children": [
+                                {
+                                  "text": "Back to list"
+                                }
+                              ],
+                              "tag": "a"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "text": "Snapshot Workflow"
+                                }
+                              ],
+                              "tag": "h1"
+                            },
+                            {
+                              "attrs": {
+                                "class": "block-muted"
+                              },
+                              "children": [
+                                {
+                                  "text": "snapshot-workflow"
+                                }
+                              ],
+                              "tag": "small"
+                            },
+                            {
+                              "attrs": {
+                                "class": "status-badge"
+                              },
+                              "children": [
+                                {
+                                  "text": "Enabled"
+                                }
+                              ],
+                              "tag": "span"
+                            },
+                            {
+                              "attrs": {
+                                "class": "workflow-editor-toolbar-actions"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {
+                                    "class": "btn btn-secondary btn-small",
+                                    "disabled": "false",
+                                    "id": "workflow-editor-undo",
+                                    "type": "button"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "Undo"
+                                    }
+                                  ],
+                                  "tag": "button"
+                                },
+                                {
+                                  "attrs": {
+                                    "class": "btn btn-secondary btn-small",
+                                    "disabled": "false",
+                                    "id": "workflow-editor-redo",
+                                    "type": "button"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "Redo"
+                                    }
+                                  ],
+                                  "tag": "button"
+                                },
+                                {
+                                  "attrs": {
+                                    "class": "btn btn-secondary btn-small",
+                                    "disabled": "false",
+                                    "id": "workflow-editor-layout",
+                                    "type": "button"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "Auto layout"
+                                    }
+                                  ],
+                                  "tag": "button"
+                                },
+                                {
+                                  "attrs": {
+                                    "class": "btn btn-secondary btn-small",
+                                    "disabled": "false",
+                                    "id": "workflow-editor-fit",
+                                    "type": "button"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "Fit canvas"
+                                    }
+                                  ],
+                                  "tag": "button"
+                                },
+                                {
+                                  "attrs": {
+                                    "class": "btn btn-secondary btn-small",
+                                    "id": "workflow-editor-json-toggle",
+                                    "type": "button"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "JSON"
+                                    }
+                                  ],
+                                  "tag": "button"
+                                }
+                              ],
+                              "tag": "div"
+                            }
+                          ],
+                          "tag": "div"
+                        }
+                      ],
+                      "tag": "section"
+                    },
+                    {
+                      "attrs": {
+                        "class": "workflow-editor-layout"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "class": "surface workflow-palette-panel"
+                          },
+                          "children": [
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "text": "Node palette"
+                                }
+                              ],
+                              "tag": "h2"
+                            },
+                            {
+                              "attrs": {
+                                "class": "workflow-palette"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {
+                                    "class": "btn btn-secondary workflow-palette-item",
+                                    "data-node-type": "agent",
+                                    "type": "button"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "Agent node"
+                                    }
+                                  ],
+                                  "tag": "button"
+                                },
+                                {
+                                  "attrs": {
+                                    "class": "btn btn-secondary workflow-palette-item",
+                                    "data-node-type": "approval",
+                                    "type": "button"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "Approval node"
+                                    }
+                                  ],
+                                  "tag": "button"
+                                }
+                              ],
+                              "tag": "div"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "text": "Available agents"
+                                }
+                              ],
+                              "tag": "h3"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [],
+                              "tag": "ul"
+                            }
+                          ],
+                          "tag": "div"
+                        },
+                        {
+                          "attrs": {
+                            "class": "workflow-editor-canvas-wrap"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "class": "workflow-editor-canvas",
+                                "id": "workflow-editor-canvas"
+                              },
+                              "children": [],
+                              "tag": "div"
+                            }
+                          ],
+                          "tag": "div"
+                        },
+                        {
+                          "attrs": {
+                            "class": "surface workflow-editor-inspector-panel"
+                          },
+                          "children": [
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "text": "Inspector"
+                                }
+                              ],
+                              "tag": "h2"
+                            },
+                            {
+                              "attrs": {
+                                "class": "workflow-editor-inspector",
+                                "id": "workflow-editor-inspector"
+                              },
+                              "children": [],
+                              "tag": "div"
+                            }
+                          ],
+                          "tag": "div"
+                        }
+                      ],
+                      "tag": "div"
+                    },
+                    {
+                      "attrs": {
+                        "class": "workflow-editor-errorbar",
+                        "hidden": "true",
+                        "id": "workflow-editor-errorbar"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "class": "workflow-editor-errors",
+                            "id": "workflow-editor-errors"
+                          },
+                          "children": [],
+                          "tag": "ul"
+                        }
+                      ],
+                      "tag": "div"
+                    },
+                    {
+                      "attrs": {
+                        "class": "surface workflow-editor-json-panel",
+                        "hidden": "true",
+                        "id": "workflow-editor-json-panel"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "class": "workflow-editor-json",
+                            "id": "workflow-editor-json"
+                          },
+                          "children": [
+                            {
+                              "text": "{\n  \"nodes\": [],\n  \"edges\": []\n}"
+                            }
+                          ],
+                          "tag": "pre"
+                        }
+                      ],
+                      "tag": "div"
+                    },
+                    {
+                      "attrs": {
+                        "class": "workflow-editor-state",
+                        "id": "workflow-editor-state",
+                        "name": "workflow_editor_state",
+                        "readonly": "true",
+                        "rows": "1"
+                      },
+                      "children": [
+                        {
+                          "text": "{\"code\": \"snapshot-workflow\", \"name\": \"Snapshot Workflow\", \"description\": \"快照用的最小工作流定义\", \"version\": 1, \"enabled\": true, \"canWrite\": true, \"definition\": {\"nodes\": [], \"edges\": []}, \"agents\": []}"
+                        }
+                      ],
+                      "tag": "textarea"
+                    },
+                    {
+                      "attrs": {
+                        "action": "/admin/workflows/snapshot-workflow/update",
+                        "class": "workflow-editor-save-form",
+                        "method": "post"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "name": "csrf_token",
+                            "type": "hidden",
+                            "value": "<CSRF>"
+                          },
+                          "children": [],
+                          "tag": "input"
+                        },
+                        {
+                          "attrs": {},
+                          "children": [
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "text": "Name"
+                                }
+                              ],
+                              "tag": "span"
+                            },
+                            {
+                              "attrs": {
+                                "name": "name",
+                                "required": "true",
+                                "value": "Snapshot Workflow"
+                              },
+                              "children": [],
+                              "tag": "input"
+                            }
+                          ],
+                          "tag": "label"
+                        },
+                        {
+                          "attrs": {},
+                          "children": [
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "text": "Description"
+                                }
+                              ],
+                              "tag": "span"
+                            },
+                            {
+                              "attrs": {
+                                "name": "description",
+                                "value": "快照用的最小工作流定义"
+                              },
+                              "children": [],
+                              "tag": "input"
+                            }
+                          ],
+                          "tag": "label"
+                        },
+                        {
+                          "attrs": {},
+                          "children": [
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "text": "Enabled"
+                                }
+                              ],
+                              "tag": "span"
+                            },
+                            {
+                              "attrs": {
+                                "name": "enabled"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {
+                                    "selected": "true",
+                                    "value": "1"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "Yes"
+                                    }
+                                  ],
+                                  "tag": "option"
+                                },
+                                {
+                                  "attrs": {
+                                    "selected": "false",
+                                    "value": "0"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "No"
+                                    }
+                                  ],
+                                  "tag": "option"
+                                }
+                              ],
+                              "tag": "select"
+                            }
+                          ],
+                          "tag": "label"
+                        },
+                        {
+                          "attrs": {
+                            "id": "workflow-editor-definition",
+                            "name": "definition",
+                            "type": "hidden",
+                            "value": "{\"nodes\": [], \"edges\": []}"
+                          },
+                          "children": [],
+                          "tag": "input"
+                        },
+                        {
+                          "attrs": {
+                            "name": "next",
+                            "type": "hidden",
+                            "value": "/admin/workflows/snapshot-workflow"
+                          },
+                          "children": [],
+                          "tag": "input"
+                        },
+                        {
+                          "attrs": {
+                            "class": "btn btn-primary",
+                            "disabled": "false",
+                            "type": "submit"
+                          },
+                          "children": [
+                            {
+                              "text": "Save workflow"
+                            }
+                          ],
+                          "tag": "button"
+                        }
+                      ],
+                      "tag": "form"
+                    }
+                  ],
+                  "tag": "div"
+                }
+              ],
+              "tag": "main"
+            }
+          ],
+          "tag": "div"
+        }
+      ],
+      "tag": "body"
+    }
+  ],
+  "tag": "html"
+}

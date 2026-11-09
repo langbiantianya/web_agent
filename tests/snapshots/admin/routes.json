@@ -1,6 +1,7 @@
 [
   {
     "methods": [],
+    "name": "admin-static",
     "path": "/admin/static"
   },
   {
@@ -8,6 +9,7 @@
       "GET",
       "HEAD"
     ],
+    "name": "health",
     "path": "/admin/health"
   },
   {
@@ -15,18 +17,21 @@
       "GET",
       "HEAD"
     ],
+    "name": "login_get",
     "path": "/admin/login"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "super_admin_login",
     "path": "/admin/login/super-admin"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "admin_oauth_start",
     "path": "/admin/login/oauth/{provider_code}"
   },
   {
@@ -34,12 +39,14 @@
       "GET",
       "HEAD"
     ],
+    "name": "admin_oauth_callback",
     "path": "/admin/auth/oauth/{provider_code}/callback"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "logout",
     "path": "/admin/logout"
   },
   {
@@ -47,6 +54,7 @@
       "GET",
       "HEAD"
     ],
+    "name": "dashboard_get",
     "path": "/admin/"
   },
   {
@@ -54,6 +62,7 @@
       "GET",
       "HEAD"
     ],
+    "name": "workflows_get",
     "path": "/admin/workflows"
   },
   {
@@ -61,36 +70,42 @@
       "GET",
       "HEAD"
     ],
+    "name": "workflow_editor_get",
     "path": "/admin/workflows/{code}"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "workflows_validate",
     "path": "/admin/workflows/validate"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "workflows_post",
     "path": "/admin/workflows"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "workflows_update",
     "path": "/admin/workflows/{code}/update"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "workflows_toggle",
     "path": "/admin/workflows/{code}/toggle"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "workflows_delete",
     "path": "/admin/workflows/{code}/delete"
   },
   {
@@ -98,30 +113,35 @@
       "GET",
       "HEAD"
     ],
+    "name": "agents_get",
     "path": "/admin/agents"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "agents_post",
     "path": "/admin/agents"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "agents_update",
     "path": "/admin/agents/{code}/update"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "agents_toggle",
     "path": "/admin/agents/{code}/toggle"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "agents_delete",
     "path": "/admin/agents/{code}/delete"
   },
   {
@@ -129,24 +149,28 @@
       "GET",
       "HEAD"
     ],
+    "name": "skills_get",
     "path": "/admin/skills"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "skills_post",
     "path": "/admin/skills"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "skills_update",
     "path": "/admin/skills/{code}/update"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "skills_archive",
     "path": "/admin/skills/{code}/archive"
   },
   {
@@ -154,36 +178,42 @@
       "GET",
       "HEAD"
     ],
+    "name": "mcp_get",
     "path": "/admin/mcp"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "mcp_post",
     "path": "/admin/mcp"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "mcp_update",
     "path": "/admin/mcp/{code}/update"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "mcp_toggle",
     "path": "/admin/mcp/{code}/toggle"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "mcp_delete",
     "path": "/admin/mcp/{code}/delete"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "mcp_refresh",
     "path": "/admin/mcp/{code}/refresh"
   },
   {
@@ -191,30 +221,35 @@
       "GET",
       "HEAD"
     ],
+    "name": "llm_get",
     "path": "/admin/llm"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "llm_post",
     "path": "/admin/llm"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "llm_update",
     "path": "/admin/llm/{code}/update"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "llm_toggle",
     "path": "/admin/llm/{code}/toggle"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "llm_delete",
     "path": "/admin/llm/{code}/delete"
   },
   {
@@ -222,6 +257,7 @@
       "GET",
       "HEAD"
     ],
+    "name": "audit_get",
     "path": "/admin/audit"
   },
   {
@@ -229,30 +265,35 @@
       "GET",
       "HEAD"
     ],
+    "name": "oauth_providers_get",
     "path": "/admin/oauth-providers"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "oauth_providers_post",
     "path": "/admin/oauth-providers"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "oauth_providers_update",
     "path": "/admin/oauth-providers/{code}/update"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "oauth_providers_toggle",
     "path": "/admin/oauth-providers/{code}/toggle"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "oauth_providers_delete",
     "path": "/admin/oauth-providers/{code}/delete"
   },
   {
@@ -260,12 +301,14 @@
       "GET",
       "HEAD"
     ],
+    "name": "access_pages_get",
     "path": "/admin/access/pages"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "access_page_permissions_post",
     "path": "/admin/access/pages/{page_code}/permissions"
   },
   {
@@ -273,12 +316,14 @@
       "GET",
       "HEAD"
     ],
+    "name": "access_components_get",
     "path": "/admin/access/components"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "access_component_permissions_post",
     "path": "/admin/access/components/{page_code}/{component_code}/permissions"
   },
   {
@@ -286,6 +331,7 @@
       "GET",
       "HEAD"
     ],
+    "name": "access_roles_get",
     "path": "/admin/access/roles"
   },
   {
@@ -293,12 +339,14 @@
       "GET",
       "HEAD"
     ],
+    "name": "access_mappings_get",
     "path": "/admin/access/mappings"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "access_mappings_post",
     "path": "/admin/access/mappings"
   },
   {
@@ -306,30 +354,35 @@
       "GET",
       "HEAD"
     ],
+    "name": "platform_admins_get",
     "path": "/admin/platform-admins"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "platform_admins_post",
     "path": "/admin/platform-admins"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "platform_admins_delete",
     "path": "/admin/platform-admins/{account_id}/delete"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "forgot_password",
     "path": "/admin/super-admin/forgot-password"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "reset_my_password",
     "path": "/admin/super-admin/reset-my-password"
   },
   {
@@ -337,12 +390,14 @@
       "GET",
       "HEAD"
     ],
+    "name": "preferences_get",
     "path": "/admin/preferences"
   },
   {
     "methods": [
       "POST"
     ],
+    "name": "preferences_post",
     "path": "/admin/preferences"
   }
 ]

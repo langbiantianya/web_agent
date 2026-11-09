@@ -7,6 +7,11 @@
 - 属性**顺序**变化不算差异（比对前排序）；
 - 标签、属性值、文本、children 结构变化算差异；
 - class 名变化**算**差异——这是「不改 class 名」的技术兜底。
+
+归一化规则：
+- CSRF token：隐藏字段的真实形态是 ``name="csrf_token"`` + ``value="<token>"``，
+  token 每次渲染都不同，必须归一化成 ``<CSRF>``，否则快照必然失败；
+- ISO 时间戳：``2026-01-02 03:04:05`` / ``2026-01-02T03:04:05.123`` → ``<TS>``。
 """
 
 from __future__ import annotations
@@ -22,6 +27,9 @@ SNAPSHOT_DIR = Path(__file__).resolve().parent / "snapshots" / "admin"
 CSRF_PLACEHOLDER = "<CSRF>"
 TIMESTAMP_PLACEHOLDER = "<TS>"
 
+# CSRF 隐藏字段的字段名（渲染成 <input type="hidden" name="csrf_token" value=...>）。
+CSRF_FIELD_NAME = "csrf_token"
+
 _TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?")
 
 
@@ -32,7 +40,9 @@ def _normalize_text(text: str) -> str:
 
 def _normalize_value(key: str, value: Any) -> Any:
     """按属性名与值类型归一化。"""
-    if key == "csrf_token":
+    if key == CSRF_FIELD_NAME:
+        # raw attrs（``attrs={...}``）会跳过「下划线转连字符」，键名原样保留，
+        # 这里兜住这种形态；常规形态由下面 ``name`` 规则处理。
         return CSRF_PLACEHOLDER
     if isinstance(value, str):
         return _normalize_text(value)
@@ -52,18 +62,25 @@ def normalize(node: Any) -> Any:
         key: _normalize_value(key, value)
         for key, value in sorted(getattr(node, "aliased_attrs", {}).items())
     }
+    if attrs.get("name") == CSRF_FIELD_NAME and "value" in attrs:
+        # CSRF 隐藏字段：``name`` 是字段名，token 落在 ``value`` 上。
+        attrs["value"] = CSRF_PLACEHOLDER
     return {
-        "tag": getattr(node, "html_name", type(node).__name__),
+        # Ludic 的 Component 子类可能没有 html_name（为 None）。这种情况必须
+        # 退回类名——否则多个不同页面会归一化成同一份空结构，快照比较恒真，
+        # 守卫静默失效。
+        "tag": getattr(node, "html_name", None) or type(node).__name__,
         "attrs": attrs,
         "children": [normalize(child) for child in getattr(node, "children", ())],
     }
 
 
 def route_table(app: Any) -> list[dict]:
-    """应用的路由表：method + path + **顺序**。
+    """应用的路由表：method + path + name + **顺序**。
 
     顺序是行为的一部分（Starlette 首个匹配 path 的路由胜出），所以这里
-    保序而不是排序。
+    保序而不是排序。``name`` 一起记录：Task 9 把路由拆成多个模块后，
+    「路径与方法不变但 handler 接错」要靠它才能发现。
     """
     table: list[dict] = []
     for route in getattr(app, "routes", []):
@@ -71,16 +88,27 @@ def route_table(app: Any) -> list[dict]:
         if not path:
             continue
         methods = sorted(getattr(route, "methods", None) or [])
-        table.append({"path": path, "methods": methods})
+        table.append(
+            {
+                "path": path,
+                "methods": methods,
+                "name": getattr(route, "name", None),
+            }
+        )
     return table
 
 
 def write_snapshot(path: Path, payload: Any) -> None:
-    """写快照文件（缩进 + 排序键，便于 review diff）。"""
+    """写快照文件（缩进 + 排序键，便于 review diff）。
+
+    显式 ``newline="\\n"``：Windows 下默认的换行翻译会把工作树写成 CRLF，
+    而入库 blob 是 LF，后续在本机重建基线时会看到整文件行尾差异。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
 
 
