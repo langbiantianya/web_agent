@@ -41,6 +41,14 @@ from services.admin_web.views.components import (
 
 from services.admin_web.views.fields import Field, render_field, render_form
 
+# 资源类页面已经搬进各自的业务域模块，这里静态再导出。
+from services.admin_web.views.agents import agents_page
+from services.admin_web.views.audit import audit_page
+from services.admin_web.views.llm import llm_page
+from services.admin_web.views.mcp import mcp_page
+from services.admin_web.views.skills import skills_page
+from services.admin_web.views.workflows import workflow_editor_page, workflows_page
+
 # 还没搬进 views 包的页面函数，暂时寄住在过渡模块 views_legacy 里。
 # 这里惰性解析（PEP 562）：访问时才 import，避免
 # views_legacy -> views.shell -> views 包 -> views_legacy 的循环导入。
@@ -48,20 +56,13 @@ _LAZY_PAGE_EXPORTS = frozenset(
     {
         "access_components_page",
         "access_pages_page",
-        "agents_page",
-        "audit_page",
         "dashboard",
-        "llm_page",
         "login_page",
         "mappings_page",
-        "mcp_page",
         "oauth_providers_page",
         "platform_admins_page",
         "preferences_page",
         "roles_page",
-        "skills_page",
-        "workflow_editor_page",
-        "workflows_page",
     }
 )
 
