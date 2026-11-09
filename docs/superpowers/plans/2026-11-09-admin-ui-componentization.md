@@ -2085,9 +2085,19 @@
 
   > **快照守不到的两处差异**（已由控制器实测确认，人工核对）：
   > ① 组件对每个空值字段都多渲染 `value=""`（HTML 层），既有表单不会——浏览器
-  >    提交语义等价，**元素树一致**（空串属性两边都被丢掉）⇒ 快照仍绿；
+  >    提交语义等价，**元素树一致**（空串属性两边都被丢掉）⇒ 快照仍绿。
+  >    **影响面不止一处**（Task 8 评审实测）：所有**空值**字段都会命中——agents 的
+  >    `base_url`/`tools`/`skills`、skills 的 `description`、mcp 的 `command`/`url`
+  >    （`Agent.tools`/`skills` 是 `nullable=True` 的 JSON 列，空列表时命中）。
   > ② `row.system_prompt` 为 `None` 时，既有代码渲染出字面量 `"None"`，组件渲染空
   >    内容（见 Step 3 的说明）。
+  >
+  > **另一条语义泛化（Task 8 评审实测，4 处同族差异）**：组件统一把 `None` 视为
+  > 「不带 value 属性」，而既有代码把 `None` 直接塞进 `value=`，ludic 1.0.3 会渲染
+  > 成字面量 `"None"`。涉及 `agents.name` / `agents.base_url` / `llm.base_url` /
+  > `llm.priority` / `mcp.timeout_sec`。这五列在 ORM 与迁移里**全是 `nullable=False`**
+  > ⇒ ORM 路径不可达；但这**是一处有意的语义泛化**，不是逐字段抄写的结果，读代码
+  > 的人要知道。
 
 - [ ] **Step 6: 提交**
 
