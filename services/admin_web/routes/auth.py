@@ -37,7 +37,7 @@ from services.admin_web.oauth_admin import (
 from services.admin_web.rbac import casbin_service
 from services.admin_web.security import (
     admin_oauth_cookie_name, clear_admin_cookies, clear_oauth_binding_cookie,
-    clear_super_admin_cookies, request_csrf_cookie, set_admin_session_cookies,
+    clear_super_admin_cookies, set_admin_session_cookies,
     set_oauth_binding_cookie, set_super_session_cookies, token_hash,
 )
 from services.admin_web.views import login_page

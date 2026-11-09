@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import ast
 import inspect
 import re
 from pathlib import Path
@@ -179,3 +180,79 @@ def test_app_module_has_no_inline_route_handlers() -> None:
     source = (ADMIN / "app.py").read_text(encoding="utf-8")
     assert "@app.get(" not in source
     assert "@app.post(" not in source
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted((ADMIN / "routes").glob("*.py")),
+    ids=lambda path: path.name,
+)
+def test_every_route_file_stays_small(path: Path) -> None:
+    """路由包下的**每个** .py 都受行数上限约束，``__init__.py`` 也包含在内。
+
+    既有的 ``test_module_stays_small`` 按 ``ROUTE_MODULES`` 常量逐名列举，
+    漏掉了 ``workflows_write`` 与 ``access_components``——恰恰是离上限最近
+    的两个模块。这里改用 glob 枚举，以后新增模块自动纳入，不用再补名单。
+    """
+    lines = len(path.read_text(encoding="utf-8").splitlines())
+    assert lines <= MAX_MODULE_LINES, f"{path.name} 有 {lines} 行，超出上限"
+
+
+def test_every_route_domain_module_exposes_register() -> None:
+    """除 ``__init__.py`` 外，路由包下每个模块都要暴露 ``register(app)``。
+
+    ``__init__.py`` 不提供 ``register``，它提供 ``register_all``（既有测试
+    已单独覆盖），因此这里按文件名排除它；其余文件一律用 glob 枚举，避免
+    像 ``ROUTE_MODULES`` 那样漏掉后来新增的模块。
+    """
+    paths = sorted(
+        path
+        for path in (ADMIN / "routes").glob("*.py")
+        if path.name != "__init__.py"
+    )
+    assert paths, "路由包下没有找到任何域模块"
+    for path in paths:
+        module = __import__(
+            f"services.admin_web.routes.{path.stem}", fromlist=["register"]
+        )
+        assert callable(getattr(module, "register", None)), path.name
+
+
+def _parent_app_imports(path: Path) -> list[str]:
+    """列出 ``path`` 中直接依赖 ``services.admin_web.app`` 的 import 位置。
+
+    用 AST 而不是正则，是为了覆盖正则漏掉的等价写法：
+    ``from services.admin_web import app``（含 ``as`` 别名）、
+    ``import services.admin_web.app`` 与
+    ``from services.admin_web.app import ...``。
+    ``from services.admin_web.routes import access`` 这类同包导入不算违规。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    hits: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.level != 0:
+                continue
+            if node.module == "services.admin_web":
+                if any(alias.name == "app" for alias in node.names):
+                    hits.append(f"{path.name}:{node.lineno}")
+            elif node.module == "services.admin_web.app":
+                hits.append(f"{path.name}:{node.lineno}")
+        elif isinstance(node, ast.Import):
+            if any(alias.name == "services.admin_web.app" for alias in node.names):
+                hits.append(f"{path.name}:{node.lineno}")
+    return hits
+
+
+def test_route_modules_never_import_the_parent_app_via_ast() -> None:
+    """用 AST 复核反向 import 守卫：正则漏掉的等价写法也拦得住。
+
+    既有正则版只认 ``from services.admin_web.app`` 开头的写法，
+    ``from services.admin_web import app`` 这样的等价写法可以绕过。
+    """
+    offenders = [
+        hit
+        for path in sorted((ADMIN / "routes").glob("*.py"))
+        for hit in _parent_app_imports(path)
+    ]
+    assert not offenders, "域模块反向依赖了应用模块：" + "、".join(offenders)
