@@ -39,6 +39,8 @@ from services.admin_web.views.components import (
     _toggle_and_delete,
 )
 
+from services.admin_web.views.fields import Field, render_field, render_form
+
 # 还没搬进 views 包的页面函数，暂时寄住在过渡模块 views_legacy 里。
 # 这里惰性解析（PEP 562）：访问时才 import，避免
 # views_legacy -> views.shell -> views 包 -> views_legacy 的循环导入。
@@ -66,6 +68,7 @@ _LAZY_PAGE_EXPORTS = frozenset(
 __all__ = [
     "ADMIN_STYLESHEET",
     "ADMIN_UI_SCRIPT",
+    "Field",
     "NAV_GROUP_ORDER",
     "_csrf",
     "_flash",
@@ -87,6 +90,8 @@ __all__ = [
     "oauth_providers_page",
     "platform_admins_page",
     "preferences_page",
+    "render_field",
+    "render_form",
     "roles_page",
     "shell",
     "skills_page",
