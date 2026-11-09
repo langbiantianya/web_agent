@@ -162,6 +162,86 @@ def test_boolean_value_uses_ludic_bool_branch() -> None:
     assert 'value="value"' in true_html
 
 
+def _option_attrs(element: object) -> list[dict[str, str]]:
+    """取渲染结果里 select 各 option 的**元素树**属性。
+
+    ``element`` 是 ``render_field`` 的返回值（``label`` 包裹控件），第二层
+    子节点才是 ``select``。
+    """
+    control = element.children[1]  # type: ignore[attr-defined]
+    return [child.aliased_attrs for child in control.children]  # type: ignore[attr-defined]
+
+
+def test_select_option_tree_carries_explicit_selected_flags() -> None:
+    """**元素树**层必须两个 option 都带 ``selected``（一真一假）。
+
+    HTML 层区分不了「显式 ``selected=False``」与「压根不发 selected」
+    （两者渲染出的 HTML 完全相同），但元素树不同：
+    ``{'value': 'published', 'selected': 'false'}`` vs
+    ``{'value': 'published'}``。渲染快照基线比的是元素树，所以这层形态
+    必须单独锁住。
+
+    既有表单写的是 ``option(..., selected=...)``，True 与 False 都显式传；
+    组件必须逐层一致。
+    """
+    field = Field(
+        "status",
+        "Status",
+        kind="select",
+        options=(("Published", "published"), ("Draft", "draft")),
+    )
+
+    edit_attrs = _option_attrs(render_field(field, "draft", mode="edit"))
+    assert edit_attrs == [
+        {"value": "published", "selected": "false"},
+        {"value": "draft", "selected": "true"},
+    ]
+
+    # 创建态没有当前值：一个 selected 都不发（属性整个缺失，不是 'false'）。
+    create_attrs = _option_attrs(render_field(field, None, mode="create"))
+    assert create_attrs == [
+        {"value": "published"},
+        {"value": "draft"},
+    ]
+
+
+def test_boolean_select_normalizes_to_legacy_option_values() -> None:
+    """布尔当前值必须命中 option，否则会退化成「浏览器默认选中第一项」。
+
+    既有表单（``views_legacy.py``）的布尔型下拉一律是
+    ``option("Yes", value="1", selected=bool(x))`` /
+    ``option("No", value="0", selected=not bool(x))``——option 的值是字符串
+    ``"1"`` / ``"0"``。组件把 bool 归一后与之比较。
+
+    不归一的话 ``True`` 会变成 ``"True"``，与 ``"1"`` 不相等 ⇒ 零个
+    selected ⇒ 浏览器默认选中第一项（本该是 False 的字段被存成 True）。
+    """
+    field = Field(
+        "enabled",
+        "Enabled",
+        kind="select",
+        options=(("Yes", "1"), ("No", "0")),
+    )
+
+    true_attrs = _option_attrs(render_field(field, True, mode="edit"))
+    assert true_attrs == [
+        {"value": "1", "selected": "true"},
+        {"value": "0", "selected": "false"},
+    ]
+
+    false_attrs = _option_attrs(render_field(field, False, mode="edit"))
+    assert false_attrs == [
+        {"value": "1", "selected": "false"},
+        {"value": "0", "selected": "true"},
+    ]
+
+    # HTML 层也要与既有写法一致：命中项带 selected="selected"，
+    # 未命中项不带（但元素树里仍然有 'selected': 'false'）。
+    true_html = render_field(field, True, mode="edit").to_html()
+    assert '<option value="1" selected="selected">Yes</option>' in true_html
+    assert '<option value="0">No</option>' in true_html
+
+
 def test_form_skips_fields_not_in_mode() -> None:
     """modes 不含当前模式的字段不渲染。"""
     fields = [

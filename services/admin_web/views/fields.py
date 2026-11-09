@@ -136,12 +136,22 @@ def _control(field: Field, value: object | None, *, mode: str) -> Any:
         return textarea(*([current] if current is not None else []), **attrs)
 
     if field.kind == "select":
+        # **比较基准是字符串**：option 的值一律是字符串，所以布尔当前值先按
+        # 既有表单的约定归一——True 命中 "1"（同时也接受 "True"），False 命中
+        # "0"（同时也接受 "False"）；其余取值按 str(value) 比较。
+        #
+        # 不归一会退化成「零个 option 命中」，浏览器于是默认选中第一个
+        # option（本该是 False 的字段被存成 True），所以这里必须归一。
+        if isinstance(value, bool):
+            matched = {"1", "True"} if value else {"0", "False"}
+        else:
+            matched = {current} if current is not None else set()
         # 有当前值时逐个 option 标 selected（True 与 False 都显式传，
         # 与既有表单 `option(..., selected=...)` 的写法一致）；没有当前值
         # （创建态）则一个 selected 都不发。
         return select(
             *(
-                option(label_text, value=option_value, selected=option_value == current)
+                option(label_text, value=option_value, selected=option_value in matched)
                 if current is not None
                 else option(label_text, value=option_value)
                 for label_text, option_value in field.options
@@ -178,13 +188,22 @@ def _control(field: Field, value: object | None, *, mode: str) -> Any:
 def render_field(field: Field, value: object | None, *, mode: str) -> Any:
     """渲染单个字段（``label`` 包裹控件）。
 
-    ``value`` 接受 ``str`` / ``int`` / ``float`` / ``bool`` / ``None``：
+    ``value`` 接受 ``str`` / ``int`` / ``float`` / ``bool`` / ``None``，
+    但**布尔值的语义按 kind 而不同**，不能当成一条通用规则：
 
     - ``None`` → 控件**不带** value（输入框没有 ``value`` 属性，textarea
       没有文本子节点）；
-    - ``bool`` → 走 ludic 的 bool 分支，和既有表单一致：``False`` 在 HTML
-      上不渲染该属性（元素树里是 ``"false"``），``True`` 在 HTML 上是
-      ``value="value"``（元素树里是 ``"true"``）；
+    - ``kind`` 是 input 系（``text`` / ``password`` / ``email`` / ``tel`` /
+      ``number`` / ``url``）且 ``value`` 是 ``bool`` → 走 ludic 的 bool 分支，
+      和既有表单一致：``False`` 在 HTML 上不渲染该属性（元素树里是
+      ``"false"``），``True`` 在 HTML 上是 ``value="value"``（元素树里是
+      ``"true"``）；
+    - ``kind="textarea"`` 且 ``value`` 是 ``bool`` → 文本 ``True`` / ``False``
+      会**原样渲染进 textarea 的内容**（textarea 只有文本子节点，没有
+      value 属性）；
+    - ``kind="select"`` 且 ``value`` 是 ``bool`` → 当前值按既有表单约定归一
+      后与 option 的值比较（``True`` 命中 ``"1"``，``False`` 命中 ``"0"``），
+      详见 :func:`_control` 里 select 分支的注释；
     - 其它 → ``str(value)``。
 
     编辑态的标签用 ``field.edit_label``（为空时回落 ``field.label``），
@@ -208,9 +227,12 @@ def render_form(
 ) -> Any:
     """渲染整个表单。
 
-    ``values`` 里**取到非 ``None`` 值**的键才会带上 value 属性；没给出的键
-    渲染成不带 value 的输入框。注意 ``values.get()`` 分不清「键没给出」和
-    「键给了但值是 ``None``」——两者都渲染成不带 value。
+    ``values`` 里**只有 ``None`` 才是缺省**：值为 ``None`` 的键渲染成不带
+    value 的输入框，其余取值都会带上 value 属性。注意 ``False`` 不是
+    缺省——它走 ludic 的 bool 分支，**HTML 上没有** ``value`` 属性
+    （元素树里是 ``"false"``），但语义上是「有这个值」。另外
+    ``values.get()`` 分不清「键没给出」和「键给了但值是 ``None``」——
+    两者都渲染成不带 value。
 
     ``layout`` 是约定值：``"grid"``（创建表单，双列栅格）与 ``"stack"``
     （编辑表单，纵向堆叠）。取值只影响外层 class。
