@@ -1309,8 +1309,11 @@
       """渲染整个表单。
 
       ``values`` 里**只有 ``None`` 才是缺省**：值为 ``None`` 的键渲染成不带
-      value 的输入框；``False`` **不是**缺省——它走 ludic 的 bool 分支，
-      HTML 上没有 ``value`` 属性（元素树里是 ``value: 'false'``）。
+      value 的输入框。**这条语义按 kind 而不同**：input 系控件的取值落成
+      ``value`` 属性（``False`` 走 ludic 的 bool 分支，HTML 上没有 ``value``
+      属性、元素树里是 ``"false"``）；textarea 的取值落成**文本子节点**
+      （``False`` 会渲染成文本 ``False``）；select 的取值用于**匹配 option**
+      （``False`` 归一后命中 ``"0"``）——后两者都不产生 value 属性。
 
       ``layout`` 是约定值：``"grid"``（创建表单，双列栅格）与 ``"stack"``
       （编辑表单，纵向堆叠）。取值只影响外层 class。
@@ -1359,7 +1362,8 @@
   > （覆写的是 ludic **私有 API**；`requirements.admin.txt` 钉死 `ludic[full]>=1.0,<2`，
   > 升级需重跑 `tests/test_admin_fields.py`。评审已确认**无公共 API 替代路径**。）
   > ② `kind="select"` 消费传入的 `value`：`value is not None` 时对**每个** option 发
-  > `selected=(option_value == value)`——否则编辑态下拉会丢当前选中项，
+  > `selected=(option_value == value)`（**修复轮 2 已把这里的比较基准改为「归一后的
+  > 字符串集合」，见下方修复轮 2 段**）——否则编辑态下拉会丢当前选中项，
   > 浏览器默认选中第一项，**把 `draft` 的 skill 存成 `published`**（数据损坏路径）。
   > ③ `Field` 增加 `edit_label: str = ""`（与 `edit_placeholder` / `edit_rows` 同构的最小扩展）：
   > `api_key` 的编辑态标签是 "Replacement API key"、创建态是 "API key"，
@@ -1391,6 +1395,20 @@
   >   浏览器提交语义等价，但**不能再宣称 HTML 逐字节等价**。
   > - **布尔型下拉的 option 值按既有约定用 `"1"` / `"0"`**（组件已能直接吃 bool，
   >   但值必须落在 `"1"`/`"0"` 这组上，否则匹配不到任何 option）。
+  >
+  > **修复轮 2 复审（Task 5 定向复审）追加给 Task 8 的三条硬提醒**：
+  > - **创建态的布尔下拉**：既有创建表单（`views_legacy.py:392`、`:724`、`:839`）
+  >   的布尔下拉**一个 `selected` 都不发**（浏览器默认选中第一项 "Yes" = 启用）；
+  >   组件在 `value=False` 时会**显式选中 `"0"`（No）**。⇒ Task 8 的**创建态**
+  >   布尔下拉必须传 `None`（不是 `False`），才能与既有表单一致。
+  > - **option 值的大小写**：组件的布尔归一只认 `"1"`/`"0"`/`"True"`/`"False"`；
+  >   legacy 的 `ok` 过滤器（`views_legacy.py:1117-1118`）用的是 `"true"`/`"false"`
+  >   （**小写**）——那个下拉**不能**传 bool 当前值，否则零命中。
+  > - **空 option 值的边界**：`option("Any", value="")` 在 ludic 1.0.3 下会被丢掉
+  >   value 属性（HTML 是 `<option >Any</option>`、树是 `{}`）；当前值为 `""` 时
+  >   组件会把它标成 `selected`，浏览器提交的是文本 `Any` 而非空串，而 legacy
+  >   过滤器（`views_legacy.py:1105-1111`）**完全不发** `selected`。⇒ 该下拉
+  >   **不要**用 `Field` 抽象，保持手写。
 
 - [ ] **Step 5: 在 `views/__init__.py` 再导出**
 
