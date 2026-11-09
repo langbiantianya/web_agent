@@ -12,6 +12,17 @@
 - CSRF token：隐藏字段的真实形态是 ``name="csrf_token"`` + ``value="<token>"``，
   token 每次渲染都不同，必须归一化成 ``<CSRF>``，否则快照必然失败；
 - ISO 时间戳：``2026-01-02 03:04:05`` / ``2026-01-02T03:04:05.123`` → ``<TS>``。
+
+CSRF 规则有两条路径，都归到同一个占位符：
+1. **主路径**：元素 ``name`` 属性值为 ``csrf_token`` 时，其 ``value`` 属性
+   归一化成 ``<CSRF>``。这是 ``_csrf()`` 助手（``views.py:546-548``）的
+   实际渲染形态，``input_(type="hidden", name="csrf_token", value=csrf)``。
+2. **兜底路径**：属性**键**本身等于 ``csrf_token`` 时，值归一化成 ``<CSRF>``。
+   普通 Python kwarg 走 Ludic 的 ``format_attrs`` 会被转成连字符形式
+   （``csrf_token`` → ``csrf-token``），所以这条路径只有 raw attrs
+   （``attrs={"csrf_token": ...}``，``format.py:153-159`` 不做转换）才可达。
+   当前代码库没有这种写法，但留着这 1 行能让「键就叫 csrf_token」的形态也
+   被覆盖，代价可忽略。
 """
 
 from __future__ import annotations

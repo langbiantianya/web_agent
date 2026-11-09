@@ -1,0 +1,518 @@
+{
+  "attrs": {
+    "data-color-mode": "system",
+    "data-theme": "fluent",
+    "lang": "en"
+  },
+  "children": [
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "charset": "utf-8"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {
+            "content": "width=device-width, initial-scale=1",
+            "name": "viewport"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {},
+          "children": [
+            {
+              "text": "Sign in · web_agent Admin"
+            }
+          ],
+          "tag": "title"
+        },
+        {
+          "attrs": {
+            "href": "/admin/static/admin.css?v=login-slide-20261107-3",
+            "rel": "stylesheet"
+          },
+          "children": [],
+          "tag": "link"
+        },
+        {
+          "attrs": {
+            "src": "/admin/static/admin-ui.js?v=login-slide-20261107-3"
+          },
+          "children": [],
+          "tag": "script"
+        }
+      ],
+      "tag": "head"
+    },
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "class": "login-page"
+          },
+          "children": [
+            {
+              "attrs": {
+                "class": "login-shell"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "login-toolbar"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "aria-label": "Language",
+                        "class": "locale-switch",
+                        "role": "group"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "aria-pressed": "true",
+                            "class": "locale-button",
+                            "data-admin-locale": "en",
+                            "type": "button"
+                          },
+                          "children": [
+                            {
+                              "text": "EN"
+                            }
+                          ],
+                          "tag": "button"
+                        },
+                        {
+                          "attrs": {
+                            "aria-pressed": "false",
+                            "class": "locale-button",
+                            "data-admin-locale": "zh-CN",
+                            "type": "button"
+                          },
+                          "children": [
+                            {
+                              "text": "简中"
+                            }
+                          ],
+                          "tag": "button"
+                        }
+                      ],
+                      "tag": "div"
+                    }
+                  ],
+                  "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "class": "eyebrow"
+                  },
+                  "children": [
+                    {
+                      "text": "WEB_AGENT CLOUD"
+                    }
+                  ],
+                  "tag": "p"
+                },
+                {
+                  "attrs": {},
+                  "children": [
+                    {
+                      "text": "Administration"
+                    }
+                  ],
+                  "tag": "h1"
+                },
+                {
+                  "attrs": {
+                    "class": "lead"
+                  },
+                  "children": [
+                    {
+                      "text": "Manage platform configuration, access policy, and operations."
+                    }
+                  ],
+                  "tag": "p"
+                },
+                {
+                  "attrs": {
+                    "class": "flash info",
+                    "role": "status"
+                  },
+                  "children": [
+                    {
+                      "text": "Saved successfully."
+                    }
+                  ],
+                  "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "class": "login-methods login-stage"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "login-card primary-login-card"
+                      },
+                      "children": [
+                        {
+                          "attrs": {},
+                          "children": [
+                            {
+                              "text": "Administrator identity"
+                            }
+                          ],
+                          "tag": "h2"
+                        },
+                        {
+                          "attrs": {
+                            "class": "muted"
+                          },
+                          "children": [
+                            {
+                              "text": "Use your organization identity. Roles are synchronized from OAuth claims."
+                            }
+                          ],
+                          "tag": "p"
+                        },
+                        {
+                          "attrs": {
+                            "action": "/admin/login/oauth/snapshot-idp",
+                            "class": "oauth-form",
+                            "method": "post"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "class": "btn btn-oauth",
+                                "type": "submit"
+                              },
+                              "children": [
+                                {
+                                  "text": "Continue with Snapshot IDP"
+                                }
+                              ],
+                              "tag": "button"
+                            }
+                          ],
+                          "tag": "form"
+                        },
+                        {
+                          "attrs": {
+                            "class": "login-disclosure"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "aria-controls": "super-admin-login-panel",
+                                "aria-expanded": "false",
+                                "class": "btn btn-oauth login-disclosure-button",
+                                "data-admin-login-toggle": "super-admin-login-panel",
+                                "id": "toggle-super-admin-login",
+                                "type": "button"
+                              },
+                              "children": [
+                                {
+                                  "text": "Use username and password"
+                                }
+                              ],
+                              "tag": "button"
+                            }
+                          ],
+                          "tag": "div"
+                        }
+                      ],
+                      "tag": "section"
+                    },
+                    {
+                      "attrs": {
+                        "class": "login-card super-admin-login-card",
+                        "hidden": "true",
+                        "id": "super-admin-login-panel"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "class": "login-panel-header"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "id": "super-admin-sign-in-title"
+                              },
+                              "children": [
+                                {
+                                  "text": "Platform super admin"
+                                }
+                              ],
+                              "tag": "h2"
+                            },
+                            {
+                              "attrs": {
+                                "aria-controls": "super-admin-login-panel",
+                                "aria-expanded": "true",
+                                "class": "btn btn-link login-panel-back",
+                                "data-admin-login-toggle": "super-admin-login-panel",
+                                "type": "button"
+                              },
+                              "children": [
+                                {
+                                  "text": "Back to OAuth"
+                                }
+                              ],
+                              "tag": "button"
+                            }
+                          ],
+                          "tag": "div"
+                        },
+                        {
+                          "attrs": {
+                            "class": "login-view",
+                            "id": "super-admin-sign-in-view"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "class": "muted"
+                              },
+                              "children": [
+                                {
+                                  "text": "Reserved for the built-in emergency and platform owner accounts."
+                                }
+                              ],
+                              "tag": "p"
+                            },
+                            {
+                              "attrs": {
+                                "action": "/admin/login/super-admin",
+                                "class": "stack",
+                                "method": "post"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Username"
+                                        }
+                                      ],
+                                      "tag": "span"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "autocomplete": "username",
+                                        "name": "username",
+                                        "required": "true"
+                                      },
+                                      "children": [],
+                                      "tag": "input"
+                                    }
+                                  ],
+                                  "tag": "label"
+                                },
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Password"
+                                        }
+                                      ],
+                                      "tag": "span"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "autocomplete": "current-password",
+                                        "maxlength": "8",
+                                        "minlength": "8",
+                                        "name": "password",
+                                        "required": "true",
+                                        "type": "password"
+                                      },
+                                      "children": [],
+                                      "tag": "input"
+                                    }
+                                  ],
+                                  "tag": "label"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "next",
+                                    "type": "hidden",
+                                    "value": "/admin/"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                },
+                                {
+                                  "attrs": {
+                                    "class": "btn btn-primary",
+                                    "type": "submit"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "Sign in"
+                                    }
+                                  ],
+                                  "tag": "button"
+                                }
+                              ],
+                              "tag": "form"
+                            },
+                            {
+                              "attrs": {
+                                "class": "login-view-actions"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {
+                                    "aria-controls": "super-admin-password-reset-view",
+                                    "aria-expanded": "false",
+                                    "class": "btn btn-link",
+                                    "data-admin-view-hide": "super-admin-sign-in-view",
+                                    "data-admin-view-show": "super-admin-password-reset-view",
+                                    "type": "button"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "Reset password"
+                                    }
+                                  ],
+                                  "tag": "button"
+                                }
+                              ],
+                              "tag": "div"
+                            }
+                          ],
+                          "tag": "div"
+                        },
+                        {
+                          "attrs": {
+                            "class": "login-view password-reset-view",
+                            "hidden": "true",
+                            "id": "super-admin-password-reset-view"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "id": "super-admin-password-reset-title"
+                              },
+                              "children": [
+                                {
+                                  "text": "Reset password"
+                                }
+                              ],
+                              "tag": "h2"
+                            },
+                            {
+                              "attrs": {
+                                "class": "muted"
+                              },
+                              "children": [
+                                {
+                                  "text": "Enter your username and we will send a new password to the registered contact channel."
+                                }
+                              ],
+                              "tag": "p"
+                            },
+                            {
+                              "attrs": {
+                                "action": "/admin/super-admin/forgot-password",
+                                "class": "password-reset-form",
+                                "method": "post"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Username"
+                                        }
+                                      ],
+                                      "tag": "span"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "autocomplete": "username",
+                                        "name": "username",
+                                        "required": "true"
+                                      },
+                                      "children": [],
+                                      "tag": "input"
+                                    }
+                                  ],
+                                  "tag": "label"
+                                },
+                                {
+                                  "attrs": {
+                                    "class": "btn btn-primary",
+                                    "type": "submit"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "Send new password"
+                                    }
+                                  ],
+                                  "tag": "button"
+                                }
+                              ],
+                              "tag": "form"
+                            },
+                            {
+                              "attrs": {
+                                "class": "login-view-actions"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {
+                                    "class": "btn btn-secondary",
+                                    "data-admin-view-hide": "super-admin-password-reset-view",
+                                    "data-admin-view-show": "super-admin-sign-in-view",
+                                    "type": "button"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "Back to sign in"
+                                    }
+                                  ],
+                                  "tag": "button"
+                                }
+                              ],
+                              "tag": "div"
+                            }
+                          ],
+                          "tag": "div"
+                        }
+                      ],
+                      "tag": "section"
+                    }
+                  ],
+                  "tag": "div"
+                }
+              ],
+              "tag": "section"
+            }
+          ],
+          "tag": "main"
+        }
+      ],
+      "tag": "body"
+    }
+  ],
+  "tag": "html"
+}

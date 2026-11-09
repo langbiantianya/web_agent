@@ -1,0 +1,1177 @@
+{
+  "attrs": {
+    "data-color-mode": "light",
+    "data-density": "comfortable",
+    "data-theme": "fluent",
+    "lang": "en"
+  },
+  "children": [
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "charset": "utf-8"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {
+            "content": "width=device-width, initial-scale=1",
+            "name": "viewport"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {},
+          "children": [
+            {
+              "text": "Skills · web_agent Admin"
+            }
+          ],
+          "tag": "title"
+        },
+        {
+          "attrs": {
+            "href": "/admin/static/admin.css?v=login-slide-20261107-3",
+            "rel": "stylesheet"
+          },
+          "children": [],
+          "tag": "link"
+        },
+        {
+          "attrs": {
+            "src": "/admin/static/admin-ui.js?v=login-slide-20261107-3"
+          },
+          "children": [],
+          "tag": "script"
+        }
+      ],
+      "tag": "head"
+    },
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "class": "topbar"
+          },
+          "children": [
+            {
+              "attrs": {
+                "class": "brand-group"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "brand",
+                    "href": "/admin/"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "brand-name"
+                      },
+                      "children": [
+                        {
+                          "text": "web_agent"
+                        }
+                      ],
+                      "tag": "span"
+                    }
+                  ],
+                  "tag": "a"
+                },
+                {
+                  "attrs": {
+                    "class": "brand-subtitle"
+                  },
+                  "children": [
+                    {
+                      "text": "Cloud Control Plane"
+                    }
+                  ],
+                  "tag": "span"
+                }
+              ],
+              "tag": "div"
+            },
+            {
+              "attrs": {
+                "class": "header-actions"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "user-role"
+                  },
+                  "children": [
+                    {
+                      "text": "Platform owner"
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "class": "user-name"
+                  },
+                  "children": [
+                    {
+                      "text": "superAdmin"
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "aria-label": "Language",
+                    "class": "locale-switch",
+                    "role": "group"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "aria-pressed": "true",
+                        "class": "locale-button",
+                        "data-admin-locale": "en",
+                        "type": "button"
+                      },
+                      "children": [
+                        {
+                          "text": "EN"
+                        }
+                      ],
+                      "tag": "button"
+                    },
+                    {
+                      "attrs": {
+                        "aria-pressed": "false",
+                        "class": "locale-button",
+                        "data-admin-locale": "zh-CN",
+                        "type": "button"
+                      },
+                      "children": [
+                        {
+                          "text": "简中"
+                        }
+                      ],
+                      "tag": "button"
+                    }
+                  ],
+                  "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "class": "header-link",
+                    "href": "/admin/preferences"
+                  },
+                  "children": [
+                    {
+                      "text": "Preferences"
+                    }
+                  ],
+                  "tag": "a"
+                },
+                {
+                  "attrs": {
+                    "action": "/admin/logout",
+                    "class": "inline-form",
+                    "method": "post"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "name": "csrf_token",
+                        "type": "hidden",
+                        "value": "<CSRF>"
+                      },
+                      "children": [],
+                      "tag": "input"
+                    },
+                    {
+                      "attrs": {
+                        "class": "btn btn-secondary",
+                        "type": "submit"
+                      },
+                      "children": [
+                        {
+                          "text": "Sign out"
+                        }
+                      ],
+                      "tag": "button"
+                    }
+                  ],
+                  "tag": "form"
+                }
+              ],
+              "tag": "div"
+            }
+          ],
+          "tag": "header"
+        },
+        {
+          "attrs": {
+            "class": "admin-layout"
+          },
+          "children": [
+            {
+              "attrs": {
+                "aria-label": "Admin navigation",
+                "class": "sidebar"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "mobile-nav"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "mobile-menu-summary"
+                      },
+                      "children": [
+                        {
+                          "text": "Menu"
+                        }
+                      ],
+                      "tag": "summary"
+                    },
+                    {
+                      "attrs": {
+                        "class": "nav-groups"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "class": "nav-group"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "class": "nav-group-title"
+                              },
+                              "children": [
+                                {
+                                  "text": "Overview"
+                                }
+                              ],
+                              "tag": "span"
+                            },
+                            {
+                              "attrs": {
+                                "class": "nav-list"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "class": "nav-link",
+                                        "data-page": "overview",
+                                        "href": "/admin/"
+                                      },
+                                      "children": [
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Overview"
+                                            }
+                                          ],
+                                          "tag": "span"
+                                        }
+                                      ],
+                                      "tag": "a"
+                                    }
+                                  ],
+                                  "tag": "li"
+                                }
+                              ],
+                              "tag": "ul"
+                            }
+                          ],
+                          "tag": "div"
+                        },
+                        {
+                          "attrs": {
+                            "class": "nav-group"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "class": "nav-group-title"
+                              },
+                              "children": [
+                                {
+                                  "text": "Resources"
+                                }
+                              ],
+                              "tag": "span"
+                            },
+                            {
+                              "attrs": {
+                                "class": "nav-list"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "class": "nav-link",
+                                        "data-page": "agents",
+                                        "href": "/admin/agents"
+                                      },
+                                      "children": [
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Agents"
+                                            }
+                                          ],
+                                          "tag": "span"
+                                        }
+                                      ],
+                                      "tag": "a"
+                                    }
+                                  ],
+                                  "tag": "li"
+                                }
+                              ],
+                              "tag": "ul"
+                            }
+                          ],
+                          "tag": "div"
+                        },
+                        {
+                          "attrs": {
+                            "class": "nav-group"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "class": "nav-group-title"
+                              },
+                              "children": [
+                                {
+                                  "text": "Security"
+                                }
+                              ],
+                              "tag": "span"
+                            },
+                            {
+                              "attrs": {
+                                "class": "nav-list"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "class": "nav-link",
+                                        "data-page": "audit",
+                                        "href": "/admin/audit"
+                                      },
+                                      "children": [
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Tool audit"
+                                            }
+                                          ],
+                                          "tag": "span"
+                                        }
+                                      ],
+                                      "tag": "a"
+                                    }
+                                  ],
+                                  "tag": "li"
+                                }
+                              ],
+                              "tag": "ul"
+                            }
+                          ],
+                          "tag": "div"
+                        }
+                      ],
+                      "tag": "div"
+                    }
+                  ],
+                  "tag": "details"
+                },
+                {
+                  "attrs": {
+                    "class": "nav-groups desktop-nav"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "nav-group"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "class": "nav-group-title"
+                          },
+                          "children": [
+                            {
+                              "text": "Overview"
+                            }
+                          ],
+                          "tag": "span"
+                        },
+                        {
+                          "attrs": {
+                            "class": "nav-list"
+                          },
+                          "children": [
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {
+                                    "class": "nav-link",
+                                    "data-page": "overview",
+                                    "href": "/admin/"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Overview"
+                                        }
+                                      ],
+                                      "tag": "span"
+                                    }
+                                  ],
+                                  "tag": "a"
+                                }
+                              ],
+                              "tag": "li"
+                            }
+                          ],
+                          "tag": "ul"
+                        }
+                      ],
+                      "tag": "div"
+                    },
+                    {
+                      "attrs": {
+                        "class": "nav-group"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "class": "nav-group-title"
+                          },
+                          "children": [
+                            {
+                              "text": "Resources"
+                            }
+                          ],
+                          "tag": "span"
+                        },
+                        {
+                          "attrs": {
+                            "class": "nav-list"
+                          },
+                          "children": [
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {
+                                    "class": "nav-link",
+                                    "data-page": "agents",
+                                    "href": "/admin/agents"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Agents"
+                                        }
+                                      ],
+                                      "tag": "span"
+                                    }
+                                  ],
+                                  "tag": "a"
+                                }
+                              ],
+                              "tag": "li"
+                            }
+                          ],
+                          "tag": "ul"
+                        }
+                      ],
+                      "tag": "div"
+                    },
+                    {
+                      "attrs": {
+                        "class": "nav-group"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "class": "nav-group-title"
+                          },
+                          "children": [
+                            {
+                              "text": "Security"
+                            }
+                          ],
+                          "tag": "span"
+                        },
+                        {
+                          "attrs": {
+                            "class": "nav-list"
+                          },
+                          "children": [
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {
+                                    "class": "nav-link",
+                                    "data-page": "audit",
+                                    "href": "/admin/audit"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Tool audit"
+                                        }
+                                      ],
+                                      "tag": "span"
+                                    }
+                                  ],
+                                  "tag": "a"
+                                }
+                              ],
+                              "tag": "li"
+                            }
+                          ],
+                          "tag": "ul"
+                        }
+                      ],
+                      "tag": "div"
+                    }
+                  ],
+                  "tag": "div"
+                }
+              ],
+              "tag": "nav"
+            },
+            {
+              "attrs": {
+                "class": "main-content",
+                "id": "main-content"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "flash info",
+                    "role": "status"
+                  },
+                  "children": [
+                    {
+                      "text": "Saved successfully."
+                    }
+                  ],
+                  "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "class": "stack"
+                  },
+                  "children": [
+                    {
+                      "attrs": {},
+                      "children": [
+                        {
+                          "attrs": {},
+                          "children": [
+                            {
+                              "text": "Skills"
+                            }
+                          ],
+                          "tag": "h1"
+                        },
+                        {
+                          "attrs": {
+                            "class": "lead"
+                          },
+                          "children": [
+                            {
+                              "text": "Review publication state and edit instruction packages without crossing the legacy client API."
+                            }
+                          ],
+                          "tag": "p"
+                        }
+                      ],
+                      "tag": "section"
+                    },
+                    {
+                      "attrs": {
+                        "class": "surface"
+                      },
+                      "children": [
+                        {
+                          "attrs": {},
+                          "children": [
+                            {
+                              "text": "Create resource"
+                            }
+                          ],
+                          "tag": "h2"
+                        },
+                        {
+                          "attrs": {
+                            "action": "/admin/skills",
+                            "class": "form-grid",
+                            "method": "post"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "name": "csrf_token",
+                                "type": "hidden",
+                                "value": "<CSRF>"
+                              },
+                              "children": [],
+                              "tag": "input"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Code"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "code",
+                                    "required": "true"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Description"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "description",
+                                    "required": "true"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Status"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "status"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "value": "published"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Published"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "value": "draft"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Draft"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    }
+                                  ],
+                                  "tag": "select"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Skill body"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "body",
+                                    "rows": "10"
+                                  },
+                                  "children": [],
+                                  "tag": "textarea"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Enabled"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "enabled"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "value": "1"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Yes"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "value": "0"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "No"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    }
+                                  ],
+                                  "tag": "select"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {
+                                "class": "btn btn-primary",
+                                "type": "submit"
+                              },
+                              "children": [
+                                {
+                                  "text": "Create skill"
+                                }
+                              ],
+                              "tag": "button"
+                            }
+                          ],
+                          "tag": "form"
+                        }
+                      ],
+                      "tag": "section"
+                    },
+                    {
+                      "attrs": {
+                        "class": "surface"
+                      },
+                      "children": [
+                        {
+                          "attrs": {},
+                          "children": [
+                            {
+                              "text": "Configured resources"
+                            }
+                          ],
+                          "tag": "h2"
+                        },
+                        {
+                          "attrs": {
+                            "class": "table-scroll"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "class": "data-table"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Skill"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Status"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Injection"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Version"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Actions"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        }
+                                      ],
+                                      "tag": "tr"
+                                    }
+                                  ],
+                                  "tag": "thead"
+                                },
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Snapshot Skill"
+                                            },
+                                            {
+                                              "attrs": {
+                                                "class": "block-muted"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "snapshot-skill"
+                                                }
+                                              ],
+                                              "tag": "small"
+                                            }
+                                          ],
+                                          "tag": "td"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "published"
+                                            }
+                                          ],
+                                          "tag": "td"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Enabled"
+                                            }
+                                          ],
+                                          "tag": "td"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "v2"
+                                            }
+                                          ],
+                                          "tag": "td"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "attrs": {
+                                                "action": "/admin/skills/snapshot-skill/archive",
+                                                "class": "inline-form",
+                                                "method": "post"
+                                              },
+                                              "children": [
+                                                {
+                                                  "attrs": {
+                                                    "name": "csrf_token",
+                                                    "type": "hidden",
+                                                    "value": "<CSRF>"
+                                                  },
+                                                  "children": [],
+                                                  "tag": "input"
+                                                },
+                                                {
+                                                  "attrs": {
+                                                    "class": "btn btn-danger btn-small",
+                                                    "type": "submit"
+                                                  },
+                                                  "children": [
+                                                    {
+                                                      "text": "Archive"
+                                                    }
+                                                  ],
+                                                  "tag": "button"
+                                                }
+                                              ],
+                                              "tag": "form"
+                                            },
+                                            {
+                                              "attrs": {},
+                                              "children": [
+                                                {
+                                                  "attrs": {},
+                                                  "children": [
+                                                    {
+                                                      "text": "Edit skill"
+                                                    }
+                                                  ],
+                                                  "tag": "summary"
+                                                },
+                                                {
+                                                  "attrs": {
+                                                    "action": "/admin/skills/snapshot-skill/update",
+                                                    "class": "stack",
+                                                    "method": "post"
+                                                  },
+                                                  "children": [
+                                                    {
+                                                      "attrs": {
+                                                        "name": "csrf_token",
+                                                        "type": "hidden",
+                                                        "value": "<CSRF>"
+                                                      },
+                                                      "children": [],
+                                                      "tag": "input"
+                                                    },
+                                                    {
+                                                      "attrs": {},
+                                                      "children": [
+                                                        {
+                                                          "attrs": {},
+                                                          "children": [
+                                                            {
+                                                              "text": "Description"
+                                                            }
+                                                          ],
+                                                          "tag": "span"
+                                                        },
+                                                        {
+                                                          "attrs": {
+                                                            "name": "description",
+                                                            "required": "true",
+                                                            "value": "快照用的技能定义"
+                                                          },
+                                                          "children": [],
+                                                          "tag": "input"
+                                                        }
+                                                      ],
+                                                      "tag": "label"
+                                                    },
+                                                    {
+                                                      "attrs": {},
+                                                      "children": [
+                                                        {
+                                                          "attrs": {},
+                                                          "children": [
+                                                            {
+                                                              "text": "Status"
+                                                            }
+                                                          ],
+                                                          "tag": "span"
+                                                        },
+                                                        {
+                                                          "attrs": {
+                                                            "name": "status"
+                                                          },
+                                                          "children": [
+                                                            {
+                                                              "attrs": {
+                                                                "selected": "true",
+                                                                "value": "published"
+                                                              },
+                                                              "children": [
+                                                                {
+                                                                  "text": "Published"
+                                                                }
+                                                              ],
+                                                              "tag": "option"
+                                                            },
+                                                            {
+                                                              "attrs": {
+                                                                "selected": "false",
+                                                                "value": "draft"
+                                                              },
+                                                              "children": [
+                                                                {
+                                                                  "text": "Draft"
+                                                                }
+                                                              ],
+                                                              "tag": "option"
+                                                            }
+                                                          ],
+                                                          "tag": "select"
+                                                        }
+                                                      ],
+                                                      "tag": "label"
+                                                    },
+                                                    {
+                                                      "attrs": {},
+                                                      "children": [
+                                                        {
+                                                          "attrs": {},
+                                                          "children": [
+                                                            {
+                                                              "text": "Skill body"
+                                                            }
+                                                          ],
+                                                          "tag": "span"
+                                                        },
+                                                        {
+                                                          "attrs": {
+                                                            "name": "body",
+                                                            "required": "true",
+                                                            "rows": "14"
+                                                          },
+                                                          "children": [
+                                                            {
+                                                              "text": "Step 1. Do the thing.\n"
+                                                            }
+                                                          ],
+                                                          "tag": "textarea"
+                                                        }
+                                                      ],
+                                                      "tag": "label"
+                                                    },
+                                                    {
+                                                      "attrs": {
+                                                        "class": "btn btn-primary",
+                                                        "type": "submit"
+                                                      },
+                                                      "children": [
+                                                        {
+                                                          "text": "Save skill"
+                                                        }
+                                                      ],
+                                                      "tag": "button"
+                                                    }
+                                                  ],
+                                                  "tag": "form"
+                                                }
+                                              ],
+                                              "tag": "details"
+                                            }
+                                          ],
+                                          "tag": "td"
+                                        }
+                                      ],
+                                      "tag": "tr"
+                                    }
+                                  ],
+                                  "tag": "tbody"
+                                }
+                              ],
+                              "tag": "table"
+                            }
+                          ],
+                          "tag": "div"
+                        }
+                      ],
+                      "tag": "section"
+                    }
+                  ],
+                  "tag": "div"
+                }
+              ],
+              "tag": "main"
+            }
+          ],
+          "tag": "div"
+        }
+      ],
+      "tag": "body"
+    }
+  ],
+  "tag": "html"
+}
