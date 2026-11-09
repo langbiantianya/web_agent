@@ -145,14 +145,14 @@ PAGE_FACTORIES = {
 # ————————————————————————————————————————————————————————————
 # 非空数据集：让 nav 链接、flash 提示条、行内编辑控件真正进入渲染。
 #
-# 假对象的字段集全部来自 services/admin_web/views.py 各页面函数的**实际
+# 假对象的字段集全部来自 services/admin_web/views/ 下各页面模块的**实际
 # 属性访问**（缺失字段会在渲染时直接 AttributeError 暴露，不会静默走降级
 # 分支），取值刻意选成「非空」形态，避免 `xxx or ""` 之类的兜底把渲染拉到
 # 降级分支而让基线失去守卫价值。
 # ————————————————————————————————————————————————————————————
 
 # nav 条目：_nav() 读 page.title / page.route_key / page.code / page.nav_group
-# （views.py:103-139）。nav_group 取自 NAV_GROUP_ORDER 里的真实分组名。
+# （views/shell.py）。nav_group 取自 NAV_GROUP_ORDER 里的真实分组名。
 NAV_PAGES = [
     AdminPageDefinition(
         code="overview",
@@ -187,7 +187,7 @@ WITH_DATA_COMMON = {
 FLASH = "Saved successfully."
 
 # workflows_page 的 rows：读 row.code / row.name / row.enabled / row.version
-# （views.py:604-627）；agents 读 a.code / a.name（views.py:638）。
+# （views/workflows.py）；agents 读 a.code / a.name（views/workflows.py 的 agent 下拉）。
 WORKFLOW_ROW = SimpleNamespace(
     code="snapshot-workflow",
     name="Snapshot Workflow",
@@ -201,8 +201,8 @@ AGENT_ITEM = SimpleNamespace(
 )
 
 # workflow_editor_page 的 workflow 读 code/name/description/version/enabled/
-# definition（views.py:689-701），agents 读 code/name/enabled（views.py:698、
-# 723-729）。
+# definition（views/workflows.py），agents 读 code/name/enabled（views/workflows.py
+# 的 agent 下拉）。
 WORKFLOW_WITH_NODES = SimpleNamespace(
     code="snapshot-workflow",
     name="Snapshot Workflow",
@@ -216,7 +216,7 @@ WORKFLOW_WITH_NODES = SimpleNamespace(
 )
 
 # agents_page 的 rows：读 code/name/model/base_url/tools/skills/system_prompt/
-# enabled/version（views.py:906-958）。
+# enabled/version（views/agents.py）。
 AGENT_ROW = SimpleNamespace(
     code="snapshot-agent",
     name="Snapshot Agent",
@@ -230,7 +230,7 @@ AGENT_ROW = SimpleNamespace(
 )
 
 # skills_page 的 rows：读 code/name/status/description/body/enabled/version
-# （views.py:1019-1076）。
+# （views/skills.py）。
 SKILL_ROW = SimpleNamespace(
     code="snapshot-skill",
     name="Snapshot Skill",
@@ -242,7 +242,7 @@ SKILL_ROW = SimpleNamespace(
 )
 
 # mcp_page 的 rows：读 code/name/transport/timeout_sec/command/url/enabled/
-# version（views.py:1135-1184）。
+# version（views/mcp.py）。
 MCP_ROW = SimpleNamespace(
     code="snapshot-mcp",
     name="Snapshot MCP",
@@ -254,7 +254,7 @@ MCP_ROW = SimpleNamespace(
     version=4,
 )
 
-# llm_page 的 rows：读 code/name/base_url/priority/enabled（views.py:1243-1286）。
+# llm_page 的 rows：读 code/name/base_url/priority/enabled（views/llm.py）。
 LLM_ROW = SimpleNamespace(
     code="snapshot-llm",
     name="Snapshot LLM",
@@ -265,7 +265,7 @@ LLM_ROW = SimpleNamespace(
 )
 
 # audit_page 的 rows：读 id/run_id/tool_name/node_id/source/ok/failure_type/
-# duration_ms/created_at（views.py:1343-1353）。
+# duration_ms/created_at（views/audit.py）。
 AUDIT_ROW = SimpleNamespace(
     id=1,
     run_id=42,
@@ -279,8 +279,8 @@ AUDIT_ROW = SimpleNamespace(
 )
 
 # oauth_providers_page / login_page / mappings_page 的 providers：读
-# display_name/code/id（views.py:235-246、1720-1721、2029-2085）以及
-# _provider_form() 读的那一组字段（views.py:1801-2013）。
+# display_name/code/id（views/oauth_providers.py、views/login.py）以及
+# _provider_form() 读的那一组字段（views/oauth_providers.py）。
 OAUTH_PROVIDER = SimpleNamespace(
     id=7,
     code="snapshot-idp",
@@ -305,7 +305,7 @@ OAUTH_PROVIDER = SimpleNamespace(
 )
 
 # mappings_page 的 mappings：读 provider_id/claim_name/external_value/
-# role_code/enabled（views.py:1723-1731）。
+# role_code/enabled（views/roles.py）。
 ROLE_MAPPING_ROW = SimpleNamespace(
     provider_id=7,
     claim_name="groups",
@@ -314,7 +314,7 @@ ROLE_MAPPING_ROW = SimpleNamespace(
     enabled=True,
 )
 
-# roles_page 的 rules：读 ptype/v0/v1/v2/v3（views.py:1669-1677）。
+# roles_page 的 rules：读 ptype/v0/v1/v2/v3（views/roles.py）。
 CASBIN_RULE = SimpleNamespace(
     ptype="p",
     v0="oauth_admin",
@@ -324,7 +324,7 @@ CASBIN_RULE = SimpleNamespace(
 )
 
 # platform_admins_page 的 accounts：读 username/email/phone/status/
-# password_expires_at/owner_slot/id（views.py:2120-2144）。两条分别覆盖
+# password_expires_at/owner_slot/id（views/platform_admins.py）。两条分别覆盖
 # owner 徽标分支与删除表单分支。
 PLATFORM_ADMIN_OWNER = SimpleNamespace(
     id=3,
@@ -346,7 +346,7 @@ PLATFORM_ADMIN_PLAIN = SimpleNamespace(
 )
 
 # access_pages_page 的 definitions（真实模型，_nav 同款）：读 title/code/
-# nav_group（views.py:1444-1461）。
+# nav_group（views/access.py）。
 ACCESS_PAGE_DEFINITION = AdminPageDefinition(
     code="agents",
     route_key="/admin/agents",
@@ -355,7 +355,7 @@ ACCESS_PAGE_DEFINITION = AdminPageDefinition(
 )
 
 # access_components_page 的 components：读 page_code/code/label/kind
-# （views.py:1602-1627）。
+# （views/access.py）。
 ADMIN_COMPONENT = SimpleNamespace(
     page_code="agents",
     code="agent-table",
@@ -364,7 +364,7 @@ ADMIN_COMPONENT = SimpleNamespace(
 )
 
 # 权限行：_permission_editor 读 binding_scope/object_name/action_name，
-# 并读 scoped_rows[0].tenant_id（views.py:1522-1554）。
+# 并读 scoped_rows[0].tenant_id（views/access.py）。
 PERMISSION_ROW = SimpleNamespace(
     binding_scope="global",
     object_name="workflow",

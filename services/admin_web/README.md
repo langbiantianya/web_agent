@@ -42,12 +42,15 @@ services/admin_web/
   app.py          应用装配：创建 app、lifespan、中间件、静态挂载、注册路由
   common.py       跨业务域共用的请求处理辅助（21 个公开名）
   routes/         12 个业务域的路由模块（14 个文件），每个暴露 register(app)
-  views/         16 个业务域的页面模块 + shell / components / fields
+  views/          16 个模块：13 个业务域页面 + shell / components / fields
 ```
 
 `routes/` 的文件比业务域多两个：工作流域的写操作在 `workflows_write.py`、
 访问控制的组件权限与角色策略在 `access_components.py`——整域塞进单文件会突破
 单文件 350 行的上限，拆分只切代码位置，路由的路径、方法与注册顺序都没变。
+注意 `access_components.py` 里同时挂着 `/admin/access/components`、
+`/admin/access/roles`、`/admin/access/mappings` 三条访问控制路由，**没有**
+`routes/roles.py`；找角色与映射的处理器时别去 `access.py`。
 
 **路由注册顺序是行为的一部分。** Starlette 首个匹配 path 的路由胜出，所以
 顺序固化在 `routes/__init__.py` 的 `register_all` 里，并由
@@ -62,6 +65,13 @@ services/admin_web/
 - `tests/test_admin_structure.py` 锁住结构契约：模块清单、`views` 的导出面、
   `common.py` 的 21 个公开名、单文件行数与 `app.py` 行数上限、以及「域模块不许
   反向 import 应用模块」这条防循环导入红线。
+
+**快照守不到的一层，需要知道：** 元素树快照比的是属性**映射**，比不出「压根不发
+属性」与「发了个空值属性」的区别——ludic 1.0.3 会把空串属性从 HTML 和元素树里
+一并丢掉，所以 `<input name="command">` 与 `<input name="command" value="">`
+在快照里完全相同。表单统一改走 `views/fields.py` 之后，**空值字段的 HTML 会多出
+`value=""`**（浏览器里两者的值都是空串，提交语义等价）。这是重构中已声明并接受的
+差异，不是回归；但要靠人眼比对 HTML 才能发现同类漂移，改表单组件时请留意这层。
 
 ## 身份链
 
