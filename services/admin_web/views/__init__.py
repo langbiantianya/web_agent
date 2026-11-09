@@ -12,8 +12,9 @@ workflows_page`` 这类调用点可用——调用方不需要知道页面住在
 
 **名字占用提醒**：包属性 ``views.shell`` 是**函数** ``shell``，不是
 ``views/shell.py`` 模块——静态导入时模块属性先置、后置的名字绑定把它覆盖了。
-要拿那个模块请用 ``from services.admin_web.views.shell import shell``，
-不要走 ``views.shell.shell`` 这种属性遍历。
+要拿那个**模块**请用 ``importlib.import_module("services.admin_web.views.shell")``
+或 ``sys.modules["services.admin_web.views.shell"]``；
+``from services.admin_web.views.shell import shell`` 取到的仍然是**函数**。
 """
 
 from __future__ import annotations
@@ -29,6 +30,13 @@ from services.admin_web.views.shell import (
     _nav,
     error_page,
     shell,
+)
+
+from services.admin_web.views.components import (
+    _csrf,
+    _management_page,
+    _metric,
+    _toggle_and_delete,
 )
 
 # 还没搬进 views 包的页面函数，暂时寄住在过渡模块 views_legacy 里。
@@ -59,9 +67,13 @@ __all__ = [
     "ADMIN_STYLESHEET",
     "ADMIN_UI_SCRIPT",
     "NAV_GROUP_ORDER",
+    "_csrf",
     "_flash",
     "_locale_switch",
+    "_management_page",
+    "_metric",
     "_nav",
+    "_toggle_and_delete",
     "access_components_page",
     "access_pages_page",
     "agents_page",
