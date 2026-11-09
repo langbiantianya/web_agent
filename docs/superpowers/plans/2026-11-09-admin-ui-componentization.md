@@ -1712,11 +1712,16 @@
   `from services.admin_web.views import (...)`（原 `:139`）现在能拿到
   所有名字。少一个就会在 import 时报 `ImportError`。
 
-  `app.py` 从 views 导入的**恰好 18 个**名字（`access_components_page`、
+  `app.py` 从 views 导入的**恰好 17 个**名字（`access_components_page`、
   `access_pages_page`、`agents_page`、`audit_page`、`dashboard`、`error_page`、
   `llm_page`、`login_page`、`mappings_page`、`mcp_page`、`oauth_providers_page`、
   `platform_admins_page`、`preferences_page`、`roles_page`、`skills_page`、
   `workflow_editor_page`、`workflows_page`）——一个都不能少。
+
+  > **订正（2026-11-09，Task 7 评审）**：原文写「18 个」是**计数错误**，
+  > 列表里实际只有 **17** 个。包层公开名确实是 18 个（16 个页面函数 + `error_page`
+  > + `shell`），但 `app.py` **不用 `shell`**（grep `app.py` 里 `\bshell\b` 零命中）
+  > ⇒ `app.py` 只导入 17 个。
 
 - [ ] **Step 4: 运行测试**
 

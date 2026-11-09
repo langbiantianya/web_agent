@@ -10,6 +10,7 @@ workflows_page`` 这类调用点可用——调用方不需要知道页面住在
 
 **名字占用提醒**：包属性 ``views.shell`` 是**函数** ``shell``，不是
 ``views/shell.py`` 模块——静态导入时模块属性先置、后置的名字绑定把它覆盖了。
+``views.dashboard`` 同理（``dashboard`` 函数遮蔽 ``views/dashboard.py`` 模块）。
 要拿那个**模块**请用 ``importlib.import_module("services.admin_web.views.shell")``
 或 ``sys.modules["services.admin_web.views.shell"]``；
 ``from services.admin_web.views.shell import shell`` 取到的仍然是**函数**。
