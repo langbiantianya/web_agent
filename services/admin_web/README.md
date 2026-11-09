@@ -135,7 +135,11 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
 - `/admin/agents`：租户内 Agent、模型、提示词、工具与 Skill 绑定。
 - `/admin/skills`：技能草稿/发布状态、正文修订和归档。
 - `/admin/mcp`：MCP 连接、启停、删除和工具目录刷新。
-- `/admin/llm`：LLM 接口优先级、启停和只写 API Key。
+- `/admin/llm`：LLM 接口优先级、默认模型、启停和只写 API Key；页面说明统一走
+  OpenAI 兼容协议，内置 DeepSeek、阿里百炼的接入预设，可从下拉框快速填入表单。
+  模型输入框用 `<datalist>` 同时支持下拉候选与自由输入；「获取模型列表」调用
+  `GET {base_url}/models`，「测试连接」再发一次 `max_tokens=16` 的最小对话，
+  详见 `llm_probe.py`（编辑态 API Key 留空表示沿用库里已存密钥）。
 - `/admin/audit`：按 run、工具、来源和结果筛选脱敏工具审计。
 - `/admin/oauth-providers`：动态配置客户端和管理端 OIDC Provider，包括 issuer、
   endpoints、client id/secret、scopes、claim、角色同步时效和登录用途。

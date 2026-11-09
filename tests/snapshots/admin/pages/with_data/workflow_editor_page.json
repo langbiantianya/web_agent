@@ -51,7 +51,7 @@
         },
         {
           "attrs": {
-            "src": "/admin/static/admin-ui.js?v=login-slide-20261107-3"
+            "src": "/admin/static/admin-ui.js?v=llm-probe-20261109-1"
           },
           "children": [],
           "tag": "script"

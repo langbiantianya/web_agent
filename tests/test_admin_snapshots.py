@@ -254,11 +254,12 @@ MCP_ROW = SimpleNamespace(
     version=4,
 )
 
-# llm_page 的 rows：读 code/name/base_url/priority/enabled（views/llm.py）。
+# llm_page 的 rows：读 code/name/base_url/model/priority/enabled（views/llm.py）。
 LLM_ROW = SimpleNamespace(
     code="snapshot-llm",
     name="Snapshot LLM",
     base_url="https://llm.example.com/v1",
+    model="snapshot-model",
     priority=10,
     enabled=True,
     version=1,

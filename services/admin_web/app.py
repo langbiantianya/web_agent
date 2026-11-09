@@ -95,6 +95,11 @@ async def security_headers(request: Request, call_next):
     )
     if response.headers.get("content-type", "").startswith("text/html"):
         response.headers.setdefault("Cache-Control", "no-store")
+    elif request.url.path.startswith("/admin/static/"):
+        # 静态资源只要求「再验证」（ETag/Last-Modified 命中就是 304），不要求
+        # 重新下载：不给这个头，浏览器会按启发式新鲜度直接复用缓存，页面行为
+        # 就会和刚部署的代码对不上（例如新加的按钮点了没反应）。
+        response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
 

@@ -31,6 +31,7 @@ class LlmEndpointCreate(BaseModel):
     code: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_\-]+$")
     name: str = Field(default="", max_length=128)
     base_url: str = Field(min_length=1, max_length=512)
+    model: str = Field(default="", max_length=128)
     api_key: str = Field(default="", max_length=512, description="明文仅用于写入")
     priority: int = Field(default=100, ge=0, le=1_000_000)
     enabled: bool = True
@@ -47,6 +48,7 @@ class LlmEndpointUpdate(BaseModel):
 
     name: str | None = Field(default=None, max_length=128)
     base_url: str | None = Field(default=None, max_length=512)
+    model: str | None = Field(default=None, max_length=128)
     api_key: str | None = Field(default=None, max_length=512)
     priority: int | None = Field(default=None, ge=0, le=1_000_000)
     enabled: bool | None = None
@@ -65,6 +67,7 @@ class LlmEndpointOut(ORMBase):
     code: str
     name: str
     base_url: str
+    model: str
     priority: int
     enabled: bool
     version: int

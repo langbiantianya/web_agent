@@ -22,6 +22,11 @@ class LlmEndpoint(Base):
     code: Mapped[str] = mapped_column(sa.String(64), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     base_url: Mapped[str] = mapped_column(sa.String(512), nullable=False)
+    # 该端点的默认模型（如 ``deepseek-chat`` / ``qwen-plus``）。同一个 Key 下的
+    # 模型名各家不同，所以跟着端点走；空串表示「还没选」，管理端会提示去拉列表。
+    model: Mapped[str] = mapped_column(
+        sa.String(128), nullable=False, default="", server_default=""
+    )
     api_key_cipher: Mapped[str] = mapped_column(sa.String(512), nullable=False)
     # 数值越小越先尝试；相同 priority 时按 id 保证顺序稳定。
     priority: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=100)

@@ -658,6 +658,156 @@ async def test_business_pages_are_registered_for_platform_super_admin():
         await client.aclose()
 
 
+async def test_llm_page_documents_openai_compatible_presets():
+    """LLM 页说明走 OpenAI 兼容协议，并给出 DeepSeek/阿里百炼的快捷预设。"""
+    client, _, _, _ = await _create_seeded_logged_in_super_admin()
+    try:
+        page = await client.get("/admin/llm")
+        assert page.status_code == 200
+        assert "OpenAI-compatible" in page.text
+        # 预设下拉框由 admin-ui.js 绑定，页面只负责渲染 data-* 与挂钩属性。
+        assert 'data-llm-preset="picker"' in page.text
+        for preset in (
+            "https://api.deepseek.com/v1",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ):
+            assert preset in page.text
+        # 模型框是「下拉候选 + 自由输入」：input 挂 datalist，按钮带探测挂钩。
+        assert 'name="model"' in page.text
+        assert 'list="llm-model-new"' in page.text
+        assert 'data-llm-fetch="llm-model-new"' in page.text
+        assert 'data-llm-test="llm-model-new"' in page.text
+        script = await client.get("/admin/static/admin-ui.js")
+        assert script.status_code == 200
+        assert 'select[data-llm-preset]' in script.text
+        assert "form.elements.namedItem" in script.text
+        assert '"/admin/llm/probe"' in script.text
+    finally:
+        await client.aclose()
+
+
+async def test_llm_probe_lists_models_and_runs_minimal_chat(monkeypatch):
+    """「获取模型」与「测试连接」共用一个探测接口，且不会把密钥打进结果。"""
+    from app.models.admin_control import AdminAuditEvent
+    from app.models.llm_endpoint import LlmEndpoint
+    from services.admin_web.llm_probe import LlmProbeError, ProbeResult
+    from services.admin_web.routes import llm as llm_routes
+
+    client, _, _, csrf = await _create_seeded_logged_in_super_admin()
+    tag = uuid.uuid4().hex[:8]
+    code = f"probe-{tag}"
+    seen: dict[str, str] = {}
+
+    async def fake_models(base_url: str, api_key: str) -> list[str]:
+        seen["models"] = f"{base_url}|{api_key}"
+        return ["deepseek-chat", "deepseek-reasoner"]
+
+    async def fake_chat(base_url: str, api_key: str, model: str) -> ProbeResult:
+        seen["chat"] = f"{api_key}|{model}"
+        return ProbeResult(latency_ms=12, model=model, reply="pong")
+
+    monkeypatch.setattr(llm_routes, "fetch_models", fake_models)
+    monkeypatch.setattr(llm_routes, "probe_chat", fake_chat)
+    try:
+        created = await client.post(
+            "/admin/llm",
+            data={
+                "csrf_token": csrf,
+                "code": code,
+                "name": "Probe endpoint",
+                "base_url": "https://probe.example.com/v1",
+                "model": "deepseek-chat",
+                "api_key": "probe-secret",
+                "priority": "90",
+            },
+        )
+        assert created.status_code == 303, created.text
+        async with AdminSessionLocal() as db:
+            stored = await db.scalar(
+                sa.select(LlmEndpoint).where(LlmEndpoint.code == code)
+            )
+            assert stored is not None and stored.model == "deepseek-chat"
+
+        # 1) 只列模型：编辑态留空 API Key ⇒ 用库里已存密钥。
+        listed = await client.post(
+            "/admin/llm/probe",
+            data={"csrf_token": csrf, "mode": "models", "code": code},
+        )
+        assert listed.status_code == 200, listed.text
+        assert listed.json()["models"] == ["deepseek-chat", "deepseek-reasoner"]
+        assert seen["models"] == "https://probe.example.com/v1|probe-secret"
+        assert "probe-secret" not in listed.text
+
+        # 2) 测试连接：拉列表 + 一次最小对话，模型用表单里选的那个。
+        tested = await client.post(
+            "/admin/llm/probe",
+            data={
+                "csrf_token": csrf,
+                "mode": "test",
+                "code": code,
+                "model": "deepseek-reasoner",
+            },
+        )
+        assert tested.status_code == 200, tested.text
+        body = tested.json()
+        assert body["ok"] is True
+        assert body["model"] == "deepseek-reasoner"
+        assert body["latency_ms"] == 12
+        assert body["models"] == ["deepseek-chat", "deepseek-reasoner"]
+        assert seen["chat"] == "probe-secret|deepseek-reasoner"
+
+        # 3) 失败也走 JSON，并把原因带出来；审计里同样只留短原因。
+        async def failing_models(base_url: str, api_key: str) -> list[str]:
+            raise LlmProbeError("GET /models failed: HTTP 401")
+
+        monkeypatch.setattr(llm_routes, "fetch_models", failing_models)
+        failed = await client.post(
+            "/admin/llm/probe",
+            data={"csrf_token": csrf, "mode": "models", "code": code},
+        )
+        assert failed.status_code == 400
+        assert failed.json() == {
+            "ok": False,
+            "error": "GET /models failed: HTTP 401",
+            "models": [],
+        }
+
+        # 4) 402/429 只说明额度/限流不够：地址与密钥已通过列表验证，
+        #    结果单独标 limited，并把已拿到的模型列表带回去。
+        monkeypatch.setattr(llm_routes, "fetch_models", fake_models)
+
+        async def limited_chat(
+            base_url: str, api_key: str, model: str
+        ) -> ProbeResult:
+            raise LlmProbeError(
+                "POST /chat/completions failed: HTTP 429 quota", status_code=429
+            )
+
+        monkeypatch.setattr(llm_routes, "probe_chat", limited_chat)
+        limited = await client.post(
+            "/admin/llm/probe",
+            data={"csrf_token": csrf, "mode": "test", "code": code},
+        )
+        assert limited.status_code == 400
+        limited_body = limited.json()
+        assert limited_body["limited"] is True
+        assert limited_body["models"] == ["deepseek-chat", "deepseek-reasoner"]
+        assert "429" in limited_body["error"]
+
+        async with AdminSessionLocal() as db:
+            outcomes = set(
+                await db.scalars(
+                    sa.select(AdminAuditEvent.outcome).where(
+                        AdminAuditEvent.action == "llm.probe",
+                        AdminAuditEvent.target_id == code,
+                    )
+                )
+            )
+            assert {"success", "denied"} <= outcomes
+    finally:
+        await client.aclose()
+
+
 async def test_admin_appearance_exposes_three_persisted_cloud_themes():
     """外观页提供三套可辨识主题，并持久化主题与明暗模式。"""
     client, _, _, csrf = await _create_seeded_logged_in_super_admin()
@@ -665,8 +815,12 @@ async def test_admin_appearance_exposes_three_persisted_cloud_themes():
         page = await client.get("/admin/preferences")
         assert page.status_code == 200
         assert 'role="radiogroup"' in page.text
-        assert "/admin/static/admin.css?v=login-slide-20261107-3" in page.text
-        assert "/admin/static/admin-ui.js?v=login-slide-20261107-3" in page.text
+        # 静态资源 URL 必须就是 shell 导出的那份（版本号随脚本一起换），
+        # 别把版本号抄进测试——否则每次改前端都要改测试，还容易漏。
+        from services.admin_web.views.shell import ADMIN_STYLESHEET, ADMIN_UI_SCRIPT
+
+        assert ADMIN_STYLESHEET in page.text
+        assert ADMIN_UI_SCRIPT in page.text
         assert 'data-admin-locale="zh-CN"' in page.text
         assert 'data-admin-locale="en"' in page.text
         assert "brand-mark" not in page.text

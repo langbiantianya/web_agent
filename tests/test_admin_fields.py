@@ -259,6 +259,33 @@ def test_form_skips_fields_not_in_mode() -> None:
     assert 'name="name"' in edit_html
 
 
+def test_field_renders_datalist_reference() -> None:
+    """``list_id`` 必须落到 ``list=`` 上，模型框才有多选兼手输的能力。"""
+    element = render_field(
+        Field("model", "Model", list_id="llm-model-x"), "deepseek-chat", mode="create"
+    )
+    assert 'list="llm-model-x"' in element.to_html()
+    # 没配 list_id 的字段不能凭空多出 list 属性。
+    assert "list=" not in render_field(Field("name", "Name"), None, mode="create").to_html()
+
+
+def test_form_renders_actions_between_fields_and_submit() -> None:
+    """``actions`` 必须留在 form 内部、字段之后——按钮才读得到表单里的值。"""
+    from ludic.html import button, div
+
+    element = render_form(
+        [Field("name", "Name")],
+        mode="create",
+        values={},
+        csrf="t",
+        action="/admin/llm",
+        submit_label="Create endpoint",
+        actions=div(button("Fetch models", type="button"), class_="row-actions"),
+    ).to_html()
+    assert element.index('name="name"') < element.index("Fetch models")
+    assert element.index("Fetch models") < element.index("Create endpoint")
+
+
 def test_form_contains_csrf_action_and_submit_label() -> None:
     element = render_form(
         [Field("name", "Name")],
@@ -623,11 +650,18 @@ def test_field_order_is_explicit_for_every_resource() -> None:
         "command",
         "timeout_sec",
     ]
-    assert [f.name for f in LLM_FIELDS] == ["name", "base_url", "priority", "api_key"]
+    assert [f.name for f in LLM_FIELDS] == [
+        "name",
+        "base_url",
+        "model",
+        "priority",
+        "api_key",
+    ]
     assert [f.name for f in LLM_CREATE_FIELDS] == [
         "code",
         "name",
         "base_url",
+        "model",
         "api_key",
         "priority",
     ]

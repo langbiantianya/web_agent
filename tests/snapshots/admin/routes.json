@@ -242,6 +242,13 @@
     "methods": [
       "POST"
     ],
+    "name": "llm_probe",
+    "path": "/admin/llm/probe"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
     "name": "llm_toggle",
     "path": "/admin/llm/{code}/toggle"
   },

@@ -77,6 +77,10 @@ class Field:
     ``edit_*`` 系列**只在编辑态生效**（``mode="edit"``），创建态一律用
     同名的默认项。
 
+    ``list_id`` 让普通输入框挂上 ``<datalist>``（HTML 原生「下拉候选 +
+    自由输入」）：值是要引用的 datalist 的 id，空串表示不挂。每个表单各自
+    一份 datalist——同一页上不同端点的模型候选不能互相串。
+
     另外 ``kind`` 会被原样写进控件的 ``type=`` 属性（``text`` 除外，它走
     HTML 默认类型；``textarea`` / ``select`` 不写 ``type``），所以
     ``kind="checkbox"`` 会生成一个语义错误的控件——这套抽象只覆盖既有
@@ -100,6 +104,7 @@ class Field:
     edit_required: bool | None = None
     edit_min_value: str | None = None
     edit_max_value: str | None = None
+    list_id: str = ""
 
 
 class _Input(input_):
@@ -218,6 +223,9 @@ def _control(field: Field, value: object | None, *, mode: str) -> Any:
         attrs["min"] = min_value
     if max_value:
         attrs["max"] = max_value
+    if field.list_id:
+        # 只有 input 系支持 list；datalist 本身由调用方渲染。
+        attrs["list"] = field.list_id
     if value is not None:
         # bool 交给 ludic 的 bool 分支（False 不渲染该属性、True 渲染成
         # value="value"），与既有表单一致；不能 str() 成 "False"。
@@ -267,6 +275,7 @@ def render_form(
     action: str,
     submit_label: str,
     layout: str = "grid",
+    actions: Any | None = None,
 ) -> Any:
     """渲染整个表单。
 
@@ -287,6 +296,11 @@ def render_form(
 
     ``layout`` 是约定值：``"grid"``（创建表单，双列栅格）与 ``"stack"``
     （编辑表单，纵向堆叠）。取值只影响外层 class。
+
+    ``actions`` 是**字段之后、提交按钮之前**的一块可选节点（例如「拉取
+    模型列表 / 测试连接」这类页面专有的辅助按钮）。它必须留在 ``form``
+    内部，按钮才拿得到同一表单里的 ``base_url`` / ``api_key`` / ``model``；
+    默认 ``None`` 时不渲染，其它页面的元素树不变。
     """
     return form(
         _csrf(csrf),
@@ -295,6 +309,7 @@ def render_form(
             for field in fields
             if mode in field.modes
         ),
+        *([actions] if actions is not None else []),
         button(submit_label, type="submit", class_="btn btn-primary"),
         action=action,
         method="post",

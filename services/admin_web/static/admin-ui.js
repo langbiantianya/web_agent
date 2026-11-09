@@ -39,6 +39,7 @@
     "Administrator identity": "管理员身份",
     Agent: "智能体",
     Agents: "智能体",
+    "Alibaba Bailian (DashScope)": "阿里百炼（DashScope）",
     Any: "任意",
     Appearance: "外观",
     "Apply filters": "应用筛选",
@@ -67,6 +68,8 @@
     "Cloud Control Plane": "云控制平面",
     "Choose a cloud-console visual language. Preferences are stored server-side for this administrator.":
       "选择云控制台视觉风格。主题偏好会保存在当前管理员的账户中。",
+    "Choosing a preset fills the endpoint code, name and base URL; it never fills the API key or the model.":
+      "选择预设会自动填入端点编码、名称和基础 URL；API 密钥与模型不会被填。",
     Code: "代码",
     "Color mode": "颜色模式",
     Comfortable: "舒适",
@@ -92,6 +95,7 @@
     "Create workflow": "创建工作流",
     Created: "已创建",
     "Current mappings": "当前映射",
+    "Custom endpoint (fill in manually)": "自定义端点（手动填写）",
     Dark: "深色",
     dark: "深色",
     "Definition JSON": "定义 JSON",
@@ -121,9 +125,12 @@
     Enabled: "已启用",
     enabled: "已启用",
     Endpoint: "端点",
+    "Endpoints are called with the OpenAI-compatible protocol (POST /v1/chat/completions), so DeepSeek, Alibaba Bailian, Qwen, vLLM and self-hosted services all work. Lower priority numbers are attempted first. API keys remain write-only.":
+      "端点统一走 OpenAI 兼容协议（POST /v1/chat/completions），可接入 DeepSeek、阿里百炼、Qwen、vLLM 或自建兼容服务。优先级数字越小越先尝试。API 密钥保持只写。",
     "External role": "外部角色",
     "External value": "外部值",
     Failed: "失败",
+    "Fetch models": "获取模型列表",
     "Fluent Design": "Fluent 设计",
     "Back to sign in": "返回登录",
     "Back to OAuth": "返回 OAuth 登录",
@@ -150,8 +157,6 @@
     light: "浅色",
     "LLM endpoints": "LLM 端点",
     "Login scopes": "登录 Scope",
-    "Lower priority numbers are attempted first. API keys remain write-only.":
-      "优先级数字越小越先尝试。API 密钥保持只写。",
     "Manage graph definitions directly against the shared workflow repository.":
       "直接针对共享工作流仓库管理图定义。",
     "Manage platform configuration, access policy, and operations.":
@@ -195,6 +200,7 @@
     Provider: "身份提供方",
     "Provider code": "身份提供方代码",
     "Provider enabled": "启用身份提供方",
+    "Provider preset": "服务商预设",
     Published: "已发布",
     published: "已发布",
     "Quick actions": "快捷操作",
@@ -278,6 +284,7 @@
     "System prompt": "系统提示词",
     "stdio command": "stdio 命令",
     Theme: "主题",
+    "Test connection": "测试连接",
     "Timeout seconds": "超时时间（秒）",
     "Token auth method": "令牌认证方式",
     "Token endpoint": "令牌端点",
@@ -565,6 +572,154 @@
     });
   }
 
+  /**
+   * LLM 接入预设：选中下拉框后把内置的编码/名称/基础 URL 填进创建表单。
+   *
+   * 下拉框在标题区、表单在下面的「Create resource」卡片里，所以这里按
+   * action 找表单而不是用 select.form（那个值是 null）。只填非敏感字段：
+   * API Key 永远由使用者自己粘贴，预设里没有、也不应该有密钥。
+   */
+  function bindLlmPresetPicker() {
+    const selects = document.querySelectorAll("select[data-llm-preset]");
+    if (!selects.length) return;
+    const form = document.querySelector('form[action="/admin/llm"]');
+    if (!form) return;
+    for (const select of selects) {
+      select.addEventListener("change", () => {
+        const option = select.selectedOptions[0];
+        // 「自定义」项没有 data-code：不动用户已经填好的内容。
+        if (!option || !option.dataset.code) return;
+        const values = {
+          code: option.dataset.code,
+          name: option.dataset.name || "",
+          base_url: option.dataset.baseUrl || "",
+        };
+        for (const [field, value] of Object.entries(values)) {
+          const control = form.elements.namedItem(field);
+          if (control && "value" in control) control.value = value;
+        }
+        const apiKey = form.elements.namedItem("api_key");
+        if (apiKey && typeof apiKey.focus === "function") apiKey.focus();
+      });
+    }
+  }
+
+  /**
+   * LLM 端点的模型候选与连通性测试。
+   *
+   * 「获取模型列表」与「测试连接」都打 ``POST /admin/llm/probe``：前者只列
+   * ``/models``，后者再发一次最小对话。表单里留空的 API Key 表示沿用库里
+   * 已存的密钥——这一点由按钮上的 ``data-llm-endpoint`` 告诉服务端。
+   */
+  const PROBE_MESSAGES = {
+    en: {
+      fetching: "Fetching models…",
+      testing: "Testing…",
+      models: (count) => `${count} model${count === 1 ? "" : "s"} found`,
+      passed: (ms, model) => `Passed · ${ms} ms · ${model || "ok"}`,
+      limited: (detail) => `Reachable, chat limited · ${detail}`,
+      failed: (detail) => `Failed · ${detail}`,
+      network: "request failed",
+    },
+    "zh-CN": {
+      fetching: "正在获取模型…",
+      testing: "正在测试…",
+      models: (count) => `已获取 ${count} 个模型`,
+      passed: (ms, model) => `通过 · ${ms} ms · ${model || "ok"}`,
+      limited: (detail) => `连接正常，对话受限 · ${detail}`,
+      failed: (detail) => `失败 · ${detail}`,
+      network: "请求失败",
+    },
+  };
+
+  function probeMessages() {
+    return document.documentElement.lang === "zh-CN"
+      ? PROBE_MESSAGES["zh-CN"]
+      : PROBE_MESSAGES.en;
+  }
+
+  function fillModelOptions(list, models) {
+    if (!list) return;
+    list.replaceChildren(
+      ...models.map((id) => {
+        const option = document.createElement("option");
+        option.value = id;
+        return option;
+      }),
+    );
+  }
+
+  function bindLlmProbe() {
+    const buttons = document.querySelectorAll("[data-llm-fetch], [data-llm-test]");
+    if (!buttons.length) return;
+    for (const button of buttons) {
+      const target = button.dataset.llmFetch || button.dataset.llmTest;
+      const mode = button.dataset.llmTest ? "test" : "models";
+      button.addEventListener("click", async () => {
+        const form = button.form;
+        if (!form) return;
+        const list = document.getElementById(target);
+        const status = document.querySelector(`[data-llm-status="${target}"]`);
+        const text = probeMessages();
+        const field = (name) => {
+          const control = form.elements.namedItem(name);
+          return control && "value" in control ? control.value : "";
+        };
+        const data = new FormData();
+        data.set("mode", mode);
+        data.set("code", button.dataset.llmEndpoint || "");
+        data.set("base_url", field("base_url"));
+        data.set("api_key", field("api_key"));
+        data.set("model", field("model"));
+        data.set("csrf_token", field("csrf_token"));
+        button.disabled = true;
+        if (status) {
+          status.textContent = mode === "test" ? text.testing : text.fetching;
+        }
+        try {
+          const response = await fetch("/admin/llm/probe", {
+            method: "POST",
+            body: data,
+            credentials: "same-origin",
+            headers: { Accept: "application/json" },
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.ok) {
+            // 402/429 只说明账号额度/限流不够，地址与密钥其实已经验证过：
+            // 列表照样回填，提示文案也换成「连接正常、对话受限」。
+            fillModelOptions(
+              list,
+              Array.isArray(payload.models) ? payload.models : [],
+            );
+            if (status) {
+              status.textContent = payload.limited
+                ? text.limited(payload.error || "")
+                : text.failed(payload.error || `HTTP ${response.status}`);
+            }
+            return;
+          }
+          const models = Array.isArray(payload.models) ? payload.models : [];
+          fillModelOptions(list, models);
+          const control = form.elements.namedItem("model");
+          if (!field("model") && models.length && control && "value" in control) {
+            // 候选有了但模型还空着：先填第一个，用户仍可改成任意值。
+            control.value = models[0];
+          }
+          if (status) {
+            status.textContent =
+              mode === "test"
+                ? text.passed(payload.latency_ms || 0, payload.model || "")
+                : text.models(models.length);
+          }
+        } catch {
+          if (status) status.textContent = text.failed(text.network);
+        } finally {
+          button.disabled = false;
+        }
+      });
+    }
+  }
+
   const locale = currentLocale();
   const appearance = readAppearance();
   applyAppearance(appearance);
@@ -575,5 +730,7 @@
     bindLocaleSwitch(locale);
     bindAppearancePersistence(appearance);
     bindLoginControls();
+    bindLlmPresetPicker();
+    bindLlmProbe();
   });
 })();

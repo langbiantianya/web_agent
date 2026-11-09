@@ -57,8 +57,14 @@ def _management_page(
     rows: list[Any],
     flash: str | None = None,
     flash_kind: str = "info",
+    notes: Iterable[Any] = (),
 ) -> Any:
-    """渲染业务管理页共用的标题、创建表单和数据表。"""
+    """渲染业务管理页共用的标题、创建表单和数据表。
+
+    ``notes`` 是标题下方、创建表单上方的**页面级补充说明**（默认空，
+    不渲染任何节点）。它是页面自己的内容，只有需要「在标题区交代协议、
+    预设或前置条件」的页面才传；传空元组的页面元素树与以前完全一致。
+    """
     table_section = section(
         h2("Configured resources"),
         div(
@@ -86,7 +92,7 @@ def _management_page(
         flash=flash,
         flash_kind=flash_kind,
         content=div(
-            section(h1(title_text), p(lead, class_="lead")),
+            section(h1(title_text), p(lead, class_="lead"), *notes),
             *sections,
             class_="stack",
         ),
