@@ -11,13 +11,22 @@ workflows_page`` 这类调用点可用——调用方不需要知道页面住在
 全部搬完后（Task 7）删掉那个过渡模块。
 """
 
+from services.admin_web.views.shell import (
+    ADMIN_STYLESHEET,
+    ADMIN_UI_SCRIPT,
+    NAV_GROUP_ORDER,
+    _flash,
+    _locale_switch,
+    _nav,
+    error_page,
+    shell,
+)
 from services.admin_web.views_legacy import (
     access_components_page,
     access_pages_page,
     agents_page,
     audit_page,
     dashboard,
-    error_page,
     llm_page,
     login_page,
     mappings_page,
@@ -26,8 +35,34 @@ from services.admin_web.views_legacy import (
     platform_admins_page,
     preferences_page,
     roles_page,
-    shell,
     skills_page,
     workflow_editor_page,
     workflows_page,
 )
+
+__all__ = [
+    "ADMIN_STYLESHEET",
+    "ADMIN_UI_SCRIPT",
+    "NAV_GROUP_ORDER",
+    "_flash",
+    "_locale_switch",
+    "_nav",
+    "access_components_page",
+    "access_pages_page",
+    "agents_page",
+    "audit_page",
+    "dashboard",
+    "error_page",
+    "llm_page",
+    "login_page",
+    "mappings_page",
+    "mcp_page",
+    "oauth_providers_page",
+    "platform_admins_page",
+    "preferences_page",
+    "roles_page",
+    "shell",
+    "skills_page",
+    "workflow_editor_page",
+    "workflows_page",
+]
