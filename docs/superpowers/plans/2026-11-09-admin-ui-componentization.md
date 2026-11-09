@@ -680,7 +680,7 @@
   - `_locale_switch() -> Any`
   - `_nav(pages: Iterable[AdminPageDefinition]) -> Any`
   - `shell(*, title_text, principal, csrf, theme, color_mode, density, pages, content, flash=None, flash_kind="info", extra_scripts=None, extra_styles=None) -> Any`
-  - `error_page(title_text: str, message: str, status_hint: str = "403") -> Any`
+  - `error_page(*, title_text: str, message: str, status_hint: int = 403) -> Any`
 
 - [ ] **Step 1: 创建 `views/shell.py`**
 
@@ -1413,8 +1413,18 @@
   静态检查确认没有未使用的导入（若本机没有 pyflakes，用
   `.venv\Scripts\python.exe -c "import ast,sys;..."` 人工核对亦可）。
 
-  `views/workflows.py` 额外需要 `views.shell.shell`（`workflow_editor_page` 自己拼外壳，
-  不走 `_management_page`），`views/audit.py` 需要 `views.shell.shell`。
+  `views/workflows.py` 额外需要外壳（`workflow_editor_page` 自己拼外壳，
+  不走 `_management_page`），`views/audit.py` 同样需要外壳。
+
+  > **执行修订（2026-11-09）**：原文写「需要 `views.shell.shell`」是**错的**。
+  > 包属性 `services.admin_web.views.shell` 被同名**函数** `shell` 遮蔽
+  > （模块导入先置属性，后置的名字绑定覆盖它），所以 `views.shell.shell` 会抛
+  > `AttributeError: 'function' object has no attribute 'shell'`。
+  > 正确写法是**具名导入**：
+  > ```python
+  > from services.admin_web.views.shell import shell
+  > ```
+  > 目标模块是 `sys.modules['services.admin_web.views.shell']`，函数是它的 `shell` 属性。
 
 - [ ] **Step 2: 从 `views_legacy.py` 删掉已搬走的函数**
 
