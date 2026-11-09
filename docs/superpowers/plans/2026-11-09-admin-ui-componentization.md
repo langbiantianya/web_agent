@@ -50,12 +50,13 @@
 | `services/admin_web/views/components.py` | `_metric` `_csrf` `_toggle_and_delete` `_management_page` | ~150 |
 | `services/admin_web/views/fields.py` | `Field` 描述与表单渲染 | ~200 |
 | `services/admin_web/views/{login,dashboard,workflows,agents,skills,mcp,llm,audit,oauth_providers,access,platform_admins,preferences}.py` | 各业务页面 | 各 ≤300 |
-| `tests/admin_snapshot.py` | 元素树归一化、路由表提取、快照读写 | ~110 |
-| `tests/test_admin_snapshots.py` | 页面结构快照 + 路由表快照 | ~150 |
+| `tests/admin_snapshot.py` | 元素树归一化、路由表提取、快照读写 | ~130 |
+| `tests/test_admin_snapshots.py` | 页面结构快照（空/非空两套）+ 路由表快照 | ~600 |
 | `tests/test_admin_structure.py` | 包结构契约（模块清单、导出、单文件行数上限） | ~90 |
 | `tests/test_admin_fields.py` | `Field` 与表单渲染的单元测试 | ~140 |
-| `tests/snapshots/admin/routes.json` | 路由表基线 | — |
-| `tests/snapshots/admin/pages/*.json` | 16 个页面的元素树基线 | — |
+| `tests/snapshots/admin/routes.json` | 路由表基线（含 route name） | — |
+| `tests/snapshots/admin/pages/*.json` | 17 个页面的元素树基线（空数据集） | — |
+| `tests/snapshots/admin/pages/with_data/*.json` | 16 个页面的元素树基线（非空数据集：一条代表性行 + nav 条目 + 一条 flash） | — |
 
 ---
 
@@ -181,7 +182,7 @@
 
   比对的是元素树（见 ``tests/admin_snapshot.py``），不是 HTML 文本。
   页面快照用**空数据集**渲染——重构会动的是页面骨架（表头、字段、按钮、
-  布局 class），数据行的渲染逻辑不在本次范围内，且已有测试覆盖。
+  布局 class）。
   """
 
   from __future__ import annotations
@@ -325,8 +326,19 @@
   .venv\Scripts\python.exe -m pytest tests/test_admin_snapshots.py -q -p pytest_asyncio.plugin -p pytest_timeout
   ```
 
-  Expected: 17 passed（16 个页面 + 1 个路由表），并生成
-  `tests/snapshots/admin/routes.json` 与 `tests/snapshots/admin/pages/` 下 16 个文件。
+  Expected: 34 passed（17 个空数据集页面 + 16 个非空数据集页面 + 1 个路由表），
+  并生成 `tests/snapshots/admin/routes.json`、`tests/snapshots/admin/pages/` 下 17 个文件，
+  以及 `tests/snapshots/admin/pages/with_data/` 下 16 个文件。
+
+  > **执行修订（2026-11-09，Task 1 完成后回写）**：原计划只做「空数据集」一套基线，
+  > 理由是「数据行的渲染逻辑不在本次范围内，且已有测试覆盖」。复审核实后半句**不成立**——
+  > `tests/test_admin_web.py` 对 `row-actions` / `status-badge` / `Edit configuration` /
+  > `Save changes` / `Leave blank to keep current key` / `nav-link` / `nav-list` /
+  > flash 文案零断言。空数据集渲染（`pages=[]` / `rows=[]` / 无 `flash`）使这些分支
+  > **根本不被渲染**，而 Task 8「消除创建/编辑双写」改的正是行内编辑表单——
+  > 重构改动最狠的地方恰好没有守卫。故追加「非空数据集」一套基线：每页给一条代表性数据
+  > （假对象字段集按 `views.py` 各页面函数的实际属性访问构造），并带上 nav 条目与一条 flash。
+  > `error_page` 不纳入非空基线（无数据参数、不走 `shell()`，非空版只会是空数据版的副本）。
 
 - [ ] **Step 4: 确认基线快照已入库且内容合理**
 
@@ -336,10 +348,11 @@
   .venv\Scripts\python.exe -c "import json;d=json.load(open('tests/snapshots/admin/routes.json',encoding='utf-8'));print(len(d),'条路由');print([r['path'] for r in d][:6])"
   ```
 
-  Expected: 17 个文件；路由条目数 > 50（现有约 50 个路由 + 静态挂载）；
-  前 6 条路径应是 `/admin/health`、`/admin/login`、`/admin/login/super-admin`、
-  `/admin/login/oauth/{provider_code}`、`/admin/auth/oauth/{provider_code}/callback`、
-  `/admin/logout` —— 与现有装饰器顺序一致。
+  Expected: 34 个文件；路由条目数 > 50（现有约 50 个路由 + 静态挂载）；
+  前 6 条路径应是 `/admin/static`（静态挂载，先于装饰器注册）、
+  `/admin/health`、`/admin/login`、`/admin/login/super-admin`、
+  `/admin/login/oauth/{provider_code}`、`/admin/auth/oauth/{provider_code}/callback`
+  —— 与现有注册顺序一致。
 
 - [ ] **Step 5: 提交**
 
