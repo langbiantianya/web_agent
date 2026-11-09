@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from services.admin_web.views.fields import Field, render_field, render_form
 
 
@@ -71,9 +73,12 @@ def test_field_passes_through_autocomplete_and_bounds() -> None:
 def test_absent_value_renders_no_value_attribute() -> None:
     """值缺失时**不**渲染 ``value=""``。
 
-    现有表单里 ``input_(name="tools")`` 渲染成 ``<input name="tools">``，
-    而不是 ``<input name="tools" value="">``——两者在 HTML 上不等价，
-    渲染快照会判为差异。所以「有没有值」必须由调用方显式决定。
+    ludic 1.0.3 会丢掉空字符串属性，所以「空 value」与「没有 value」在
+    **元素树**上完全一样——渲染快照比对的是元素树，守不到这层差别。组件的
+    ``_Input`` 只在 HTML 文本层补回 ``value=""``，所以这里断言的是 HTML：
+    值缺失时不带 ``value``，值是空字符串时带上 ``value=""``。
+
+    Task 8 接入真实表单后，这层差别要人工逐字核对 HTML。
     """
     element = render_field(Field("tools", "Tools"), None, mode="create")
     assert "value=" not in element.to_html()
@@ -101,6 +106,60 @@ def test_edit_mode_uses_edit_placeholder_and_rows() -> None:
     textarea_field = Field("prompt", "Prompt", kind="textarea", rows=8, edit_rows=10)
     assert 'rows="10"' in render_field(textarea_field, "", mode="edit").to_html()
     assert 'rows="8"' in render_field(textarea_field, "", mode="create").to_html()
+
+
+def test_edit_mode_uses_edit_label() -> None:
+    """编辑态用 edit_label，创建态用 label。
+
+    既有表单里 API key 的标签在编辑态是「Replacement API key」、创建态是
+    「API key」——差别必须能表达，否则只能把字段抄两遍。
+    """
+    field = Field(
+        "api_key",
+        "API key",
+        kind="password",
+        edit_label="Replacement API key",
+    )
+    edit_html = render_field(field, "", mode="edit").to_html()
+    create_html = render_field(field, "", mode="create").to_html()
+    assert "Replacement API key" in edit_html
+    assert "Replacement API key" not in create_html
+    assert "API key" in create_html
+
+
+def test_select_marks_current_value_as_selected() -> None:
+    """编辑态的 select 必须标出当前选中项，否则保存会把值改掉。
+
+    既有表单用 ``option(..., selected=...)``，True 与 False 都显式传；
+    创建态没有当前值，一个 selected 都不发。
+    """
+    field = Field(
+        "status",
+        "Status",
+        kind="select",
+        options=(("Published", "published"), ("Draft", "draft")),
+    )
+    edit_html = render_field(field, "draft", mode="edit").to_html()
+    assert re.findall(r'<option value="([^"]+)"([^>]*)>', edit_html) == [
+        ("published", ""),
+        ("draft", ' selected="selected"'),
+    ]
+
+    create_html = render_field(field, None, mode="create").to_html()
+    assert "selected" not in create_html
+
+
+def test_boolean_value_uses_ludic_bool_branch() -> None:
+    """bool 值不能变成 ``value="False"``，要走 ludic 的 bool 分支。
+
+    既有表单里 ``input_(name="x", value=False)`` 渲染成 ``<input name="x">``，
+    ``value=True`` 渲染成 ``<input name="x" value="value">``。
+    """
+    false_html = render_field(Field("flag", "Flag"), False, mode="edit").to_html()
+    assert "value=" not in false_html
+
+    true_html = render_field(Field("flag", "Flag"), True, mode="edit").to_html()
+    assert 'value="value"' in true_html
 
 
 def test_form_skips_fields_not_in_mode() -> None:
