@@ -1,0 +1,348 @@
+[
+  {
+    "methods": [],
+    "path": "/admin/static"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/health"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/login"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/login/super-admin"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/login/oauth/{provider_code}"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/auth/oauth/{provider_code}/callback"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/logout"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/workflows"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/workflows/{code}"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/workflows/validate"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/workflows"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/workflows/{code}/update"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/workflows/{code}/toggle"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/workflows/{code}/delete"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/agents"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/agents"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/agents/{code}/update"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/agents/{code}/toggle"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/agents/{code}/delete"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/skills"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/skills"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/skills/{code}/update"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/skills/{code}/archive"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/mcp"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/mcp"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/mcp/{code}/update"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/mcp/{code}/toggle"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/mcp/{code}/delete"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/mcp/{code}/refresh"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/llm"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/llm"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/llm/{code}/update"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/llm/{code}/toggle"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/llm/{code}/delete"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/audit"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/oauth-providers"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/oauth-providers"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/oauth-providers/{code}/update"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/oauth-providers/{code}/toggle"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/oauth-providers/{code}/delete"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/access/pages"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/access/pages/{page_code}/permissions"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/access/components"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/access/components/{page_code}/{component_code}/permissions"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/access/roles"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/access/mappings"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/access/mappings"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/platform-admins"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/platform-admins"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/platform-admins/{account_id}/delete"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/super-admin/forgot-password"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/super-admin/reset-my-password"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "path": "/admin/preferences"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "path": "/admin/preferences"
+  }
+]

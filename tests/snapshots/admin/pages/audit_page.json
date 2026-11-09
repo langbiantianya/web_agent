@@ -1,0 +1,642 @@
+{
+  "attrs": {
+    "data-color-mode": "light",
+    "data-density": "comfortable",
+    "data-theme": "fluent",
+    "lang": "en"
+  },
+  "children": [
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "charset": "utf-8"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {
+            "content": "width=device-width, initial-scale=1",
+            "name": "viewport"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {},
+          "children": [
+            {
+              "text": "Tool audit · web_agent Admin"
+            }
+          ],
+          "tag": "title"
+        },
+        {
+          "attrs": {
+            "href": "/admin/static/admin.css?v=login-slide-20261107-3",
+            "rel": "stylesheet"
+          },
+          "children": [],
+          "tag": "link"
+        },
+        {
+          "attrs": {
+            "src": "/admin/static/admin-ui.js?v=login-slide-20261107-3"
+          },
+          "children": [],
+          "tag": "script"
+        }
+      ],
+      "tag": "head"
+    },
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "class": "topbar"
+          },
+          "children": [
+            {
+              "attrs": {
+                "class": "brand-group"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "brand",
+                    "href": "/admin/"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "brand-name"
+                      },
+                      "children": [
+                        {
+                          "text": "web_agent"
+                        }
+                      ],
+                      "tag": "span"
+                    }
+                  ],
+                  "tag": "a"
+                },
+                {
+                  "attrs": {
+                    "class": "brand-subtitle"
+                  },
+                  "children": [
+                    {
+                      "text": "Cloud Control Plane"
+                    }
+                  ],
+                  "tag": "span"
+                }
+              ],
+              "tag": "div"
+            },
+            {
+              "attrs": {
+                "class": "header-actions"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "user-role"
+                  },
+                  "children": [
+                    {
+                      "text": "Platform owner"
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "class": "user-name"
+                  },
+                  "children": [
+                    {
+                      "text": "superAdmin"
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "aria-label": "Language",
+                    "class": "locale-switch",
+                    "role": "group"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "aria-pressed": "true",
+                        "class": "locale-button",
+                        "data-admin-locale": "en",
+                        "type": "button"
+                      },
+                      "children": [
+                        {
+                          "text": "EN"
+                        }
+                      ],
+                      "tag": "button"
+                    },
+                    {
+                      "attrs": {
+                        "aria-pressed": "false",
+                        "class": "locale-button",
+                        "data-admin-locale": "zh-CN",
+                        "type": "button"
+                      },
+                      "children": [
+                        {
+                          "text": "简中"
+                        }
+                      ],
+                      "tag": "button"
+                    }
+                  ],
+                  "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "class": "header-link",
+                    "href": "/admin/preferences"
+                  },
+                  "children": [
+                    {
+                      "text": "Preferences"
+                    }
+                  ],
+                  "tag": "a"
+                },
+                {
+                  "attrs": {
+                    "action": "/admin/logout",
+                    "class": "inline-form",
+                    "method": "post"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "name": "csrf_token",
+                        "type": "hidden",
+                        "value": "csrf-token-for-snapshot"
+                      },
+                      "children": [],
+                      "tag": "input"
+                    },
+                    {
+                      "attrs": {
+                        "class": "btn btn-secondary",
+                        "type": "submit"
+                      },
+                      "children": [
+                        {
+                          "text": "Sign out"
+                        }
+                      ],
+                      "tag": "button"
+                    }
+                  ],
+                  "tag": "form"
+                }
+              ],
+              "tag": "div"
+            }
+          ],
+          "tag": "header"
+        },
+        {
+          "attrs": {
+            "class": "admin-layout"
+          },
+          "children": [
+            {
+              "attrs": {
+                "aria-label": "Admin navigation",
+                "class": "sidebar"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "mobile-nav"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "mobile-menu-summary"
+                      },
+                      "children": [
+                        {
+                          "text": "Menu"
+                        }
+                      ],
+                      "tag": "summary"
+                    },
+                    {
+                      "attrs": {
+                        "class": "nav-groups"
+                      },
+                      "children": [],
+                      "tag": "div"
+                    }
+                  ],
+                  "tag": "details"
+                },
+                {
+                  "attrs": {
+                    "class": "nav-groups desktop-nav"
+                  },
+                  "children": [],
+                  "tag": "div"
+                }
+              ],
+              "tag": "nav"
+            },
+            {
+              "attrs": {
+                "class": "main-content",
+                "id": "main-content"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "empty"
+                  },
+                  "children": [
+                    {
+                      "text": ""
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "class": "stack"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "surface"
+                      },
+                      "children": [
+                        {
+                          "attrs": {},
+                          "children": [
+                            {
+                              "text": "Tool audit"
+                            }
+                          ],
+                          "tag": "h1"
+                        },
+                        {
+                          "attrs": {
+                            "class": "lead"
+                          },
+                          "children": [
+                            {
+                              "text": "0 redacted tool invocation records are visible to this tenant."
+                            }
+                          ],
+                          "tag": "p"
+                        },
+                        {
+                          "attrs": {
+                            "action": "/admin/audit",
+                            "class": "form-grid",
+                            "method": "get"
+                          },
+                          "children": [
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Run ID"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "min": "1",
+                                    "name": "run_id",
+                                    "type": "number"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Tool name"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "tool_name"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Source"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "source"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Any"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "value": "builtin"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Builtin"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "value": "skill"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Skill"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "value": "mcp"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "MCP"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    }
+                                  ],
+                                  "tag": "select"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Outcome"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "ok"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Any"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "value": "true"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Success"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "value": "false"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Failed"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    }
+                                  ],
+                                  "tag": "select"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {
+                                "class": "btn btn-primary",
+                                "type": "submit"
+                              },
+                              "children": [
+                                {
+                                  "text": "Apply filters"
+                                }
+                              ],
+                              "tag": "button"
+                            }
+                          ],
+                          "tag": "form"
+                        }
+                      ],
+                      "tag": "section"
+                    },
+                    {
+                      "attrs": {
+                        "class": "surface"
+                      },
+                      "children": [
+                        {
+                          "attrs": {},
+                          "children": [
+                            {
+                              "text": "Recent invocations"
+                            }
+                          ],
+                          "tag": "h2"
+                        },
+                        {
+                          "attrs": {
+                            "class": "table-scroll"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "class": "data-table"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "ID"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Run"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Tool"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Source"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Outcome"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Duration"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Created"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        }
+                                      ],
+                                      "tag": "tr"
+                                    }
+                                  ],
+                                  "tag": "thead"
+                                },
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "No audit records found."
+                                            }
+                                          ],
+                                          "tag": "td"
+                                        }
+                                      ],
+                                      "tag": "tr"
+                                    }
+                                  ],
+                                  "tag": "tbody"
+                                }
+                              ],
+                              "tag": "table"
+                            }
+                          ],
+                          "tag": "div"
+                        }
+                      ],
+                      "tag": "section"
+                    }
+                  ],
+                  "tag": "div"
+                }
+              ],
+              "tag": "main"
+            }
+          ],
+          "tag": "div"
+        }
+      ],
+      "tag": "body"
+    }
+  ],
+  "tag": "html"
+}

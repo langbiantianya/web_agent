@@ -1,0 +1,385 @@
+{
+  "attrs": {
+    "data-color-mode": "light",
+    "data-density": "comfortable",
+    "data-theme": "fluent",
+    "lang": "en"
+  },
+  "children": [
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "charset": "utf-8"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {
+            "content": "width=device-width, initial-scale=1",
+            "name": "viewport"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {},
+          "children": [
+            {
+              "text": "Page permissions · web_agent Admin"
+            }
+          ],
+          "tag": "title"
+        },
+        {
+          "attrs": {
+            "href": "/admin/static/admin.css?v=login-slide-20261107-3",
+            "rel": "stylesheet"
+          },
+          "children": [],
+          "tag": "link"
+        },
+        {
+          "attrs": {
+            "src": "/admin/static/admin-ui.js?v=login-slide-20261107-3"
+          },
+          "children": [],
+          "tag": "script"
+        }
+      ],
+      "tag": "head"
+    },
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "class": "topbar"
+          },
+          "children": [
+            {
+              "attrs": {
+                "class": "brand-group"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "brand",
+                    "href": "/admin/"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "brand-name"
+                      },
+                      "children": [
+                        {
+                          "text": "web_agent"
+                        }
+                      ],
+                      "tag": "span"
+                    }
+                  ],
+                  "tag": "a"
+                },
+                {
+                  "attrs": {
+                    "class": "brand-subtitle"
+                  },
+                  "children": [
+                    {
+                      "text": "Cloud Control Plane"
+                    }
+                  ],
+                  "tag": "span"
+                }
+              ],
+              "tag": "div"
+            },
+            {
+              "attrs": {
+                "class": "header-actions"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "user-role"
+                  },
+                  "children": [
+                    {
+                      "text": "Platform owner"
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "class": "user-name"
+                  },
+                  "children": [
+                    {
+                      "text": "superAdmin"
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "aria-label": "Language",
+                    "class": "locale-switch",
+                    "role": "group"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "aria-pressed": "true",
+                        "class": "locale-button",
+                        "data-admin-locale": "en",
+                        "type": "button"
+                      },
+                      "children": [
+                        {
+                          "text": "EN"
+                        }
+                      ],
+                      "tag": "button"
+                    },
+                    {
+                      "attrs": {
+                        "aria-pressed": "false",
+                        "class": "locale-button",
+                        "data-admin-locale": "zh-CN",
+                        "type": "button"
+                      },
+                      "children": [
+                        {
+                          "text": "简中"
+                        }
+                      ],
+                      "tag": "button"
+                    }
+                  ],
+                  "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "class": "header-link",
+                    "href": "/admin/preferences"
+                  },
+                  "children": [
+                    {
+                      "text": "Preferences"
+                    }
+                  ],
+                  "tag": "a"
+                },
+                {
+                  "attrs": {
+                    "action": "/admin/logout",
+                    "class": "inline-form",
+                    "method": "post"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "name": "csrf_token",
+                        "type": "hidden",
+                        "value": "csrf-token-for-snapshot"
+                      },
+                      "children": [],
+                      "tag": "input"
+                    },
+                    {
+                      "attrs": {
+                        "class": "btn btn-secondary",
+                        "type": "submit"
+                      },
+                      "children": [
+                        {
+                          "text": "Sign out"
+                        }
+                      ],
+                      "tag": "button"
+                    }
+                  ],
+                  "tag": "form"
+                }
+              ],
+              "tag": "div"
+            }
+          ],
+          "tag": "header"
+        },
+        {
+          "attrs": {
+            "class": "admin-layout"
+          },
+          "children": [
+            {
+              "attrs": {
+                "aria-label": "Admin navigation",
+                "class": "sidebar"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "mobile-nav"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "mobile-menu-summary"
+                      },
+                      "children": [
+                        {
+                          "text": "Menu"
+                        }
+                      ],
+                      "tag": "summary"
+                    },
+                    {
+                      "attrs": {
+                        "class": "nav-groups"
+                      },
+                      "children": [],
+                      "tag": "div"
+                    }
+                  ],
+                  "tag": "details"
+                },
+                {
+                  "attrs": {
+                    "class": "nav-groups desktop-nav"
+                  },
+                  "children": [],
+                  "tag": "div"
+                }
+              ],
+              "tag": "nav"
+            },
+            {
+              "attrs": {
+                "class": "main-content",
+                "id": "main-content"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "empty"
+                  },
+                  "children": [
+                    {
+                      "text": ""
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "class": "surface"
+                  },
+                  "children": [
+                    {
+                      "attrs": {},
+                      "children": [
+                        {
+                          "text": "Page permissions"
+                        }
+                      ],
+                      "tag": "h1"
+                    },
+                    {
+                      "attrs": {
+                        "class": "lead"
+                      },
+                      "children": [
+                        {
+                          "text": "Bind known pages to RBAC object/action permissions. UI bindings never replace API authorization."
+                        }
+                      ],
+                      "tag": "p"
+                    },
+                    {
+                      "attrs": {
+                        "class": "chip-list"
+                      },
+                      "children": [],
+                      "tag": "div"
+                    },
+                    {
+                      "attrs": {
+                        "class": "table-scroll"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "class": "data-table"
+                          },
+                          "children": [
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Page"
+                                        }
+                                      ],
+                                      "tag": "th"
+                                    },
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Group"
+                                        }
+                                      ],
+                                      "tag": "th"
+                                    },
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Permissions"
+                                        }
+                                      ],
+                                      "tag": "th"
+                                    }
+                                  ],
+                                  "tag": "tr"
+                                }
+                              ],
+                              "tag": "thead"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [],
+                              "tag": "tbody"
+                            }
+                          ],
+                          "tag": "table"
+                        }
+                      ],
+                      "tag": "div"
+                    }
+                  ],
+                  "tag": "section"
+                }
+              ],
+              "tag": "main"
+            }
+          ],
+          "tag": "div"
+        }
+      ],
+      "tag": "body"
+    }
+  ],
+  "tag": "html"
+}

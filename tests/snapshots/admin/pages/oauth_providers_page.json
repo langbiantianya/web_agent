@@ -1,0 +1,1088 @@
+{
+  "attrs": {
+    "data-color-mode": "light",
+    "data-density": "comfortable",
+    "data-theme": "fluent",
+    "lang": "en"
+  },
+  "children": [
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "charset": "utf-8"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {
+            "content": "width=device-width, initial-scale=1",
+            "name": "viewport"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {},
+          "children": [
+            {
+              "text": "OAuth providers · web_agent Admin"
+            }
+          ],
+          "tag": "title"
+        },
+        {
+          "attrs": {
+            "href": "/admin/static/admin.css?v=login-slide-20261107-3",
+            "rel": "stylesheet"
+          },
+          "children": [],
+          "tag": "link"
+        },
+        {
+          "attrs": {
+            "src": "/admin/static/admin-ui.js?v=login-slide-20261107-3"
+          },
+          "children": [],
+          "tag": "script"
+        }
+      ],
+      "tag": "head"
+    },
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "class": "topbar"
+          },
+          "children": [
+            {
+              "attrs": {
+                "class": "brand-group"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "brand",
+                    "href": "/admin/"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "brand-name"
+                      },
+                      "children": [
+                        {
+                          "text": "web_agent"
+                        }
+                      ],
+                      "tag": "span"
+                    }
+                  ],
+                  "tag": "a"
+                },
+                {
+                  "attrs": {
+                    "class": "brand-subtitle"
+                  },
+                  "children": [
+                    {
+                      "text": "Cloud Control Plane"
+                    }
+                  ],
+                  "tag": "span"
+                }
+              ],
+              "tag": "div"
+            },
+            {
+              "attrs": {
+                "class": "header-actions"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "user-role"
+                  },
+                  "children": [
+                    {
+                      "text": "Platform owner"
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "class": "user-name"
+                  },
+                  "children": [
+                    {
+                      "text": "superAdmin"
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "aria-label": "Language",
+                    "class": "locale-switch",
+                    "role": "group"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "aria-pressed": "true",
+                        "class": "locale-button",
+                        "data-admin-locale": "en",
+                        "type": "button"
+                      },
+                      "children": [
+                        {
+                          "text": "EN"
+                        }
+                      ],
+                      "tag": "button"
+                    },
+                    {
+                      "attrs": {
+                        "aria-pressed": "false",
+                        "class": "locale-button",
+                        "data-admin-locale": "zh-CN",
+                        "type": "button"
+                      },
+                      "children": [
+                        {
+                          "text": "简中"
+                        }
+                      ],
+                      "tag": "button"
+                    }
+                  ],
+                  "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "class": "header-link",
+                    "href": "/admin/preferences"
+                  },
+                  "children": [
+                    {
+                      "text": "Preferences"
+                    }
+                  ],
+                  "tag": "a"
+                },
+                {
+                  "attrs": {
+                    "action": "/admin/logout",
+                    "class": "inline-form",
+                    "method": "post"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "name": "csrf_token",
+                        "type": "hidden",
+                        "value": "csrf-token-for-snapshot"
+                      },
+                      "children": [],
+                      "tag": "input"
+                    },
+                    {
+                      "attrs": {
+                        "class": "btn btn-secondary",
+                        "type": "submit"
+                      },
+                      "children": [
+                        {
+                          "text": "Sign out"
+                        }
+                      ],
+                      "tag": "button"
+                    }
+                  ],
+                  "tag": "form"
+                }
+              ],
+              "tag": "div"
+            }
+          ],
+          "tag": "header"
+        },
+        {
+          "attrs": {
+            "class": "admin-layout"
+          },
+          "children": [
+            {
+              "attrs": {
+                "aria-label": "Admin navigation",
+                "class": "sidebar"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "mobile-nav"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "mobile-menu-summary"
+                      },
+                      "children": [
+                        {
+                          "text": "Menu"
+                        }
+                      ],
+                      "tag": "summary"
+                    },
+                    {
+                      "attrs": {
+                        "class": "nav-groups"
+                      },
+                      "children": [],
+                      "tag": "div"
+                    }
+                  ],
+                  "tag": "details"
+                },
+                {
+                  "attrs": {
+                    "class": "nav-groups desktop-nav"
+                  },
+                  "children": [],
+                  "tag": "div"
+                }
+              ],
+              "tag": "nav"
+            },
+            {
+              "attrs": {
+                "class": "main-content",
+                "id": "main-content"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "empty"
+                  },
+                  "children": [
+                    {
+                      "text": ""
+                    }
+                  ],
+                  "tag": "span"
+                },
+                {
+                  "attrs": {
+                    "class": "stack"
+                  },
+                  "children": [
+                    {
+                      "attrs": {},
+                      "children": [
+                        {
+                          "attrs": {},
+                          "children": [
+                            {
+                              "text": "OAuth providers"
+                            }
+                          ],
+                          "tag": "h1"
+                        },
+                        {
+                          "attrs": {
+                            "class": "lead"
+                          },
+                          "children": [
+                            {
+                              "text": "Configure OIDC once and choose whether each provider may authenticate client users, administrators, or both. Client secrets are write-only."
+                            }
+                          ],
+                          "tag": "p"
+                        }
+                      ],
+                      "tag": "section"
+                    },
+                    {
+                      "attrs": {
+                        "class": "surface"
+                      },
+                      "children": [
+                        {
+                          "attrs": {},
+                          "children": [
+                            {
+                              "text": "Create resource"
+                            }
+                          ],
+                          "tag": "h2"
+                        },
+                        {
+                          "attrs": {
+                            "action": "/admin/oauth-providers",
+                            "class": "form-grid",
+                            "method": "post"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "name": "csrf_token",
+                                "type": "hidden",
+                                "value": "csrf-token-for-snapshot"
+                              },
+                              "children": [],
+                              "tag": "input"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Provider code"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "code",
+                                    "required": "true"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Display name"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "display_name",
+                                    "required": "true"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Issuer"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "issuer",
+                                    "placeholder": "https://id.example.com",
+                                    "required": "true",
+                                    "type": "url"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Client ID"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "client_id",
+                                    "required": "true"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Client secret"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "autocomplete": "new-password",
+                                    "name": "client_secret",
+                                    "placeholder": "Optional for public clients",
+                                    "type": "password"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Discovery URL"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "discovery_url",
+                                    "type": "url"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Authorization endpoint"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "authorization_endpoint",
+                                    "type": "url"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Token endpoint"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "token_endpoint",
+                                    "type": "url"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "JWKS URI"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "jwks_uri",
+                                    "type": "url"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Token auth method"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "token_auth_method"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "selected": "true",
+                                        "value": "client_secret_basic"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Client secret basic"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "selected": "false",
+                                        "value": "client_secret_post"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Client secret post"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    }
+                                  ],
+                                  "tag": "select"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Scopes"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "scopes",
+                                    "value": "openid profile email phone"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Username claim"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "username_claim",
+                                    "value": "preferred_username"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Role claim"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "role_claim",
+                                    "value": "groups"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Role sync max age (seconds)"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "min": "1",
+                                    "name": "role_sync_max_age_seconds",
+                                    "type": "number",
+                                    "value": "1800"
+                                  },
+                                  "children": [],
+                                  "tag": "input"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Client login"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "client_login_enabled"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "selected": "true",
+                                        "value": "1"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Enabled"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "selected": "false",
+                                        "value": "0"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Disabled"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    }
+                                  ],
+                                  "tag": "select"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Admin login"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "admin_login_enabled"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "selected": "true",
+                                        "value": "1"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Enabled"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "selected": "false",
+                                        "value": "0"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Disabled"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    }
+                                  ],
+                                  "tag": "select"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Role claim required"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "role_claim_required"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "selected": "true",
+                                        "value": "1"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Yes"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "selected": "false",
+                                        "value": "0"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "No"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    }
+                                  ],
+                                  "tag": "select"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Auto create client users"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "auto_create"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "selected": "true",
+                                        "value": "1"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Yes"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "selected": "false",
+                                        "value": "0"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "No"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    }
+                                  ],
+                                  "tag": "select"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Provider enabled"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "enabled"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "selected": "true",
+                                        "value": "1"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Yes"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "selected": "false",
+                                        "value": "0"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "No"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    }
+                                  ],
+                                  "tag": "select"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "text": ""
+                                }
+                              ],
+                              "tag": "span"
+                            },
+                            {
+                              "attrs": {
+                                "class": "btn btn-primary",
+                                "type": "submit"
+                              },
+                              "children": [
+                                {
+                                  "text": "Create provider"
+                                }
+                              ],
+                              "tag": "button"
+                            }
+                          ],
+                          "tag": "form"
+                        }
+                      ],
+                      "tag": "section"
+                    },
+                    {
+                      "attrs": {
+                        "class": "surface"
+                      },
+                      "children": [
+                        {
+                          "attrs": {},
+                          "children": [
+                            {
+                              "text": "Configured resources"
+                            }
+                          ],
+                          "tag": "h2"
+                        },
+                        {
+                          "attrs": {
+                            "class": "table-scroll"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "class": "data-table"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Provider"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Issuer"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Login scopes"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Role sync"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "State"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Actions"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        }
+                                      ],
+                                      "tag": "tr"
+                                    }
+                                  ],
+                                  "tag": "thead"
+                                },
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "No resources configured."
+                                            }
+                                          ],
+                                          "tag": "td"
+                                        }
+                                      ],
+                                      "tag": "tr"
+                                    }
+                                  ],
+                                  "tag": "tbody"
+                                }
+                              ],
+                              "tag": "table"
+                            }
+                          ],
+                          "tag": "div"
+                        }
+                      ],
+                      "tag": "section"
+                    }
+                  ],
+                  "tag": "div"
+                }
+              ],
+              "tag": "main"
+            }
+          ],
+          "tag": "div"
+        }
+      ],
+      "tag": "body"
+    }
+  ],
+  "tag": "html"
+}

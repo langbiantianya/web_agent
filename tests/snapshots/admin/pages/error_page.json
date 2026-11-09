@@ -1,0 +1,166 @@
+{
+  "attrs": {
+    "data-color-mode": "system",
+    "data-theme": "fluent",
+    "lang": "en"
+  },
+  "children": [
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "charset": "utf-8"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {
+            "content": "width=device-width, initial-scale=1",
+            "name": "viewport"
+          },
+          "children": [],
+          "tag": "meta"
+        },
+        {
+          "attrs": {},
+          "children": [
+            {
+              "text": "Forbidden · web_agent Admin"
+            }
+          ],
+          "tag": "title"
+        },
+        {
+          "attrs": {
+            "href": "/admin/static/admin.css?v=login-slide-20261107-3",
+            "rel": "stylesheet"
+          },
+          "children": [],
+          "tag": "link"
+        },
+        {
+          "attrs": {
+            "src": "/admin/static/admin-ui.js?v=login-slide-20261107-3"
+          },
+          "children": [],
+          "tag": "script"
+        }
+      ],
+      "tag": "head"
+    },
+    {
+      "attrs": {},
+      "children": [
+        {
+          "attrs": {
+            "class": "error-shell"
+          },
+          "children": [
+            {
+              "attrs": {
+                "class": "error-card"
+              },
+              "children": [
+                {
+                  "attrs": {
+                    "class": "login-toolbar"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "aria-label": "Language",
+                        "class": "locale-switch",
+                        "role": "group"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "aria-pressed": "true",
+                            "class": "locale-button",
+                            "data-admin-locale": "en",
+                            "type": "button"
+                          },
+                          "children": [
+                            {
+                              "text": "EN"
+                            }
+                          ],
+                          "tag": "button"
+                        },
+                        {
+                          "attrs": {
+                            "aria-pressed": "false",
+                            "class": "locale-button",
+                            "data-admin-locale": "zh-CN",
+                            "type": "button"
+                          },
+                          "children": [
+                            {
+                              "text": "简中"
+                            }
+                          ],
+                          "tag": "button"
+                        }
+                      ],
+                      "tag": "div"
+                    }
+                  ],
+                  "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "class": "eyebrow"
+                  },
+                  "children": [
+                    {
+                      "text": "HTTP 403"
+                    }
+                  ],
+                  "tag": "p"
+                },
+                {
+                  "attrs": {},
+                  "children": [
+                    {
+                      "text": "Forbidden"
+                    }
+                  ],
+                  "tag": "h1"
+                },
+                {
+                  "attrs": {
+                    "class": "lead"
+                  },
+                  "children": [
+                    {
+                      "text": "没有权限"
+                    }
+                  ],
+                  "tag": "p"
+                },
+                {
+                  "attrs": {
+                    "class": "btn btn-primary",
+                    "href": "/admin/login"
+                  },
+                  "children": [
+                    {
+                      "text": "Return to sign in"
+                    }
+                  ],
+                  "tag": "a"
+                }
+              ],
+              "tag": "section"
+            }
+          ],
+          "tag": "main"
+        }
+      ],
+      "tag": "body"
+    }
+  ],
+  "tag": "html"
+}
