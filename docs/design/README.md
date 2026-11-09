@@ -83,7 +83,7 @@
 | V4.5 | PostgreSQL 全量/增量备份与 PITR、自定义 seccomp、共享 dispatcher 租约配额与预算、cgroup 真实 CPU/内存指标、MCP OAuth 机器身份 | `backup_label` 作为备份识别依据改为显式标记；seccomp 文件路径改为内联 JSON；实例内配额改为共享 dispatcher 准入；静态 MCP header 扩展为可刷新 OAuth | 已完成 |
 | V4.6 | 用户 OIDC 登录、本地 `app_user`、服务端 cookie session、PKCE/state/nonce、conversation owner 隔离 | 客户端提交 `user_id` 改为认证主体派生；OAuth token 不进入浏览器存储；消息、run、审批和 SSE 统一按会话 owner 授权 | 基础实现与真 PostgreSQL 验证完成；真实 IdP 与存量迁移待完成 |
 | V4.7 | 独立 `admin-web` 容器、OAuth `admin_user`、`super_admin_account`、Casbin RBAC、Ludic SSR、页面/组件权限、三主题、密码轮换、通知、审计、业务管理页、动态客户端/管理端 OAuth Provider 和首次安装 owner 日志初始化 | 后台不再挂载到客户端进程；客户端管理 API 改用两种后台 Session 与 Casbin；Provider 从管理端动态维护并按登录用途分别过滤；首次安装无需邮件/短信即可输出一次随机 owner 密码；旧 `X-Admin-Key` 和数据库管理员 Key 退役 | 已实现 |
-| V4.8 | `/admin/workflows` 可视化拖拽编排：画布与连线、属性检查器、实时校验端点、撤销重做、整理布局与适应画布、结构化图校验的节点/边定位 | 工作流配置从手写 JSON 改为画布编辑；图规则仍是 `app/core/workflow_def.py` 一份实现，节点级 `label` 与顶层 `layout` 挂在既有 JSON 列上，不新增迁移、不引入前端构建链 | 已实现 |
+| V4.8 | `/admin/workflows` 可视化拖拽编排：画布与连线、属性检查器、实时校验端点、撤销重做、整理布局与适应画布、结构化图校验的节点/边定位 | 工作流配置从手写 JSON 改为画布编辑；图规则仍是 `app/core/workflow_def.py` 一份实现，节点级 `label` 与顶层 `layout` 挂在既有 JSON 列上，不新增迁移、不引入前端构建链。同版本管理端后端按业务域拆成 `routes/` 与 `views/` 两个包，`app.py` 只留应用装配（行为由元素树快照 + 路由表快照 + 结构契约测试锁定，注册顺序不变） | 已实现 |
 
 ## 已移除、已替换或明确不做
 

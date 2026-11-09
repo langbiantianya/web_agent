@@ -35,6 +35,34 @@ flowchart LR
 不通过浏览器转调客户端 `/api/*`。客户端管理 API 只验证同一套管理员 Session 和
 Casbin 策略，浏览器不是权限边界。
 
+## 代码结构
+
+```text
+services/admin_web/
+  app.py          应用装配：创建 app、lifespan、中间件、静态挂载、注册路由
+  common.py       跨业务域共用的请求处理辅助（21 个公开名）
+  routes/         12 个业务域的路由模块（14 个文件），每个暴露 register(app)
+  views/         16 个业务域的页面模块 + shell / components / fields
+```
+
+`routes/` 的文件比业务域多两个：工作流域的写操作在 `workflows_write.py`、
+访问控制的组件权限与角色策略在 `access_components.py`——整域塞进单文件会突破
+单文件 350 行的上限，拆分只切代码位置，路由的路径、方法与注册顺序都没变。
+
+**路由注册顺序是行为的一部分。** Starlette 首个匹配 path 的路由胜出，所以
+顺序固化在 `routes/__init__.py` 的 `register_all` 里，并由
+`tests/snapshots/admin/routes.json`（55 条，含 `/admin/static` 挂载）保序比对。
+往 `register_all` 里加域时，插在正确的位置比追加到末尾更重要。
+
+**回归保护有两层：**
+
+- `tests/snapshots/admin/` 下的元素树快照（17 个空数据集页面 + 16 个非空数据集
+  页面）锁住页面渲染，比的是 `html_name` + `aliased_attrs` + children + 文本 +
+  class 值——**children 顺序变了也算差异**；
+- `tests/test_admin_structure.py` 锁住结构契约：模块清单、`views` 的导出面、
+  `common.py` 的 21 个公开名、单文件行数与 `app.py` 行数上限、以及「域模块不许
+  反向 import 应用模块」这条防循环导入红线。
+
 ## 身份链
 
 | 主体 | Cookie/表 | 授权 |
@@ -130,8 +158,18 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
 ## 测试
 
 ```bash
+# 后台行为（登录、权限、业务页、CSRF）
 python -m pytest tests/test_admin_web.py tests/test_migrations.py -q
+
+# 页面渲染快照 + 表单字段组件
+python -m pytest tests/test_admin_snapshots.py tests/test_admin_fields.py -q
+
+# 包结构契约（模块清单、行数上限、循环导入红线）
+python -m pytest tests/test_admin_structure.py -q
 ```
+
+快照默认只读；确需重抓基线时设 `ADMIN_SNAPSHOT_UPDATE=1`，并在评审里说明**为什么**
+基线该变——正常情况下基线红了是代码该改，不是基线该更新。
 
 完整设计与验收项见 [V4.7 设计](../../app/design/v4.7-oauth-admin.md)。迁移结果：
 OAuth 管理员角色固定租户；平台超级管理员绕过 Casbin 并按请求选择租户；普通用户
