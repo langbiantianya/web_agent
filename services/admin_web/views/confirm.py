@@ -112,7 +112,9 @@ def delete_trigger(
             type="button",
             class_="btn btn-danger btn-small",
             disabled=bool(disabled_reason),
-            title=disabled_reason or None,
+            # 没有禁用原因时**不要**写 title 属性：ludic 会把 Python 的
+            # ``None`` 渲染成字符串 "None"，页面上就会出现 title="None"。
+            **({"title": disabled_reason} if disabled_reason else {}),
             aria_label=accessible_label or f"Delete {label}",
             data_confirm_trigger="1",
             data_confirm_title=title,

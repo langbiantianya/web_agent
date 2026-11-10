@@ -25,6 +25,53 @@
   ]);
 
   const ZH = {
+    // —— 2026-11-10 第三轮：把仍然漏翻的界面文案补齐 ——
+    // 这些句子来自服务端渲染（Flash、字段级校验、注册表里的页面/组件
+    // 描述），词表里没有对应条目时中文界面就会露出英文。
+    "Resource restored.": "资源已恢复。",
+    Cancel: "取消",
+    "The connection could not be validated.": "连接无法校验。",
+    "Priority must be a whole number.": "优先级必须是整数。",
+    "Enter the HTTP URL for this server.": "请填写这台服务器的 HTTP 地址。",
+    "Enter the stdio command for this server.":
+      "请填写这台服务器的 stdio 命令。",
+    "Timeout must be a whole number.": "超时时间必须是整数。",
+    "Access mode: all": "访问模式：全部匹配",
+    "Access mode: any": "访问模式：任一匹配",
+    "Built-in role required by authentication defaults.":
+      "内置角色，认证默认配置依赖它。",
+    "Define which RBAC permissions make each registered page visible. Tenant overrides replace the global default.":
+      "定义哪些 RBAC 权限让已注册的页面可见。租户覆盖会替换全局默认。",
+    "Control tables, editors, actions and forms separately from page navigation. Hidden components never replace API authorization.":
+      "分别控制表格、编辑器、操作与表单的可见性。隐藏组件不等于接口鉴权。",
+    "Administration overview and appearance": "管理概览与外观",
+    "Admin navigation and UI policy bindings": "管理导航与界面策略绑定",
+    "OAuth administrator identities": "OAuth 管理员身份",
+    "Agent configuration and connections": "智能体配置与连接",
+    "Tool-call audit records": "工具调用审计记录",
+    "Roles, policy rules and OAuth mappings": "角色、策略规则与 OAuth 映射",
+    "Cross-tenant administration": "跨租户管理",
+    "LLM endpoints and write-only credentials": "LLM 端点与只写凭据",
+    "MCP servers, tools and catalog refresh": "MCP 服务器、工具与目录刷新",
+    "OIDC provider configuration": "OIDC 身份提供方配置",
+    "Platform super-administrator ownership": "平台超级管理员归属",
+    "Skill drafts, publishing and archives": "技能草稿、发布与归档",
+    "Workflow definitions and execution settings": "工作流定义与执行设置",
+    "Component permission matrix": "组件权限矩阵",
+    "Page permission matrix": "页面权限矩阵",
+    "Role policy matrix": "角色策略矩阵",
+    "Agent list": "智能体列表",
+    "Agent editor": "智能体编辑器",
+    "Tool audit list": "工具审计列表",
+    "Platform metrics": "平台指标",
+    "Platform admin accounts": "平台管理员账号",
+    "Theme and appearance": "主题与外观",
+    "Skill list": "技能列表",
+    "Workflow list": "工作流列表",
+    "MCP server list": "MCP 服务器列表",
+    "LLM endpoint list": "LLM 端点列表",
+    "OAuth provider list": "身份提供方列表",
+    "Quick actions": "快捷操作",
     // —— 本轮新增的界面文案（独立编辑面板、能力工具条、列表控件）——
     "ACCESS CONTROL": "访问控制",
     "IDENTITY MAPPING": "身份映射",
@@ -465,6 +512,14 @@
   };
 
   const ZH_PATTERNS = [
+    // pydantic 的原始报错前缀：中文界面里露出 "Value error," 很突兀。
+    // 注意：模式是**第一条命中就生效**，所以带具体译法的那条必须排在
+    // 通用剥离规则前面。
+    [
+      /^Value error, base_url 必须是 http\(s\) 地址$/,
+      "基础 URL 必须是 http(s) 地址",
+    ],
+    [/^Value error, (.+)$/, "$1"],
     [/^(.+) · Workflow editor$/, "$1 · 工作流编辑器"],
     [/^(\d+) item\(s\) · page (\d+) of (\d+)$/, "共 $1 项 · 第 $2 / $3 页"],
     [/^(\d+) members$/, "$1 个成员"],
@@ -518,6 +573,7 @@
     [/^Delete MCP server (.+)$/, "删除 MCP 服务器 $1"],
     [/^Delete Agent (.+)$/, "删除智能体 $1"],
     [/^Delete Workflow (.+)$/, "删除工作流 $1"],
+    [/^Delete role (.+)$/, "删除角色 $1"],
     [/^Archive Skill (.+)$/, "归档技能 $1"],
     // —— 编辑面板标题与撤销按钮的可访问名称 ——
     [/^Edit endpoint (.+)$/, "编辑端点 $1"],
@@ -583,6 +639,9 @@
     [/^Enable Agent (.+)$/, "启用智能体 $1"],
     [/^Disable Workflow (.+)$/, "禁用工作流 $1"],
     [/^Enable Workflow (.+)$/, "启用工作流 $1"],
+    [/^Disable OAuth provider (.+)$/, "禁用 OAuth 身份提供方 $1"],
+    [/^Enable OAuth provider (.+)$/, "启用 OAuth 身份提供方 $1"],
+
     [/^Archive Skill (.+)$/, "归档技能 $1"],
     [/^Used by agents: (.+)$/, "被智能体使用：$1"],
     [/^Used by workflows: (.+)$/, "被工作流使用：$1"],
@@ -855,11 +914,20 @@
    * 下拉框在标题区、表单在下面的「Create resource」卡片里，所以这里按
    * action 找表单而不是用 select.form（那个值是 null）。只填非敏感字段：
    * API Key 永远由使用者自己粘贴，预设里没有、也不应该有密钥。
+   *
+   * **为什么不能只按 action 找**：列表上方的「搜索 / 排序」过滤表单和
+   * 创建表单的 action 都是 ``/admin/llm``（前者是 GET，后者是 POST）。
+   * ``querySelector`` 只会命中排在文档里的第一个——过滤表单排在前面，
+   * 于是预设把值写进了过滤表单的 ``q``/``sort`` 之外的名字上，一个字段
+   * 也填不到，用户看到的就是「选了预设没反应」。所以这里按**有没有
+   * ``code`` 字段**认出创建表单：只有创建表单才有「代码」这一栏。
    */
   function bindLlmPresetPicker() {
     const selects = document.querySelectorAll("select[data-llm-preset]");
     if (!selects.length) return;
-    const form = document.querySelector('form[action="/admin/llm"]');
+    const form = [...document.querySelectorAll('form[action="/admin/llm"]')].find(
+      (candidate) => candidate.elements.namedItem("code"),
+    );
     if (!form) return;
     for (const select of selects) {
       select.addEventListener("change", () => {

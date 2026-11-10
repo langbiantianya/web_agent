@@ -157,7 +157,12 @@ def _toggle_and_delete(
                 type="submit",
                 class_="btn btn-secondary btn-small",
                 disabled=bool(toggle_disabled_reason),
-                title=toggle_disabled_reason or None,
+                # 同上：没有原因就不写 title，避免渲染出 title="None"。
+                **(
+                    {"title": toggle_disabled_reason}
+                    if toggle_disabled_reason
+                    else {}
+                ),
                 aria_label=f"{toggle_text} {label}",
             ),
             action=f"{prefix}/toggle",

@@ -149,12 +149,35 @@ def register(app: Any) -> None:
             target_id = (code or base_url)[:128]
             models: list[str] = []
             try:
-                models = await fetch_models(base_url, api_key)
-                result = (
-                    await probe_chat(base_url, api_key, model)
-                    if mode == "test"
-                    else None
-                )
+                if mode == "test":
+                    # 「测试连接」问的是「这个地址+密钥+模型能不能对话」，
+                    # 所以**先**探对话端点。顺序反过来会误判：不少
+                    # OpenAI 兼容网关没有开放 ``GET /models``（403/404），
+                    # 但 ``POST /chat/completions`` 一切正常；先拉列表会把
+                    # 这种可用配置判成「连接失败」。
+                    try:
+                        result = await probe_chat(base_url, api_key, model)
+                    except LlmProbeError as exc:
+                        # 402/429 是「额度/限流」，不是「配置写错」。要分清
+                        # 这两者，得知道地址与密钥**本身**是好的——用模型
+                        # 列表再验一次：拿到了就说明连接没问题，只是对话
+                        # 这一环被额度挡住了。
+                        if exc.status_code in {402, 429}:
+                            try:
+                                models = await fetch_models(
+                                    base_url, api_key
+                                )
+                            except LlmProbeError:
+                                models = []
+                        raise
+                    # 模型列表是锦上添花：拿不到不影响「连接可用」的结论。
+                    try:
+                        models = await fetch_models(base_url, api_key)
+                    except LlmProbeError:
+                        models = []
+                else:
+                    models = await fetch_models(base_url, api_key)
+                    result = None
             except LlmProbeError as exc:
                 await audit_principal_action(
                     db,

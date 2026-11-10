@@ -20,6 +20,8 @@ from services.admin_web.common import (
     login_redirect, not_found, origin_ok, require_csrf, unauthorized, with_auth,
 )
 from services.admin_web.db import AdminSessionLocal
+from services.admin_web.deletion import record_deletion
+from services.admin_web.common import undo_id_from_query
 from services.admin_web.listing import parse_list_params
 from services.admin_web.registry import visible_pages
 from services.admin_web.security import (
@@ -82,6 +84,7 @@ def register(app: Any) -> None:
                 density=pref.density,
                 list_params=list_params,
                 list_total=total,
+                undo_id=undo_id_from_query(request),
             )
         finally:
             await db.close()
@@ -179,6 +182,15 @@ def register(app: Any) -> None:
                 return RedirectResponse(
                     "/admin/platform-admins?error=owner_protected", status_code=303
                 )
+            # 删除前留快照：平台超级管理员是**硬删除**（没有软删除位），
+            # 误删之后只能靠这条快照原样恢复（UX-01）。
+            entry = await record_deletion(
+                db,
+                resource_type="super_admin_account",
+                row=account,
+                actor_id=principal.principal_id,
+                actor_username=principal.username,
+            )
             await audit_principal_action(
                 db,
                 principal,
@@ -191,7 +203,8 @@ def register(app: Any) -> None:
             await db.delete(account)
             await db.commit()
             return RedirectResponse(
-                "/admin/platform-admins?notice=deleted", status_code=303
+                f"/admin/platform-admins?notice=deleted&undo={entry.id}",
+                status_code=303,
             )
         finally:
             await db.close()

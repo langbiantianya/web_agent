@@ -21,10 +21,10 @@ from typing import Any
 from ludic.web import Request
 from starlette.responses import RedirectResponse
 
+from app.models.admin_deleted_resource import AdminDeletedResource
 from services.admin_web.audit import audit_principal_action
 from services.admin_web.common import (
-    business_redirect, can_edit_resource, not_found, operation_authorized,
-    unauthorized, with_auth,
+    business_redirect, not_found, operation_authorized, unauthorized, with_auth,
 )
 from services.admin_web.deletion import UndoNotAvailable, undo_deletion
 
@@ -38,6 +38,12 @@ _UNDO_TARGETS = {
         "workflows",
         "workflow_editor",
         "/admin/workflows",
+    ),
+    "super_admin_account": (
+        "/admin/platform-admins",
+        "platform_admins",
+        "admin_list",
+        "/admin/platform-admins",
     ),
 }
 
@@ -54,12 +60,24 @@ def register(app: Any) -> None:
         db, principal, _, _ = values
         try:
             form = await request.form()
+            # 先看这条快照属于哪类资源，再按**那一类**的写权限判定：
+            # 撤销一个 LLM 端点不该要求 Agent 编辑权，撤销一个平台管理员
+            # 也不该要求 Agent 编辑权。之前的实现把页面写死成
+            # ``agents``，于是「有 Agent 权限但没有 LLM 权限」的管理员
+            # 撤销不了自己刚删的 LLM 端点。
+            peeked = await db.get(AdminDeletedResource, entry_id)
+            if peeked is None:
+                return business_redirect("/admin/agents", error="undo_failed")
+            target = _UNDO_TARGETS.get(peeked.resource_type)
+            if target is None:
+                return business_redirect("/admin/agents", error="undo_failed")
+            _, page_code, component_code, redirect_path = target
             if not await operation_authorized(
                 request,
                 db,
                 principal,
-                page_code="agents",
-                component_code="agent_editor",
+                page_code=page_code,
+                component_code=component_code,
                 form=form,
             ):
                 return not_found()
@@ -71,17 +89,6 @@ def register(app: Any) -> None:
                     actor_username=principal.username,
                 )
             except UndoNotAvailable:
-                return business_redirect("/admin/agents", error="undo_failed")
-            target = _UNDO_TARGETS.get(resource_type)
-            if target is None:
-                return business_redirect("/admin/agents", error="undo_failed")
-            _, page_code, component_code, redirect_path = target
-            if not await can_edit_resource(
-                db,
-                principal,
-                page_code=page_code,
-                component_code=component_code,
-            ):
                 return business_redirect(redirect_path, error="undo_failed")
             await audit_principal_action(
                 db,

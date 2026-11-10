@@ -958,8 +958,12 @@
                                                   "attrs": {
                                                     "aria-label": "Delete platform admin snapshotAdmin",
                                                     "class": "btn btn-danger btn-small",
-                                                    "data-confirm": "Delete platform admin snapshotAdmin? This action cannot be undone.",
-                                                    "type": "submit"
+                                                    "data-confirm-impacts": "The account loses access to the console immediately.\nThe account can be restored from the undo entry.",
+                                                    "data-confirm-summary": "Platform admin snapshotAdmin will be removed and its sessions revoked.",
+                                                    "data-confirm-title": "Delete platform admin snapshotAdmin",
+                                                    "data-confirm-trigger": "1",
+                                                    "disabled": "false",
+                                                    "type": "button"
                                                   },
                                                   "children": [
                                                     {

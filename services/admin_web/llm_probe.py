@@ -77,13 +77,36 @@ def _auth_headers(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
 
+# 上游状态码 → 一句**稳定**的中性说明。
+#
+# 这里刻意**不回显上游正文**：上游的错误体可能带内部请求 ID、账号信息，
+# 甚至把密钥片段回显出来（有些网关会在报错里重复一次密钥的前后几位）。
+# 管理端需要的是「哪里错了」，不是上游的原始报文。
+_STATUS_HINTS: dict[int, str] = {
+    400: "The endpoint rejected the request. Check the model name.",
+    401: "The API key was rejected. Check the key and its account.",
+    403: "The endpoint refused the request. The key may lack a scope.",
+    404: "The path was not found. Check the base URL.",
+    408: "The endpoint timed out.",
+    402: "The account has no remaining credit for this endpoint.",
+    429: "The endpoint is rate limiting this key. Try again later.",
+    500: "The endpoint returned a server error.",
+    502: "The upstream gateway returned an invalid response.",
+    503: "The endpoint is temporarily unavailable.",
+    504: "The upstream gateway timed out.",
+}
+
+
 def _http_error(action: str, response: httpx.Response) -> LlmProbeError:
-    """把非 2xx 响应翻成一句可展示的错误。"""
-    detail = _short(response.text)
-    suffix = f" {detail}" if detail else ""
+    """把非 2xx 响应翻成一句可展示的错误。
+
+    只保留**状态码 + 归类说明**，不带上游正文（见 :data:`_STATUS_HINTS`）。
+    """
+    status = response.status_code
+    hint = _STATUS_HINTS.get(status, "The endpoint returned an unexpected response.")
     return LlmProbeError(
-        f"{action} failed: HTTP {response.status_code}{suffix}",
-        status_code=response.status_code,
+        f"{action} failed: HTTP {status}. {hint}",
+        status_code=status,
     )
 
 

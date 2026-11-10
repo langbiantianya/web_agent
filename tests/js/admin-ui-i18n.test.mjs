@@ -123,3 +123,59 @@ test("删除确认对话框的文案能翻成中文", () => {
     "管理可复用的 Casbin 角色、权限矩阵和继承关系。平台超级管理员不受这些规则限制。",
   );
 });
+
+test("第三轮补齐的词条都在，且能翻成中文", () => {
+  const translate = (text) => {
+    if (Object.hasOwn(ZH, text)) return ZH[text];
+    for (const [pattern, replacement] of ZH_PATTERNS) {
+      if (pattern.test(text)) return text.replace(pattern, replacement);
+    }
+    return text;
+  };
+
+  // 撤销提示与确认对话框的按钮：这两个在中文界面里原来是英文。
+  assert.equal(translate("Resource restored."), "资源已恢复。");
+  assert.equal(translate("Cancel"), "取消");
+
+  // 字段级校验文案。
+  assert.equal(
+    translate("The connection could not be validated."),
+    "连接无法校验。",
+  );
+  assert.equal(
+    translate("Priority must be a whole number."),
+    "优先级必须是整数。",
+  );
+
+  // pydantic 的原始前缀不该出现在中文界面里。
+  assert.equal(
+    translate("Value error, base_url 必须是 http(s) 地址"),
+    "基础 URL 必须是 http(s) 地址",
+  );
+
+  // 访问控制页的说明与注册表里的页面 / 组件描述。
+  assert.equal(
+    translate("Access mode: all"),
+    "访问模式：全部匹配",
+  );
+  assert.equal(
+    translate("Administration overview and appearance"),
+    "管理概览与外观",
+  );
+  assert.equal(translate("Agent editor"), "智能体编辑器");
+  assert.equal(
+    translate("Built-in role required by authentication defaults."),
+    "内置角色，认证默认配置依赖它。",
+  );
+
+  // OAuth 身份提供方的启停按钮与角色删除按钮。
+  assert.equal(
+    translate("Disable OAuth provider E2E IdP"),
+    "禁用 OAuth 身份提供方 E2E IdP",
+  );
+  assert.equal(
+    translate("Enable OAuth provider E2E IdP"),
+    "启用 OAuth 身份提供方 E2E IdP",
+  );
+  assert.equal(translate("Delete role operator"), "删除角色 operator");
+});
