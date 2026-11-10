@@ -213,6 +213,86 @@ async def test_load_endpoints_uses_priority_and_skips_disabled(db):
 
 
 @pytest.mark.asyncio
+async def test_agent_selected_connection_bypasses_global_priority_chain(db):
+    """绑定连接的 Agent 只使用选中项，不跟随全局优先级链。"""
+    suffix = uuid4().hex[:8]
+    selected = f"selected-{suffix}"
+    other = f"other-{suffix}"
+    await llm_endpoint_repo.create(
+        db,
+        code=other,
+        name=other,
+        base_url="https://other.test/v1",
+        api_key_cipher="cipher",
+        priority=1,
+        enabled=1,
+    )
+    await llm_endpoint_repo.create(
+        db,
+        code=selected,
+        name=selected,
+        base_url="https://selected.test/v1",
+        api_key_cipher="cipher",
+        priority=100,
+        enabled=1,
+    )
+    agent = _agent()
+    agent.llm_endpoint_code = selected
+
+    specs = await load_llm_endpoints(agent)
+
+    assert [spec.code for spec in specs] == [selected]
+    assert specs[0].base_url == "https://selected.test/v1"
+
+
+@pytest.mark.asyncio
+async def test_disabled_selected_connection_does_not_fall_back(db):
+    """选中的连接停用后，Agent 不应静默切换到其它可用连接。"""
+    suffix = uuid4().hex[:8]
+    selected = f"disabled-selected-{suffix}"
+    fallback = f"fallback-{suffix}"
+    await llm_endpoint_repo.create(
+        db,
+        code=fallback,
+        name=fallback,
+        base_url="https://fallback.test/v1",
+        api_key_cipher="cipher",
+        priority=1,
+        enabled=1,
+    )
+    await llm_endpoint_repo.create(
+        db,
+        code=selected,
+        name=selected,
+        base_url="https://disabled.test/v1",
+        api_key_cipher="cipher",
+        priority=100,
+        enabled=0,
+    )
+    agent = _agent()
+    agent.llm_endpoint_code = selected
+
+    assert await load_llm_endpoints(agent) == ()
+
+
+@pytest.mark.asyncio
+async def test_runner_explicit_empty_chain_does_not_use_legacy_agent(db):
+    """显式空连接链必须在运行期报错，而不是回退到旧 Agent 地址。"""
+    agent = _agent()
+    runner = AgentRunner(
+        agent=agent,
+        node_id="n1",
+        run_id=3,
+        hub=RunHub(),
+        user_texts=[],
+        endpoints=(),
+    )
+
+    with pytest.raises(RuntimeError, match="没有可用的 LLM 接口配置"):
+        await runner.run([{"role": "user", "content": "hello"}])
+
+
+@pytest.mark.asyncio
 async def test_all_disabled_configs_do_not_fall_back_to_legacy(monkeypatch):
     """数据库已有配置但全部停用时，旧 Agent 地址也不能重新生效。"""
     async def _no_enabled(*_args, **_kwargs):

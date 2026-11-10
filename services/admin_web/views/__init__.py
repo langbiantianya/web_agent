@@ -44,7 +44,8 @@ from services.admin_web.views.audit import audit_page
 from services.admin_web.views.llm import llm_page
 from services.admin_web.views.mcp import mcp_page
 from services.admin_web.views.skills import skills_page
-from services.admin_web.views.workflows import workflow_editor_page, workflows_page
+from services.admin_web.views.workflow_editor import workflow_editor_page
+from services.admin_web.views.workflows import workflows_page
 
 # 账号与配置类页面同样已经搬进各自的业务域模块，这里静态再导出。
 from services.admin_web.views.access import access_components_page, access_pages_page

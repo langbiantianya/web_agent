@@ -35,7 +35,7 @@
         },
         {
           "attrs": {
-            "href": "/admin/static/admin.css?v=login-slide-20261107-3",
+            "href": "/admin/static/admin.css?v=admin-responsive-20261110-6",
             "rel": "stylesheet"
           },
           "children": [],
@@ -43,7 +43,7 @@
         },
         {
           "attrs": {
-            "src": "/admin/static/admin-ui.js?v=llm-probe-20261109-1"
+            "src": "/admin/static/admin-ui.js?v=admin-ui-20261110-10"
           },
           "children": [],
           "tag": "script"
@@ -877,7 +877,8 @@
                                 },
                                 {
                                   "attrs": {
-                                    "name": "token_auth_method"
+                                    "name": "token_auth_method",
+                                    "required": "false"
                                   },
                                   "children": [
                                     {
@@ -925,6 +926,7 @@
                                 {
                                   "attrs": {
                                     "name": "scopes",
+                                    "placeholder": "openid profile email phone",
                                     "value": "openid profile email phone"
                                   },
                                   "children": [],
@@ -948,6 +950,7 @@
                                 {
                                   "attrs": {
                                     "name": "username_claim",
+                                    "placeholder": "preferred_username",
                                     "value": "preferred_username"
                                   },
                                   "children": [],
@@ -971,6 +974,7 @@
                                 {
                                   "attrs": {
                                     "name": "role_claim",
+                                    "placeholder": "groups",
                                     "value": "groups"
                                   },
                                   "children": [],
@@ -1018,7 +1022,8 @@
                                 },
                                 {
                                   "attrs": {
-                                    "name": "client_login_enabled"
+                                    "name": "client_login_enabled",
+                                    "required": "false"
                                   },
                                   "children": [
                                     {
@@ -1065,7 +1070,8 @@
                                 },
                                 {
                                   "attrs": {
-                                    "name": "admin_login_enabled"
+                                    "name": "admin_login_enabled",
+                                    "required": "false"
                                   },
                                   "children": [
                                     {
@@ -1112,7 +1118,8 @@
                                 },
                                 {
                                   "attrs": {
-                                    "name": "role_claim_required"
+                                    "name": "role_claim_required",
+                                    "required": "false"
                                   },
                                   "children": [
                                     {
@@ -1159,7 +1166,8 @@
                                 },
                                 {
                                   "attrs": {
-                                    "name": "auto_create"
+                                    "name": "auto_create",
+                                    "required": "false"
                                   },
                                   "children": [
                                     {
@@ -1206,7 +1214,8 @@
                                 },
                                 {
                                   "attrs": {
-                                    "name": "enabled"
+                                    "name": "enabled",
+                                    "required": "false"
                                   },
                                   "children": [
                                     {
@@ -1238,15 +1247,6 @@
                                 }
                               ],
                               "tag": "label"
-                            },
-                            {
-                              "attrs": {},
-                              "children": [
-                                {
-                                  "text": ""
-                                }
-                              ],
-                              "tag": "span"
                             },
                             {
                               "attrs": {
@@ -1497,7 +1497,10 @@
                                                     },
                                                     {
                                                       "attrs": {
+                                                        "aria-label": "Disable OAuth provider Snapshot IDP",
                                                         "class": "btn btn-secondary btn-small",
+                                                        "disabled": "false",
+                                                        "title": "None",
                                                         "type": "submit"
                                                       },
                                                       "children": [
@@ -1528,8 +1531,14 @@
                                                     },
                                                     {
                                                       "attrs": {
+                                                        "aria-label": "Delete OAuth provider Snapshot IDP",
                                                         "class": "btn btn-danger btn-small",
-                                                        "type": "submit"
+                                                        "data-confirm-summary": "Delete OAuth provider Snapshot IDP? This action cannot be undone.",
+                                                        "data-confirm-title": "Delete OAuth provider Snapshot IDP",
+                                                        "data-confirm-trigger": "1",
+                                                        "disabled": "false",
+                                                        "title": "None",
+                                                        "type": "button"
                                                       },
                                                       "children": [
                                                         {
@@ -1545,675 +1554,18 @@
                                               "tag": "div"
                                             },
                                             {
-                                              "attrs": {},
+                                              "attrs": {
+                                                "aria-label": "Edit provider snapshot-idp",
+                                                "class": "btn btn-secondary btn-small",
+                                                "data-edit-link": "snapshot-idp",
+                                                "href": "/admin/oauth-providers?resource=snapshot-idp"
+                                              },
                                               "children": [
                                                 {
-                                                  "attrs": {},
-                                                  "children": [
-                                                    {
-                                                      "text": "Edit provider"
-                                                    }
-                                                  ],
-                                                  "tag": "summary"
-                                                },
-                                                {
-                                                  "attrs": {
-                                                    "action": "/admin/oauth-providers/snapshot-idp/update",
-                                                    "class": "form-grid",
-                                                    "method": "post"
-                                                  },
-                                                  "children": [
-                                                    {
-                                                      "attrs": {
-                                                        "name": "csrf_token",
-                                                        "type": "hidden",
-                                                        "value": "<CSRF>"
-                                                      },
-                                                      "children": [],
-                                                      "tag": "input"
-                                                    },
-                                                    {
-                                                      "attrs": {
-                                                        "name": "code",
-                                                        "type": "hidden",
-                                                        "value": "snapshot-idp"
-                                                      },
-                                                      "children": [],
-                                                      "tag": "input"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Display name"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "display_name",
-                                                            "required": "true",
-                                                            "value": "Snapshot IDP"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Issuer"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "issuer",
-                                                            "placeholder": "https://id.example.com",
-                                                            "required": "true",
-                                                            "type": "url",
-                                                            "value": "https://id.example.com"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Client ID"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "client_id",
-                                                            "required": "true",
-                                                            "value": "snapshot-client"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Client secret"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "autocomplete": "new-password",
-                                                            "name": "client_secret",
-                                                            "placeholder": "Leave blank to keep current secret",
-                                                            "type": "password"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Discovery URL"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "discovery_url",
-                                                            "type": "url",
-                                                            "value": "https://id.example.com/.well-known/openid-configuration"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Authorization endpoint"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "authorization_endpoint",
-                                                            "type": "url",
-                                                            "value": "https://id.example.com/authorize"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Token endpoint"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "token_endpoint",
-                                                            "type": "url",
-                                                            "value": "https://id.example.com/token"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "JWKS URI"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "jwks_uri",
-                                                            "type": "url",
-                                                            "value": "https://id.example.com/jwks"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Token auth method"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "token_auth_method"
-                                                          },
-                                                          "children": [
-                                                            {
-                                                              "attrs": {
-                                                                "selected": "true",
-                                                                "value": "client_secret_basic"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "Client secret basic"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            },
-                                                            {
-                                                              "attrs": {
-                                                                "selected": "false",
-                                                                "value": "client_secret_post"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "Client secret post"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            }
-                                                          ],
-                                                          "tag": "select"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Scopes"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "scopes",
-                                                            "value": "openid profile email"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Username claim"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "username_claim",
-                                                            "value": "preferred_username"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Role claim"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "role_claim",
-                                                            "value": "groups"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Role sync max age (seconds)"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "min": "1",
-                                                            "name": "role_sync_max_age_seconds",
-                                                            "type": "number",
-                                                            "value": "1800"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Client login"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "client_login_enabled"
-                                                          },
-                                                          "children": [
-                                                            {
-                                                              "attrs": {
-                                                                "selected": "true",
-                                                                "value": "1"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "Enabled"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            },
-                                                            {
-                                                              "attrs": {
-                                                                "selected": "false",
-                                                                "value": "0"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "Disabled"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            }
-                                                          ],
-                                                          "tag": "select"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Admin login"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "admin_login_enabled"
-                                                          },
-                                                          "children": [
-                                                            {
-                                                              "attrs": {
-                                                                "selected": "true",
-                                                                "value": "1"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "Enabled"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            },
-                                                            {
-                                                              "attrs": {
-                                                                "selected": "false",
-                                                                "value": "0"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "Disabled"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            }
-                                                          ],
-                                                          "tag": "select"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Role claim required"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "role_claim_required"
-                                                          },
-                                                          "children": [
-                                                            {
-                                                              "attrs": {
-                                                                "selected": "true",
-                                                                "value": "1"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "Yes"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            },
-                                                            {
-                                                              "attrs": {
-                                                                "selected": "false",
-                                                                "value": "0"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "No"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            }
-                                                          ],
-                                                          "tag": "select"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Auto create client users"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "auto_create"
-                                                          },
-                                                          "children": [
-                                                            {
-                                                              "attrs": {
-                                                                "selected": "true",
-                                                                "value": "1"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "Yes"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            },
-                                                            {
-                                                              "attrs": {
-                                                                "selected": "false",
-                                                                "value": "0"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "No"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            }
-                                                          ],
-                                                          "tag": "select"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Provider enabled"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "enabled"
-                                                          },
-                                                          "children": [
-                                                            {
-                                                              "attrs": {
-                                                                "selected": "true",
-                                                                "value": "1"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "Yes"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            },
-                                                            {
-                                                              "attrs": {
-                                                                "selected": "false",
-                                                                "value": "0"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "No"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            }
-                                                          ],
-                                                          "tag": "select"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Clear existing client secret"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "clear_client_secret"
-                                                          },
-                                                          "children": [
-                                                            {
-                                                              "attrs": {
-                                                                "value": "0"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "No"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            },
-                                                            {
-                                                              "attrs": {
-                                                                "value": "1"
-                                                              },
-                                                              "children": [
-                                                                {
-                                                                  "text": "Yes"
-                                                                }
-                                                              ],
-                                                              "tag": "option"
-                                                            }
-                                                          ],
-                                                          "tag": "select"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {
-                                                        "class": "btn btn-primary",
-                                                        "type": "submit"
-                                                      },
-                                                      "children": [
-                                                        {
-                                                          "text": "Save provider"
-                                                        }
-                                                      ],
-                                                      "tag": "button"
-                                                    }
-                                                  ],
-                                                  "tag": "form"
+                                                  "text": "Edit provider"
                                                 }
                                               ],
-                                              "tag": "details"
+                                              "tag": "a"
                                             }
                                           ],
                                           "tag": "td"
@@ -2235,6 +1587,103 @@
                     }
                   ],
                   "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "aria-modelledby": "confirm-dialog-title",
+                    "class": "confirm-dialog",
+                    "data-confirm-dialog": "1",
+                    "role": "dialog"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "confirm-body"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "id": "confirm-dialog-title"
+                          },
+                          "children": [
+                            {
+                              "text": ""
+                            }
+                          ],
+                          "tag": "h2"
+                        },
+                        {
+                          "attrs": {
+                            "class": "lead",
+                            "data-confirm-dialog-summary": "1"
+                          },
+                          "children": [
+                            {
+                              "text": ""
+                            }
+                          ],
+                          "tag": "p"
+                        },
+                        {
+                          "attrs": {
+                            "class": "confirm-impacts",
+                            "data-confirm-dialog-impacts": "1"
+                          },
+                          "children": [
+                            {
+                              "text": ""
+                            }
+                          ],
+                          "tag": "div"
+                        },
+                        {
+                          "attrs": {
+                            "class": "confirm-actions",
+                            "method": "post"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "name": "csrf_token",
+                                "type": "hidden"
+                              },
+                              "children": [],
+                              "tag": "input"
+                            },
+                            {
+                              "attrs": {
+                                "class": "btn btn-secondary",
+                                "data-confirm-dialog-close": "1",
+                                "type": "button"
+                              },
+                              "children": [
+                                {
+                                  "text": "Cancel"
+                                }
+                              ],
+                              "tag": "button"
+                            },
+                            {
+                              "attrs": {
+                                "class": "btn btn-danger",
+                                "data-confirm-dialog-submit": "1",
+                                "type": "submit"
+                              },
+                              "children": [
+                                {
+                                  "text": "Delete"
+                                }
+                              ],
+                              "tag": "button"
+                            }
+                          ],
+                          "tag": "form"
+                        }
+                      ],
+                      "tag": "div"
+                    }
+                  ],
+                  "tag": "section"
                 }
               ],
               "tag": "main"

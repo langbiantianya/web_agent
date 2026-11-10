@@ -25,6 +25,50 @@
   ]);
 
   const ZH = {
+    // —— 本轮新增的界面文案（独立编辑面板、能力工具条、列表控件）——
+    "Edit agent": "编辑智能体",
+    "Edit skill": "编辑技能",
+    "Edit endpoint": "编辑端点",
+    "Edit connection": "编辑连接",
+    "Edit provider": "编辑身份提供方",
+    Close: "关闭",
+    "Search tools": "搜索工具",
+    "Tool name or description": "工具名称或描述",
+    "Only available": "只看可用",
+    "0 selected": "已选 0 项",
+    "Suggested tools:": "建议工具：",
+    "No tool suggestions": "没有工具建议",
+    "Skill tool suggestions": "技能工具建议",
+    Troubleshooting: "排查指引",
+    Apply: "应用",
+    "Undo delete": "撤销删除",
+    "Agent was deleted.": "智能体已删除。",
+    "LLM endpoint was deleted.": "LLM 端点已删除。",
+    "MCP server was deleted.": "MCP 服务器已删除。",
+    "Workflow was deleted.": "工作流已删除。",
+    Search: "搜索",
+    "Search rules": "搜索规则",
+    "Search accounts": "搜索账户",
+    "Name or code": "名称或编码",
+    "Type, subject or role": "类型、主体或角色",
+    "Username or email": "用户名或邮箱",
+    "Sort by": "排序方式",
+    Default: "默认",
+    Previous: "上一页",
+    Next: "下一页",
+    "Published Skills": "已发布技能",
+    "Built-in tools": "内置工具",
+    "Unavailable bindings": "失效绑定",
+    "The skill could not be saved. Fix the highlighted fields.":
+      "技能未能保存，请修正高亮字段。",
+    "The endpoint could not be saved. Fix the highlighted fields.":
+      "端点未能保存，请修正高亮字段。",
+    "The connection could not be saved. Fix the highlighted fields.":
+      "连接未能保存，请修正高亮字段。",
+    "The agent could not be saved. Fix the highlighted fields.":
+      "智能体未能保存，请修正高亮字段。",
+    "The provider could not be saved. Fix the highlighted fields.":
+      "身份提供方未能保存，请修正高亮字段。",
     "API key": "API 密钥",
     "Access control": "访问控制",
     Accounts: "账户",
@@ -49,6 +93,8 @@
     "Auto create client users": "自动创建客户端用户",
     "AWS Cloudscape": "AWS Cloudscape",
     "Base URL": "基础 URL",
+    "Bind published Skills and discovered tools. Skill tool hints are suggestions only; tool access is granted by the checked tools below.":
+      "绑定已发布的技能和已发现的工具。技能中的工具提示仅供参考，实际权限只取决于下方勾选的工具。",
     "Bind known pages to RBAC object/action permissions. UI bindings never replace API authorization.":
       "将已知页面绑定到 RBAC 对象/操作权限。界面绑定不会替代 API 授权。",
     Builtin: "内置",
@@ -66,6 +112,9 @@
     "Client secret basic": "客户端密钥 Basic",
     "Client secret post": "客户端密钥 Post",
     "Cloud Control Plane": "云控制平面",
+    "Capabilities": "能力",
+    "Capabilities are managed on": "能力配置位于",
+    "and": "和",
     "Choose a cloud-console visual language. Preferences are stored server-side for this administrator.":
       "选择云控制台视觉风格。主题偏好会保存在当前管理员的账户中。",
     "Choosing a preset fills the endpoint code, name and base URL; it never fills the API key or the model.":
@@ -156,6 +205,7 @@
     Light: "浅色",
     light: "浅色",
     "LLM endpoints": "LLM 端点",
+    "LLM connection": "LLM 连接",
     "Login scopes": "登录 Scope",
     "Manage graph definitions directly against the shared workflow repository.":
       "直接针对共享工作流仓库管理图定义。",
@@ -165,8 +215,12 @@
     "MCP servers": "MCP 服务器",
     Menu: "菜单",
     Model: "模型",
+    "Missing LLM connection": "LLM 连接缺失",
     Name: "名称",
+    No: "否",
     "No OAuth provider is configured.": "尚未配置 OAuth 身份提供方。",
+    "No LLM connections configured": "尚未配置 LLM 连接",
+    "No LLM connection selected": "未选择 LLM 连接",
     "No admin login.": "无管理员登录。",
     "No admin login": "无管理员登录",
     "No audit records found.": "未找到审计记录。",
@@ -177,6 +231,8 @@
     "OAuth administrators are authorized through Casbin. Platform super admins bypass role checks.":
       "OAuth 管理员通过 Casbin 授权。平台超级管理员跳过角色检查。",
     "OAuth providers": "OAuth 身份提供方",
+    "Configure OIDC once and choose whether each provider may authenticate client users, administrators, or both. Client secrets are write-only.":
+      "只需配置一次 OIDC，即可选择各提供方用于客户端用户、管理员或两者登录。客户端密钥始终只写。",
     "OAuth role mappings": "OAuth 角色映射",
     "Optional for public clients": "公共客户端可选",
     Outcome: "结果",
@@ -193,16 +249,25 @@
     "Platform owner": "平台所有者",
     "Platform super admin": "平台超级管理员",
     "Platform super admins": "平台超级管理员",
+    "Only superAdmin can add or delete these role-less platform accounts. Passwords are generated and delivered automatically.":
+      "只有 superAdmin 可以新增或删除这些无角色平台账户。密码会自动生成并发送。",
     Preferences: "偏好设置",
     Priority: "优先级",
     "Prompt, model, tool, and skill bindings are managed inside the isolated admin service.":
       "提示词、模型、工具和技能绑定由独立管理服务维护。",
+    "Each Agent selects a configured LLM connection. Base URLs and API keys are maintained once on the LLM endpoints page.":
+      "每个智能体选择一条已配置的 LLM 连接。基础 URL 和 API 密钥统一在 LLM 端点页面维护。",
+    "Each Agent selects a configured LLM connection and explicit Skills and tools. Tool hints from a Skill remain suggestions; only checked tools are authorized.":
+      "每个智能体选择已配置的 LLM 连接，并明确绑定技能和工具。技能中的工具提示仅供参考，只有勾选的工具才会获得授权。",
     Provider: "身份提供方",
     "Provider code": "身份提供方代码",
     "Provider enabled": "启用身份提供方",
     "Provider preset": "服务商预设",
     Published: "已发布",
     published: "已发布",
+    "Published Skills": "已发布技能",
+    "Built-in tools": "内置工具",
+    "Unavailable bindings": "失效绑定",
     "Quick actions": "快捷操作",
     "Read only": "只读",
     "Recent invocations": "最近调用",
@@ -234,6 +299,9 @@
     "The submitted values are invalid.": "提交的值无效。",
     "A resource with that code already exists.": "该代码对应的资源已存在。",
     "The requested resource no longer exists.": "请求的资源已不存在。",
+    "This resource is in use and cannot be changed.": "该资源正在被使用，当前不能修改。",
+    "This Agent is referenced by one or more workflows.": "该智能体仍被一个或多个工作流引用。",
+    "The owner account cannot be deleted.": "平台所有者账户不能删除。",
     "The operation is not permitted.": "不允许执行此操作。",
     "The operation could not be completed.": "无法完成操作。",
     "The requested management page is unavailable.": "请求的管理页面不可用。",
@@ -262,6 +330,7 @@
     "Save preferences": "保存偏好设置",
     "Save provider": "保存身份提供方",
     "Save skill": "保存技能",
+    "Select a configured LLM connection": "选择已配置的 LLM 连接",
     Scopes: "Scope",
     "Secret configured": "已配置密钥",
     Security: "安全",
@@ -273,6 +342,8 @@
     "Skill body": "技能正文",
     Skills: "技能",
     "Skills (comma separated)": "技能（逗号分隔）",
+    "Suggested tools": "建议工具",
+    "Suggested tools (comma separated)": "建议工具（逗号分隔）",
     "Soft elevation, expressive shapes, and Google blue actions.":
       "柔和层级、表现力形状和 Google 蓝色操作。",
     Source: "来源",
@@ -282,6 +353,7 @@
     System: "跟随系统",
     system: "跟随系统",
     "System prompt": "系统提示词",
+    "Uses the LLM connection default when blank": "留空时使用 LLM 连接的默认模型",
     "stdio command": "stdio 命令",
     Theme: "主题",
     "Test connection": "测试连接",
@@ -292,6 +364,10 @@
     "Tool audit": "工具审计",
     "Tool name": "工具名称",
     "Tools (comma separated)": "工具（逗号分隔）",
+    "Built-in tool": "内置工具",
+    Tools: "工具",
+    "Open editor": "打开编辑器",
+    "Initial agent": "初始智能体",
     Transport: "传输方式",
     Type: "类型",
     URL: "URL",
@@ -300,9 +376,19 @@
       "使用组织身份登录，角色通过 OAuth 声明同步。",
     Username: "用户名",
     "Username claim": "用户名字段",
+    "Used by agents": "被智能体使用",
+    "Used by workflows": "被工作流使用",
+    "no default model": "无默认模型",
+    "No capabilities bound": "尚未绑定能力",
+    "Unavailable binding — uncheck to remove": "绑定已失效，取消勾选即可移除",
+    "Refresh to discover tools": "刷新以发现工具",
     Version: "版本",
     Workflow: "工作流",
     Workflows: "工作流",
+    "Legacy / manual": "旧版 / 手动",
+    "Configure an LLM connection before creating an Agent.":
+      "创建智能体前请先配置 LLM 连接。",
+    "Open LLM endpoints": "打开 LLM 端点",
     "Your administrator account is active, but all dashboard components are hidden by the current UI policy.":
       "管理员账户已启用，但当前界面策略隐藏了所有仪表盘组件。",
     Yes: "是",
@@ -316,6 +402,111 @@
     [/^New tenant scope for (.+)$/, "为 $1 设置新的租户范围"],
     [/^Tenant scope for (.+)$/, "租户范围：$1"],
     [/^(.+) sync age$/, "$1 同步时效"],
+    [
+      /^Delete LLM endpoint (.+)\? This action cannot be undone\.$/,
+      "删除 LLM 端点 $1？此操作无法撤销。",
+    ],
+    [
+      /^Delete MCP server (.+)\? This action cannot be undone\.$/,
+      "删除 MCP 服务器 $1？此操作无法撤销。",
+    ],
+    [
+      /^Delete Agent (.+)\? This action cannot be undone\.$/,
+      "删除智能体 $1？此操作无法撤销。",
+    ],
+    [
+      /^Delete Workflow (.+)\? This action cannot be undone\.$/,
+      "删除工作流 $1？此操作无法撤销。",
+    ],
+    [
+      /^Delete platform admin (.+)\? This action cannot be undone\.$/,
+      "删除平台管理员 $1？此操作无法撤销。",
+    ],
+    [
+      /^Delete OAuth provider (.+)\? This action cannot be undone\.$/,
+      "删除 OAuth 身份提供方 $1？此操作无法撤销。",
+    ],
+    [/^Delete (.+)\? This action cannot be undone\.$/, "删除 $1？此操作无法撤销。"],
+    // —— 删除确认对话框：标题与影响摘要在运行时注入，这里按模式翻译 ——
+    [/^Delete LLM endpoint (.+)$/, "删除 LLM 端点 $1"],
+    [/^Delete MCP server (.+)$/, "删除 MCP 服务器 $1"],
+    [/^Delete Agent (.+)$/, "删除智能体 $1"],
+    [/^Delete Workflow (.+)$/, "删除工作流 $1"],
+    [/^Archive Skill (.+)$/, "归档技能 $1"],
+    // —— 编辑面板标题与撤销按钮的可访问名称 ——
+    [/^Edit endpoint (.+)$/, "编辑端点 $1"],
+    [/^Edit agent (.+)$/, "编辑智能体 $1"],
+    [/^Edit skill (.+)$/, "编辑技能 $1"],
+    [/^Edit connection (.+)$/, "编辑连接 $1"],
+    [/^Edit provider (.+)$/, "编辑身份提供方 $1"],
+    [/^Undo delete (.+)$/, "撤销删除 $1"],
+    [/^Delete (.+)$/, "删除 $1"],
+    // —— 删除确认对话框的影响摘要（运行时注入）——
+    [
+      /^Agent (.+) \((.+)\) will be permanently removed\.$/,
+      "智能体 $1（$2）将被永久删除。",
+    ],
+    [
+      /^LLM endpoint (.+) \((.+)\) and its stored API key will be permanently removed\.$/,
+      "LLM 端点 $1（$2）及其已存 API 密钥将被永久删除。",
+    ],
+    [
+      /^MCP server (.+) \((.+)\) and its discovered tool catalog will be permanently removed\.$/,
+      "MCP 服务器 $1（$2）及其已发现的工具目录将被永久删除。",
+    ],
+    [
+      /^Skill (.+) \((.+)\) will be archived and removed from active use\.$/,
+      "技能 $1（$2）将被归档，不再参与运行。",
+    ],
+    [
+      /^Workflow (.+) \((.+)\) will be permanently removed\.$/,
+      "工作流 $1（$2）将被永久删除。",
+    ],
+    [
+      /^Agents keep their configuration; the agent itself is gone\.$/,
+      "智能体的配置会保留，但智能体本身已删除。",
+    ],
+    [
+      /^Skills keep their resources and revisions; restore is available from the API\.$/,
+      "技能会保留资源与修订，可通过 API 恢复。",
+    ],
+    [
+      /^Runs already started keep their in-memory definition snapshot\.$/,
+      "已开始的运行会保留内存中的定义快照。",
+    ],
+    [/^No workflow references this agent\.$/, "没有工作流引用该智能体。"],
+    [/^No agent uses this endpoint\.$/, "没有智能体使用该端点。"],
+    [/^Used by agents: (.+)$/, "被智能体使用：$1"],
+    [/^Referenced by workflows: (.+)$/, "被工作流引用：$1"],
+    [/^(\d+) discovered tool\(s\) will be removed\.$/, "将删除 $1 个已发现的工具。"],
+    [/^Delete LLM endpoint (.+)$/, "删除 LLM 端点 $1"],
+    [/^Delete MCP server (.+)$/, "删除 MCP 服务器 $1"],
+    [/^Delete Agent (.+)$/, "删除智能体 $1"],
+    [/^Delete Workflow (.+)$/, "删除工作流 $1"],
+    [/^Delete platform admin (.+)$/, "删除平台管理员 $1"],
+    [/^Delete OAuth provider (.+)$/, "删除 OAuth 身份提供方 $1"],
+    [
+      /^Archive Skill (.+)\? The skill will be removed from active use\.$/,
+      "归档技能 $1？该技能将不再参与新的绑定。",
+    ],
+    [/^Disable LLM endpoint (.+)$/, "禁用 LLM 端点 $1"],
+    [/^Enable LLM endpoint (.+)$/, "启用 LLM 端点 $1"],
+    [/^Disable MCP server (.+)$/, "禁用 MCP 服务器 $1"],
+    [/^Enable MCP server (.+)$/, "启用 MCP 服务器 $1"],
+    [/^Disable Agent (.+)$/, "禁用智能体 $1"],
+    [/^Enable Agent (.+)$/, "启用智能体 $1"],
+    [/^Disable Workflow (.+)$/, "禁用工作流 $1"],
+    [/^Enable Workflow (.+)$/, "启用工作流 $1"],
+    [/^Archive Skill (.+)$/, "归档技能 $1"],
+    [/^Used by agents: (.+)$/, "被智能体使用：$1"],
+    [/^Used by workflows: (.+)$/, "被工作流使用：$1"],
+    [/^Referenced by workflows: (.+)$/, "被工作流引用：$1"],
+    [/^(\d+) skills · (\d+) tools$/, "$1 个技能 · $2 个工具"],
+    [/^(\d+) tools$/, "$1 个工具"],
+    [
+      /^(\d+) redacted tool invocation records are visible to this tenant\.$/,
+      "当前租户有 $1 条脱敏工具调用记录。",
+    ],
   ];
 
   function safeParse(value) {
@@ -519,7 +710,7 @@
   }
 
   function translateAttributes(locale) {
-    for (const name of ["aria-label", "title", "placeholder"]) {
+    for (const name of ["aria-label", "title", "placeholder", "data-confirm"]) {
       for (const element of document.querySelectorAll(`[${name}]`)) {
         const source = element.getAttribute(name) || "";
         const translated = translatedText(source.trim(), locale);
@@ -604,6 +795,69 @@
     }
   }
 
+  function bindAgentConnectionDefaults() {
+    for (const select of document.querySelectorAll(
+      'select[name="llm_endpoint_code"]',
+    )) {
+      const form = select.form;
+      const model = form?.elements.namedItem("model");
+      if (!form || !model || !("placeholder" in model)) continue;
+      const genericPlaceholder =
+        model.dataset.agentModelPlaceholder || model.placeholder;
+      model.dataset.agentModelPlaceholder = genericPlaceholder;
+      const updateHint = () => {
+        const option = select.selectedOptions[0];
+        const label = option?.textContent || "";
+        const marker = label.lastIndexOf(" · ");
+        const fallback = marker >= 0 ? label.slice(marker + 3).trim() : "";
+        const noDefault =
+          fallback === "no default model" || fallback === "无默认模型";
+        const zh = document.documentElement.lang === "zh-CN";
+        if (!select.value) {
+          model.placeholder = genericPlaceholder;
+          model.required = false;
+        } else if (fallback && !noDefault) {
+          model.placeholder = zh
+            ? `留空时使用 ${fallback}`
+            : `Uses ${fallback} when blank`;
+          model.required = false;
+        } else {
+          model.placeholder = zh
+            ? "该连接没有默认模型，请填写模型"
+            : "This connection has no default model; enter one";
+          model.required = true;
+        }
+      };
+      select.addEventListener("change", updateHint);
+      updateHint();
+    }
+  }
+
+  function bindMcpTransportFields() {
+    for (const select of document.querySelectorAll(
+      'select[name="transport"]',
+    )) {
+      const form = select.form;
+      const url = form?.elements.namedItem("url");
+      const command = form?.elements.namedItem("command");
+      const updateFields = () => {
+        const stdio = select.value === "stdio";
+        for (const [control, visible] of [
+          [url, !stdio],
+          [command, stdio],
+        ]) {
+          if (!control || !("disabled" in control)) continue;
+          const label = control.closest("label");
+          if (label) label.hidden = !visible;
+          control.disabled = !visible;
+          control.required = visible;
+        }
+      };
+      select.addEventListener("change", updateFields);
+      updateFields();
+    }
+  }
+
   /**
    * LLM 端点的模型候选与连通性测试。
    *
@@ -660,6 +914,7 @@
         if (!form) return;
         const list = document.getElementById(target);
         const status = document.querySelector(`[data-llm-status="${target}"]`);
+      const help = document.querySelector(`[data-llm-help="${target}"]`);
         const text = probeMessages();
         const field = (name) => {
           const control = form.elements.namedItem(name);
@@ -673,6 +928,7 @@
         data.set("model", field("model"));
         data.set("csrf_token", field("csrf_token"));
         button.disabled = true;
+        button.setAttribute("aria-busy", "true");
         if (status) {
           status.textContent = mode === "test" ? text.testing : text.fetching;
         }
@@ -695,6 +951,8 @@
               status.textContent = payload.limited
                 ? text.limited(payload.error || "")
                 : text.failed(payload.error || `HTTP ${response.status}`);
+              // 失败时才给出排查指引（UX-07）。
+              if (help) help.hidden = false;
             }
             return;
           }
@@ -711,12 +969,265 @@
                 ? text.passed(payload.latency_ms || 0, payload.model || "")
                 : text.models(models.length);
           }
+          if (help) help.hidden = true;
         } catch {
           if (status) status.textContent = text.failed(text.network);
+          if (help) help.hidden = false;
         } finally {
           button.disabled = false;
+          button.setAttribute("aria-busy", "false");
         }
       });
+    }
+  }
+
+  /**
+   * 删除确认对话框。
+   *
+   * 行内的删除按钮只是**触发器**（``button[data-confirm-trigger]``），
+   * 它自己不提交表单——真正的提交发生在页面级对话框里的表单上。
+   * 这样「单击立即提交」变成「单击 → 阅读影响摘要 → 确认」。
+   *
+   * 对话框内容从触发器的 data 属性搬运：标题、说明、影响摘要。
+   * 表单的 action 与 CSRF 从触发器**所在的表单**里取，删除请求因此
+   * 与直接提交完全一致。
+   */
+  function bindConfirmDialog() {
+    const dialog = document.querySelector("[data-confirm-dialog]");
+    if (!dialog) return;
+    const titleNode = dialog.querySelector("#confirm-dialog-title");
+    const summaryNode = dialog.querySelector("[data-confirm-dialog-summary]");
+    const impactsNode = dialog.querySelector("[data-confirm-dialog-impacts]");
+    const form = dialog.querySelector("form");
+    const csrfInput = form?.querySelector('input[name="csrf_token"]');
+    const submitButton = dialog.querySelector("[data-confirm-dialog-submit]");
+    let pending = null;
+
+    const close = () => {
+      if (typeof dialog.close === "function") dialog.close();
+      else dialog.removeAttribute("open");
+      pending = null;
+    };
+
+    for (const button of document.querySelectorAll(
+      "button[data-confirm-trigger]",
+    )) {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        if (button.disabled) return;
+        const sourceForm = button.closest("form");
+        if (!sourceForm || !form) return;
+        pending = { source: sourceForm };
+        const locale = document.documentElement.lang === "zh-CN"
+          ? "zh-CN"
+          : "en";
+        const tr = (value) => translatedText(String(value || ""), locale);
+        if (titleNode) {
+          titleNode.textContent = tr(
+            button.dataset.confirmTitle || "Confirm",
+          );
+        }
+        if (summaryNode) {
+          summaryNode.textContent = tr(button.dataset.confirmSummary || "");
+        }
+        if (impactsNode) {
+          impactsNode.replaceChildren(
+            ...String(button.dataset.confirmImpacts || "")
+              .split("\n")
+              .filter((line) => line.trim().length > 0)
+              .map((line) => {
+                const item = document.createElement("p");
+                item.className = "confirm-impact";
+                item.textContent = tr(line.trim());
+                return item;
+              }),
+          );
+        }
+        const sourceCsrf = sourceForm.querySelector(
+          'input[name="csrf_token"]',
+        );
+        if (csrfInput && sourceCsrf) {
+          csrfInput.value = sourceCsrf.value;
+        }
+        form.action = sourceForm.getAttribute("action") || "";
+        if (typeof dialog.showModal === "function") dialog.showModal();
+        else dialog.setAttribute("open", "");
+        if (submitButton) submitButton.focus();
+      });
+    }
+
+    for (const button of dialog.querySelectorAll(
+      "[data-confirm-dialog-close]",
+    )) {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        close();
+      });
+    }
+
+    dialog.addEventListener("cancel", (event) => {
+      // Esc 关闭：默认行为已经会关掉弹层，这里只需要清掉待提交状态。
+      event.preventDefault();
+      close();
+    });
+
+    // 对话框不是原生 ``<dialog>``，所以自己处理 Esc。
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      if (!dialog.hasAttribute("open")) return;
+      event.preventDefault();
+      close();
+    });
+
+    form?.addEventListener("submit", (event) => {
+      if (!pending) {
+        event.preventDefault();
+        return;
+      }
+      // 表单照常提交；pending 只用于避免「没打开过对话框也能提交」。
+    });
+  }
+
+  /**
+   * 能力选择器的工具条（UX-19）。
+   *
+   * 工具多的时候整屏铺开，找一个工具要翻很久。这里提供三件事：
+   *
+   * - **本地搜索**：按工具名 / 描述过滤，空分组自动隐藏；
+   * - **只看可用**：把「服务器已停用」的条目过滤掉；
+   * - **已选计数**：实时显示勾选数量（含 Skill 与工具）。
+   *
+   * 分组标题还可以点击折叠，服务器一多时页面依然是可扫读的。
+   */
+  function bindCapabilitySelector() {
+    for (const selector of document.querySelectorAll(
+      "[data-capability-selector]",
+    )) {
+      const search = selector.querySelector("[data-capability-search]");
+      const onlyAvailable = selector.querySelector(
+        "[data-capability-available-only]",
+      );
+      const counter = selector.querySelector("[data-capability-count]");
+      const groups = Array.from(
+        selector.querySelectorAll("[data-capability-group]"),
+      );
+      const choices = Array.from(
+        selector.querySelectorAll(".capability-choice"),
+      );
+
+      const matches = (choice) => {
+        const keyword = (search?.value || "").trim().toLowerCase();
+        if (keyword) {
+          const haystack = (
+            choice.dataset.capabilityTitle || choice.textContent || ""
+          ).toLowerCase();
+          if (!haystack.includes(keyword)) return false;
+        }
+        if (onlyAvailable?.checked) {
+          if (choice.dataset.capabilityUnavailable === "1") return false;
+        }
+        return true;
+      };
+
+      const apply = () => {
+        for (const choice of choices) {
+          choice.hidden = !matches(choice);
+        }
+        for (const group of groups) {
+          const visible = group.querySelectorAll(
+            ".capability-choice:not([hidden])",
+          );
+          group.hidden = visible.length === 0;
+          if (visible.length === 0) {
+            group.classList.add("is-empty");
+          } else {
+            group.classList.remove("is-empty");
+          }
+        }
+        if (counter) {
+          const selected = choices.filter(
+            (choice) =>
+              choice.querySelector("input[type=checkbox]")?.checked,
+          ).length;
+          const zh = document.documentElement.lang === "zh-CN";
+          counter.textContent = zh
+            ? `已选 ${selected} 项`
+            : `${selected} selected`;
+          counter.dataset.capabilitySelected = String(selected);
+        }
+      };
+
+      search?.addEventListener("input", apply);
+      onlyAvailable?.addEventListener("change", apply);
+      selector.addEventListener("change", apply);
+
+      for (const toggle of selector.querySelectorAll(
+        "[data-capability-toggle]",
+      )) {
+        toggle.addEventListener("click", () => {
+          const group = toggle.closest("[data-capability-group]");
+          if (!group) return;
+          const collapsed = group.classList.toggle("is-collapsed");
+          toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        });
+      }
+
+      apply();
+    }
+  }
+
+  /**
+   * 独立编辑面板（UX-09）。
+   *
+   * 面板由 URL 上的 ``?resource=<code>`` 决定，因此：
+   *
+   * - 深链接打开后自动滚到面板并聚焦标题；
+   * - 面板里的表单一旦被改动，离开页面前会提示「未保存」。
+   */
+  function bindEditPanels() {
+    for (const panel of document.querySelectorAll("[data-edit-panel]")) {
+      const form = panel.querySelector("form");
+      if (!form) continue;
+      let dirty = false;
+      const markDirty = () => {
+        if (dirty) return;
+        dirty = true;
+        panel.dataset.editDirty = "1";
+      };
+      const markClean = () => {
+        dirty = false;
+        delete panel.dataset.editDirty;
+      };
+      form.addEventListener("input", markDirty);
+      form.addEventListener("change", markDirty);
+      form.addEventListener("submit", markClean);
+
+      for (const link of panel.querySelectorAll("[data-edit-close]")) {
+        link.addEventListener("click", (event) => {
+          if (!dirty) return;
+          const zh = document.documentElement.lang === "zh-CN";
+          const message = zh
+            ? "编辑内容尚未保存，确定要离开吗？"
+            : "You have unsaved changes. Leave anyway?";
+          if (!window.confirm(message)) {
+            event.preventDefault();
+          }
+        });
+      }
+    }
+
+    let warned = false;
+    window.addEventListener("beforeunload", (event) => {
+      const dirtyPanel = document.querySelector("[data-edit-dirty]");
+      if (!dirtyPanel || warned) return;
+      warned = true;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+
+    const panel = document.querySelector("[data-edit-panel]");
+    if (panel && panel.dataset.editPanel) {
+      panel.scrollIntoView({ block: "start" });
     }
   }
 
@@ -731,6 +1242,11 @@
     bindAppearancePersistence(appearance);
     bindLoginControls();
     bindLlmPresetPicker();
+    bindAgentConnectionDefaults();
+    bindMcpTransportFields();
     bindLlmProbe();
+    bindConfirmDialog();
+    bindCapabilitySelector();
+    bindEditPanels();
   });
 })();

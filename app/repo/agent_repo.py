@@ -8,6 +8,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.agent import Agent
 
 
+def _agent_sort(sort: str) -> tuple[Any, ...]:
+    """把排序字段名翻译成 ORDER BY 片段。
+
+    白名单在**代码里**而不是来自请求：排序字段直接进 SQL 的 ORDER BY，
+    放开未知取值等于把 SQL 片段暴露给用户。
+    """
+    if sort == "name":
+        return (Agent.name.asc(), Agent.id.desc())
+    if sort == "code":
+        return (Agent.code.asc(), Agent.id.desc())
+    if sort == "created":
+        return (Agent.id.desc(),)
+    return (Agent.id.desc(),)
+
+
 class AgentRepo:
     async def create(self, db: AsyncSession, **kwargs) -> Agent:
         """插入新 Agent 并立刻 commit + refresh，使返回对象带齐自增 id 与库端默认值。
@@ -45,6 +60,58 @@ class AgentRepo:
         rows = await db.scalars(sa.select(Agent).where(Agent.code.in_(set(codes))))
         return {a.code: a for a in rows}
 
+    async def count_for_llm_endpoint(
+        self, db: AsyncSession, llm_endpoint_code: str
+    ) -> int:
+        """统计仍引用指定 LLM 连接的 Agent 数量。"""
+        count = await db.scalar(
+            sa.select(sa.func.count(Agent.id)).where(
+                Agent.llm_endpoint_code == llm_endpoint_code
+            )
+        )
+        return int(count or 0)
+
+    async def llm_endpoint_binding_map(
+        self, db: AsyncSession, tenant_id: str | None = None
+    ) -> dict[str, list[str]]:
+        """返回 LLM endpoint code → 绑定它的 Agent code 列表。"""
+        stmt = sa.select(Agent.code, Agent.llm_endpoint_code)
+        if tenant_id is not None:
+            stmt = stmt.where(Agent.tenant_id == tenant_id)
+        out: dict[str, list[str]] = {}
+        for agent_code, endpoint_code in await db.execute(stmt):
+            if isinstance(endpoint_code, str) and endpoint_code:
+                out.setdefault(endpoint_code, []).append(agent_code)
+        return out
+
+    async def skill_binding_map(
+        self, db: AsyncSession, tenant_id: str | None = None
+    ) -> dict[str, list[str]]:
+        """返回 Skill code → 绑定它的 Agent code 列表。"""
+        stmt = sa.select(Agent.code, Agent.skills)
+        if tenant_id is not None:
+            stmt = stmt.where(Agent.tenant_id == tenant_id)
+        out: dict[str, list[str]] = {}
+        for code, skills in await db.execute(stmt):
+            for skill_code in skills or []:
+                if isinstance(skill_code, str):
+                    out.setdefault(skill_code, []).append(code)
+        return out
+
+    async def tool_binding_map(
+        self, db: AsyncSession, tenant_id: str | None = None
+    ) -> dict[str, list[str]]:
+        """返回工具名 → 绑定它的 Agent code 列表。"""
+        stmt = sa.select(Agent.code, Agent.tools)
+        if tenant_id is not None:
+            stmt = stmt.where(Agent.tenant_id == tenant_id)
+        out: dict[str, list[str]] = {}
+        for code, tools in await db.execute(stmt):
+            for tool_name in tools or []:
+                if isinstance(tool_name, str):
+                    out.setdefault(tool_name, []).append(code)
+        return out
+
     async def list(
         self,
         db: AsyncSession,
@@ -52,20 +119,53 @@ class AgentRepo:
         limit: int = 200,
         offset: int = 0,
         tenant_id: str | None = None,
+        search: str | None = None,
+        sort: str = "",
     ) -> list[Agent]:
         """分页列出 Agent，按 id 倒序（新建的排前面）。
 
         Args:
             only_enabled: 只返回 enabled=1 的配置，避免编排引用到已停用的 Agent。
             limit/offset: 分页窗口，由 API 层的 Query 约束上界。
+            search: 按编码或名称做包含匹配（管理端列表搜索，UX-06）。
+            sort: 排序字段：``name`` / ``code`` / ``created``；空串为默认。
         """
         stmt = sa.select(Agent)
         if only_enabled:
             stmt = stmt.where(Agent.enabled == 1)
         if tenant_id is not None:
             stmt = stmt.where(Agent.tenant_id == tenant_id)
-        stmt = stmt.order_by(Agent.id.desc()).limit(limit).offset(offset)
+        if search:
+            pattern = f"%{search}%"
+            stmt = stmt.where(
+                sa.or_(
+                    Agent.code.like(pattern),
+                    Agent.name.like(pattern),
+                )
+            )
+        stmt = stmt.order_by(*_agent_sort(sort)).limit(limit).offset(offset)
         return list(await db.scalars(stmt))
+
+    async def count(
+        self,
+        db: AsyncSession,
+        *,
+        tenant_id: str | None = None,
+        search: str | None = None,
+    ) -> int:
+        """统计符合条件的 Agent 数量（管理端分页用，UX-06）。"""
+        stmt = sa.select(sa.func.count(Agent.id))
+        if tenant_id is not None:
+            stmt = stmt.where(Agent.tenant_id == tenant_id)
+        if search:
+            pattern = f"%{search}%"
+            stmt = stmt.where(
+                sa.or_(
+                    Agent.code.like(pattern),
+                    Agent.name.like(pattern),
+                )
+            )
+        return int(await db.scalar(stmt) or 0)
 
     async def update(
         self,

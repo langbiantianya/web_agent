@@ -242,6 +242,81 @@ async def test_delete_bound_skill_conflicts(client):
     assert "绑着" in resp.json()["message"]
 
 
+async def test_bound_skill_cannot_be_disabled_or_drafted(client):
+    """停用或转草稿同样会让注入静默消失，必须先在 Agent 上解绑。"""
+    await client.post(
+        "/api/skills",
+        json={"code": "bound-off", "description": "d", "body": "b"},
+        headers=ADMIN_HEADERS,
+    )
+    await client.post(
+        "/api/agents",
+        json={
+            "code": "bound_off_agent",
+            "name": "a",
+            "system_prompt": "x",
+            "model": "m",
+            "base_url": "http://x",
+            "skills": ["bound-off"],
+        },
+    )
+    for payload in ({"enabled": False}, {"status": "draft"}):
+        resp = await client.put(
+            "/api/skills/bound-off", json=payload, headers=ADMIN_HEADERS
+        )
+        assert resp.status_code == 409, resp.text
+
+    allowed = await client.put(
+        "/api/skills/bound-off",
+        json={"description": "updated"},
+        headers=ADMIN_HEADERS,
+    )
+    assert allowed.status_code == 200, allowed.text
+
+
+async def test_disabled_bound_skill_can_still_be_edited(client):
+    """历史停用绑定不应阻止内容维护；只有新的停用跃迁需要先解绑。"""
+    created = await client.post(
+        "/api/skills",
+        json={
+            "code": "disabled-bound-skill",
+            "description": "旧技能",
+            "body": "旧内容",
+        },
+        headers=ADMIN_HEADERS,
+    )
+    assert created.status_code == 201, created.text
+    agent = await client.post(
+        "/api/agents",
+        json={
+            "code": "disabled-bound-agent",
+            "name": "旧绑定",
+            "system_prompt": "你是助手",
+            "model": "gpt-4o-mini",
+            "skills": ["disabled-bound-skill"],
+        },
+    )
+    assert agent.status_code == 201, agent.text
+    from app.config.db import SessionLocal
+    from app.repo.skill_repo import skill_repo
+
+    async with SessionLocal() as db:
+        await skill_repo.update(
+            db,
+            "disabled-bound-skill",
+            {"enabled": 0},
+            bump_version=False,
+        )
+
+    updated = await client.put(
+        "/api/skills/disabled-bound-skill",
+        json={"body": "维护后的内容", "enabled": False},
+        headers=ADMIN_HEADERS,
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["body"] == "维护后的内容"
+
+
 async def test_list_reports_used_by(client):
     """列表里带上被哪些 Agent 绑着。"""
     await client.post(

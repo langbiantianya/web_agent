@@ -19,6 +19,12 @@ class Agent(Base):
     name: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     description: Mapped[str] = mapped_column(sa.String(512), default="")
     system_prompt: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    # 管理端新建的 Agent 选择一条已配置的 LLM 连接；地址与密钥由该连接统一
+    # 维护。保留 model 作为 Agent 级模型选择，base_url/api_key_cipher 则只服务
+    # 升级前的存量配置。
+    llm_endpoint_code: Mapped[str | None] = mapped_column(
+        sa.String(64), nullable=True
+    )
     model: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     base_url: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     api_key_cipher: Mapped[str] = mapped_column(sa.String(512), nullable=False)
@@ -47,6 +53,7 @@ class Agent(Base):
     __table_args__ = (
         sa.Index("idx_agent_enabled", "enabled"),
         sa.Index("idx_agent_tenant", "tenant_id"),
+        sa.Index("idx_agent_llm_endpoint", "llm_endpoint_code"),
     )
 
     def __repr__(self) -> str:  # pragma: no cover

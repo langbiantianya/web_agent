@@ -365,11 +365,62 @@ async def test_agent_tool_list_drops_deleted_server_tools(client):
     assert created.status_code == 201, created.text
     assert created.json()["tools"] == ["mcp__mcpapi-bind__get_weather"]
 
-    # 服务器删掉 → 快照连带删掉 → Agent 上的绑定读回来时不再显示
-    await client.delete("/api/mcp/servers/mcpapi-bind", headers=ADMIN_HEADERS)
+    # 直接删仓储数据，模拟历史残留或外部清理：API 现在会阻止删除仍被使用的
+    # 服务器，但读路径仍必须宽容处理已经存在的脏绑定。
+    async with SessionLocal() as db:
+        assert await mcp_server_repo.delete(db, "mcpapi-bind")
     listed = await client.get("/api/agents/mcpapi-agent2")
     assert listed.status_code == 200, listed.text
     assert listed.json()["tools"] is None
+
+
+async def test_agent_cannot_bind_tools_from_disabled_server(client):
+    """服务器停用后，旧工具快照不能继续作为新 Agent 的可用能力。"""
+    from app.config.db import SessionLocal
+    from app.repo.mcp_repo import mcp_server_repo, mcp_tool_repo
+
+    await client.post(
+        "/api/mcp/servers",
+        json={
+            "code": "mcpapi-disabled",
+            "transport": "http",
+            "url": "https://a.example.com/mcp",
+        },
+        headers=ADMIN_HEADERS,
+    )
+    async with SessionLocal() as db:
+        server = await mcp_server_repo.get_by_code(db, "mcpapi-disabled")
+        assert server is not None
+        await mcp_tool_repo.replace_for_server(
+            db,
+            server.id,
+            [
+                {
+                    "qualified_name": "mcp__mcpapi-disabled__lookup",
+                    "tool_name": "lookup",
+                    "description": "Disabled lookup",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+        )
+    disabled = await client.put(
+        "/api/mcp/servers/mcpapi-disabled",
+        json={"enabled": False},
+        headers=ADMIN_HEADERS,
+    )
+    assert disabled.status_code == 200, disabled.text
+
+    created = await client.post(
+        "/api/agents",
+        json={
+            "code": "mcpapi-disabled-agent",
+            "name": "Disabled MCP agent",
+            "system_prompt": "You are an assistant.",
+            "model": "gpt-4o-mini",
+            "tools": ["mcp__mcpapi-disabled__lookup"],
+        },
+    )
+    assert created.status_code == 400, created.text
 
 
 # --------------------------------------------------------------- 工具目录

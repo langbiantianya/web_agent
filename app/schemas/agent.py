@@ -26,6 +26,8 @@ class AgentBase(BaseModel):
     description: str = Field(default="", max_length=512)
     system_prompt: str = Field(min_length=1, max_length=MAX_SYSTEM_PROMPT)
     model: str = Field(min_length=1, max_length=128)
+    # 管理端新配置选择统一 LLM 连接；为空表示继续使用升级前的 Agent 内嵌地址。
+    llm_endpoint_code: str | None = Field(default=None, max_length=64)
     # 新部署的地址与 Key 在 llm_endpoint 表统一管理；这两个字段保留给旧客户端
     # 与升级期兼容。两者为空时，运行期只使用数据库接口配置。
     base_url: str = Field(default="", max_length=255)
@@ -70,6 +72,7 @@ class AgentUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=512)
     system_prompt: str | None = Field(default=None, max_length=MAX_SYSTEM_PROMPT)
     model: str | None = Field(default=None, max_length=128)
+    llm_endpoint_code: str | None = Field(default=None, max_length=64)
     base_url: str | None = Field(default=None, max_length=255)
     api_key: str | None = Field(default=None, max_length=512)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
@@ -94,6 +97,7 @@ class AgentOut(ORMBase):
     description: str
     system_prompt: str
     model: str
+    llm_endpoint_code: str | None = None
     base_url: str
     temperature: float
     max_tokens: int

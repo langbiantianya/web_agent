@@ -91,6 +91,25 @@ async def refresh_catalog(db: AsyncSession, server) -> CatalogResult:
         )
         result.imported.append(qualified)
 
+    current = await mcp_tool_repo.list_by_server(db, server.id)
+    discovered = {row["qualified_name"] for row in rows}
+    from app.repo.agent_repo import agent_repo
+
+    bindings = await agent_repo.tool_binding_map(
+        db, tenant_id=server.tenant_id
+    )
+    removed_bound = [
+        row.qualified_name
+        for row in current
+        if row.qualified_name in bindings
+        and row.qualified_name not in discovered
+    ]
+    if removed_bound:
+        raise McpCatalogError(
+            "以下 MCP 工具仍被 Agent 使用，不能从目录中移除："
+            + "、".join(sorted(removed_bound))
+        )
+
     await mcp_tool_repo.replace_for_server(db, server.id, rows)
     logger.info(
         "MCP %s 目录刷新完成：导入 %s 个，跳过 %s 个",

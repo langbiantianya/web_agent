@@ -29,6 +29,7 @@ from ludic.html import (
 
 from app.models.admin_control import AdminPageDefinition
 from services.admin_web.accounts import AdminPrincipal
+from services.admin_web.views.fields import _Option
 from services.admin_web.views.shell import shell
 
 
@@ -63,7 +64,7 @@ def audit_page(
         label(
             span("Source"),
             select(
-                option("Any", value=""),
+                _Option("Any", value=""),
                 option("Builtin", value="builtin"),
                 option("Skill", value="skill"),
                 option("MCP", value="mcp"),
@@ -73,7 +74,7 @@ def audit_page(
         label(
             span("Outcome"),
             select(
-                option("Any", value=""),
+                _Option("Any", value=""),
                 option("Success", value="true"),
                 option("Failed", value="false"),
                 name="ok",

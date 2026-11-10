@@ -35,7 +35,7 @@
         },
         {
           "attrs": {
-            "href": "/admin/static/admin.css?v=login-slide-20261107-3",
+            "href": "/admin/static/admin.css?v=admin-responsive-20261110-6",
             "rel": "stylesheet"
           },
           "children": [],
@@ -43,7 +43,7 @@
         },
         {
           "attrs": {
-            "src": "/admin/static/admin-ui.js?v=llm-probe-20261109-1"
+            "src": "/admin/static/admin-ui.js?v=admin-ui-20261110-10"
           },
           "children": [],
           "tag": "script"
@@ -906,8 +906,10 @@
                                 },
                                 {
                                   "attrs": {
+                                    "aria-live": "polite",
                                     "class": "block-muted",
-                                    "data-llm-status": "llm-model-new"
+                                    "data-llm-status": "llm-model-new",
+                                    "role": "status"
                                   },
                                   "children": [
                                     {
@@ -915,6 +917,47 @@
                                     }
                                   ],
                                   "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "class": "llm-probe-help",
+                                    "data-llm-help": "llm-model-new",
+                                    "hidden": "true"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Troubleshooting"
+                                        }
+                                      ],
+                                      "tag": "summary"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "class": "block-muted"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Check the base URL, the API key and whether the service accepts the OpenAI-compatible protocol (POST /v1/chat/completions)."
+                                        }
+                                      ],
+                                      "tag": "p"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "class": "block-muted"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "A 401 means the key is wrong, a 404 means the base URL is wrong, and a timeout means the host is unreachable."
+                                        }
+                                      ],
+                                      "tag": "p"
+                                    }
+                                  ],
+                                  "tag": "details"
                                 }
                               ],
                               "tag": "div"
@@ -990,6 +1033,15 @@
                                           "children": [
                                             {
                                               "text": "Model"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Used by agents"
                                             }
                                           ],
                                           "tag": "th"
@@ -1075,6 +1127,21 @@
                                           "attrs": {},
                                           "children": [
                                             {
+                                              "attrs": {},
+                                              "children": [
+                                                {
+                                                  "text": "None"
+                                                }
+                                              ],
+                                              "tag": "span"
+                                            }
+                                          ],
+                                          "tag": "td"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
                                               "text": "10"
                                             }
                                           ],
@@ -1124,7 +1191,10 @@
                                                     },
                                                     {
                                                       "attrs": {
+                                                        "aria-label": "Disable LLM endpoint Snapshot LLM",
                                                         "class": "btn btn-secondary btn-small",
+                                                        "disabled": "false",
+                                                        "title": "None",
                                                         "type": "submit"
                                                       },
                                                       "children": [
@@ -1155,8 +1225,15 @@
                                                     },
                                                     {
                                                       "attrs": {
+                                                        "aria-label": "Delete LLM endpoint Snapshot LLM",
                                                         "class": "btn btn-danger btn-small",
-                                                        "type": "submit"
+                                                        "data-confirm-impacts": "No agent uses this endpoint.",
+                                                        "data-confirm-summary": "LLM endpoint Snapshot LLM (snapshot-llm) and its stored API key will be permanently removed.",
+                                                        "data-confirm-title": "Delete LLM endpoint Snapshot LLM",
+                                                        "data-confirm-trigger": "1",
+                                                        "disabled": "false",
+                                                        "title": "None",
+                                                        "type": "button"
                                                       },
                                                       "children": [
                                                         {
@@ -1172,225 +1249,18 @@
                                               "tag": "div"
                                             },
                                             {
-                                              "attrs": {},
+                                              "attrs": {
+                                                "aria-label": "Edit endpoint snapshot-llm",
+                                                "class": "btn btn-secondary btn-small",
+                                                "data-edit-link": "snapshot-llm",
+                                                "href": "/admin/llm?resource=snapshot-llm"
+                                              },
                                               "children": [
                                                 {
-                                                  "attrs": {},
-                                                  "children": [
-                                                    {
-                                                      "text": "Edit endpoint"
-                                                    }
-                                                  ],
-                                                  "tag": "summary"
-                                                },
-                                                {
-                                                  "attrs": {
-                                                    "action": "/admin/llm/snapshot-llm/update",
-                                                    "class": "stack",
-                                                    "method": "post"
-                                                  },
-                                                  "children": [
-                                                    {
-                                                      "attrs": {
-                                                        "name": "csrf_token",
-                                                        "type": "hidden",
-                                                        "value": "<CSRF>"
-                                                      },
-                                                      "children": [],
-                                                      "tag": "input"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Name"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "name",
-                                                            "value": "Snapshot LLM"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Base URL"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "base_url",
-                                                            "value": "https://llm.example.com/v1"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Model"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "list": "llm-model-snapshot-llm",
-                                                            "name": "model",
-                                                            "placeholder": "deepseek-chat",
-                                                            "value": "snapshot-model"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Priority"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "name": "priority",
-                                                            "type": "number",
-                                                            "value": "10"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {},
-                                                      "children": [
-                                                        {
-                                                          "attrs": {},
-                                                          "children": [
-                                                            {
-                                                              "text": "Replacement API key"
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "autocomplete": "new-password",
-                                                            "name": "api_key",
-                                                            "placeholder": "Leave blank to keep current key",
-                                                            "type": "password"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "input"
-                                                        }
-                                                      ],
-                                                      "tag": "label"
-                                                    },
-                                                    {
-                                                      "attrs": {
-                                                        "class": "row-actions"
-                                                      },
-                                                      "children": [
-                                                        {
-                                                          "attrs": {
-                                                            "id": "llm-model-snapshot-llm"
-                                                          },
-                                                          "children": [],
-                                                          "tag": "datalist"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "class": "btn btn-secondary btn-small",
-                                                            "data-llm-endpoint": "snapshot-llm",
-                                                            "data-llm-fetch": "llm-model-snapshot-llm",
-                                                            "type": "button"
-                                                          },
-                                                          "children": [
-                                                            {
-                                                              "text": "Fetch models"
-                                                            }
-                                                          ],
-                                                          "tag": "button"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "class": "btn btn-secondary btn-small",
-                                                            "data-llm-endpoint": "snapshot-llm",
-                                                            "data-llm-test": "llm-model-snapshot-llm",
-                                                            "type": "button"
-                                                          },
-                                                          "children": [
-                                                            {
-                                                              "text": "Test connection"
-                                                            }
-                                                          ],
-                                                          "tag": "button"
-                                                        },
-                                                        {
-                                                          "attrs": {
-                                                            "class": "block-muted",
-                                                            "data-llm-status": "llm-model-snapshot-llm"
-                                                          },
-                                                          "children": [
-                                                            {
-                                                              "text": ""
-                                                            }
-                                                          ],
-                                                          "tag": "span"
-                                                        }
-                                                      ],
-                                                      "tag": "div"
-                                                    },
-                                                    {
-                                                      "attrs": {
-                                                        "class": "btn btn-primary",
-                                                        "type": "submit"
-                                                      },
-                                                      "children": [
-                                                        {
-                                                          "text": "Save endpoint"
-                                                        }
-                                                      ],
-                                                      "tag": "button"
-                                                    }
-                                                  ],
-                                                  "tag": "form"
+                                                  "text": "Edit endpoint"
                                                 }
                                               ],
-                                              "tag": "details"
+                                              "tag": "a"
                                             }
                                           ],
                                           "tag": "td"
@@ -1412,6 +1282,103 @@
                     }
                   ],
                   "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "aria-modelledby": "confirm-dialog-title",
+                    "class": "confirm-dialog",
+                    "data-confirm-dialog": "1",
+                    "role": "dialog"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "confirm-body"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "id": "confirm-dialog-title"
+                          },
+                          "children": [
+                            {
+                              "text": ""
+                            }
+                          ],
+                          "tag": "h2"
+                        },
+                        {
+                          "attrs": {
+                            "class": "lead",
+                            "data-confirm-dialog-summary": "1"
+                          },
+                          "children": [
+                            {
+                              "text": ""
+                            }
+                          ],
+                          "tag": "p"
+                        },
+                        {
+                          "attrs": {
+                            "class": "confirm-impacts",
+                            "data-confirm-dialog-impacts": "1"
+                          },
+                          "children": [
+                            {
+                              "text": ""
+                            }
+                          ],
+                          "tag": "div"
+                        },
+                        {
+                          "attrs": {
+                            "class": "confirm-actions",
+                            "method": "post"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "name": "csrf_token",
+                                "type": "hidden"
+                              },
+                              "children": [],
+                              "tag": "input"
+                            },
+                            {
+                              "attrs": {
+                                "class": "btn btn-secondary",
+                                "data-confirm-dialog-close": "1",
+                                "type": "button"
+                              },
+                              "children": [
+                                {
+                                  "text": "Cancel"
+                                }
+                              ],
+                              "tag": "button"
+                            },
+                            {
+                              "attrs": {
+                                "class": "btn btn-danger",
+                                "data-confirm-dialog-submit": "1",
+                                "type": "submit"
+                              },
+                              "children": [
+                                {
+                                  "text": "Delete"
+                                }
+                              ],
+                              "tag": "button"
+                            }
+                          ],
+                          "tag": "form"
+                        }
+                      ],
+                      "tag": "div"
+                    }
+                  ],
+                  "tag": "section"
                 }
               ],
               "tag": "main"

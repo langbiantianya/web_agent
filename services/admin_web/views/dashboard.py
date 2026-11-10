@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from ludic.html import a, div, h2, p, section
+from ludic.html import a, div, h1, h2, p, section
 
 from app.models.admin_control import AdminPageDefinition
 from services.admin_web.accounts import AdminPrincipal
@@ -75,5 +75,9 @@ def dashboard(
         color_mode=color_mode,
         density=density,
         pages=pages,
-        content=sections[0] if len(sections) == 1 else div(*sections, class_="stack"),
+        content=div(
+            section(h1("Overview")),
+            sections[0] if len(sections) == 1 else div(*sections, class_="stack"),
+            class_="stack",
+        ),
     )

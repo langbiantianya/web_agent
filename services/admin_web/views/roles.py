@@ -33,6 +33,8 @@ from ludic.html import (
 from app.models.admin_control import AdminPageDefinition, OAuthRoleMapping
 from app.models.oauth import OAuthProvider
 from services.admin_web.accounts import AdminPrincipal
+from services.admin_web.listing import ListParams
+from services.admin_web.views.list_controls import list_controls
 from services.admin_web.views.shell import shell
 
 
@@ -45,6 +47,8 @@ def roles_page(
     theme: str,
     color_mode: str,
     density: str,
+    list_params: ListParams | None = None,
+    list_total: int = 0,
 ) -> Any:
     """展示 Casbin p/g 规则。"""
     rows = [
@@ -65,14 +69,34 @@ def roles_page(
         color_mode=color_mode,
         density=density,
         pages=pages,
-        content=section(
-            h1("Casbin policy"),
-            p(
-                "OAuth administrators are authorized through Casbin. Platform "
-                "super admins bypass role checks.",
-                class_="lead",
+        content=div(
+            section(
+                h1("Casbin roles"),
+                p(
+                    "OAuth administrators are authorized through Casbin. Platform "
+                    "super admins bypass role checks.",
+                    class_="lead",
+                ),
+                class_="surface",
             ),
-            div(
+            *(
+                [
+                    section(
+                        list_controls(
+                            action="/admin/access/roles",
+                            params=list_params or ListParams(),
+                            total=list_total,
+                            search_label="Search rules",
+                            search_placeholder="Type, subject or role",
+                        ),
+                        class_="surface list-controls",
+                    )
+                ]
+                if list_params is not None
+                else []
+            ),
+            section(
+                div(
                 table(
                     thead(tr(th("Type"), th("v0"), th("v1"), th("v2"), th("v3"))),
                     tbody(*rows),
@@ -80,7 +104,9 @@ def roles_page(
                 ),
                 class_="table-scroll",
             ),
-            class_="surface",
+                class_="surface",
+            ),
+            class_="stack",
         ),
     )
 

@@ -30,6 +30,8 @@ from ludic.html import (
 
 from app.models.admin_control import AdminPageDefinition, SuperAdminAccount
 from services.admin_web.accounts import AdminPrincipal
+from services.admin_web.listing import ListParams
+from services.admin_web.views.list_controls import list_controls
 from services.admin_web.views.shell import shell
 
 
@@ -43,6 +45,8 @@ def platform_admins_page(
     color_mode: str,
     density: str,
     flash: str | None = None,
+    list_params: ListParams | None = None,
+    list_total: int = 0,
 ) -> Any:
     """渲染 owner 专属平台超级管理员管理页。"""
     rows = []
@@ -56,6 +60,11 @@ def platform_admins_page(
                     "Delete",
                     type="submit",
                     class_="btn btn-danger btn-small",
+                    aria_label=f"Delete platform admin {account.username}",
+                    data_confirm=(
+                        f"Delete platform admin {account.username}? "
+                        "This action cannot be undone."
+                    ),
                 ),
                 action=f"/admin/platform-admins/{account.id}/delete",
                 method="post",
@@ -110,6 +119,22 @@ def platform_admins_page(
                     class_="form-grid",
                 ),
                 class_="surface",
+            ),
+            *(
+                [
+                    section(
+                        list_controls(
+                            action="/admin/platform-admins",
+                            params=list_params or ListParams(),
+                            total=list_total,
+                            search_label="Search accounts",
+                            search_placeholder="Username or email",
+                        ),
+                        class_="surface list-controls",
+                    )
+                ]
+                if list_params is not None
+                else []
             ),
             section(
                 h2("Accounts"),

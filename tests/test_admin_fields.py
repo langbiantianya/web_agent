@@ -36,14 +36,36 @@ def test_field_renders_textarea_with_rows() -> None:
 
 def test_field_renders_select_with_options() -> None:
     element = render_field(
-        Field("enabled", "Enabled", kind="select", options=(("Yes", "1"), ("No", "0"))),
+        Field(
+            "enabled",
+            "Enabled",
+            kind="select",
+            options=(("Yes", "1"), ("No", "0")),
+            required=True,
+        ),
         "1",
         mode="create",
     )
     html = element.to_html()
     assert "<select" in html
+    assert "required" in html
     assert 'value="1"' in html
     assert 'value="0"' in html
+
+
+def test_select_keeps_empty_option_value_sentinel() -> None:
+    """空选项必须提交空字符串，不能退化成显示文案。"""
+    html = render_field(
+        Field(
+            "connection",
+            "Connection",
+            kind="select",
+            options=(("Select a connection", ""), ("Primary", "primary")),
+        ),
+        None,
+        mode="create",
+    ).to_html()
+    assert '<option value="">Select a connection</option>' in html
 
 
 def test_field_passes_through_autocomplete_and_bounds() -> None:
@@ -323,7 +345,7 @@ def test_edit_required_has_three_states() -> None:
     ``None`` = 继承 ``required``；``True`` = 编辑态必填；``False`` =
     编辑态**显式不必填**（不渲染 ``required`` 属性）。
 
-    ``required`` 只对 ``text`` 系与 ``textarea`` 生效，``select`` 忽略。
+        ``required`` 对 ``text`` 系、``textarea`` 与 ``select`` 生效。
     """
     # 1) None ⇒ 继承 required：创建态与编辑态都必填。
     inherited = Field("name", "Name", required=True)
@@ -347,11 +369,18 @@ def test_edit_required_has_three_states() -> None:
     assert "required" not in render_field(textarea_edit_only, "x", mode="create").to_html()
     assert "required" in render_field(textarea_edit_only, "x", mode="edit").to_html()
 
-    # select 忽略 required（既有规则不变）。
+    # select 同样遵守三态覆盖。
     select_field = Field(
         "status", "Status", kind="select", required=True, edit_required=True
     )
-    assert "required" not in render_field(select_field, "x", mode="edit").to_html()
+    assert "required" in render_field(select_field, "x", mode="edit").to_html()
+
+    select_edit_never = Field(
+        "status", "Status", kind="select", required=True, edit_required=False
+    )
+    assert "required" not in render_field(
+        select_edit_never, "x", mode="edit"
+    ).to_html()
 
 
 def test_edit_min_value_can_be_cancelled() -> None:
@@ -413,10 +442,12 @@ def test_agent_fields_cover_create_and_edit_without_duplication() -> None:
     # code 只在创建时出现
     assert "code" not in edit_names
     assert "code" in create_names
-    # api_key 的编辑态提示单独表达，而不是抄一份字段
-    api_key = next(f for f in AGENT_FIELDS if f.name == "api_key")
-    assert api_key.edit_placeholder == "Leave blank to keep current key"
-    assert api_key.edit_label == "Replacement API key"
+    # 管理端只选择统一 LLM 连接，不再重复暴露地址和密钥字段。
+    assert "llm_endpoint_code" in edit_names
+    assert "base_url" not in edit_names
+    assert "api_key" not in edit_names
+    assert "tools" not in edit_names
+    assert "skills" not in edit_names
 
 
 def test_agent_create_form_renders_code_but_edit_form_does_not() -> None:
@@ -442,6 +473,10 @@ def test_agent_create_form_renders_code_but_edit_form_does_not() -> None:
     ).to_html()
     assert 'name="code"' in create_html
     assert 'name="code"' not in edit_html
+    assert 'name="llm_endpoint_code"' in create_html
+    assert 'name="llm_endpoint_code"' in edit_html
+    assert 'name="base_url"' not in edit_html
+    assert 'name="api_key"' not in edit_html
     assert "Create agent" in create_html
     assert "Save changes" in edit_html
 
@@ -458,6 +493,7 @@ def test_skill_fields_cover_create_and_edit_without_duplication() -> None:
     # enabled 只在创建时出现
     assert "enabled" not in edit_names
     assert "enabled" in create_names
+    assert "allowed_tools" in edit_names
     # body 的编辑态行数与必填单独表达
     body = next(f for f in SKILL_FIELDS if f.name == "body")
     assert body.rows == 10
@@ -610,28 +646,28 @@ def test_field_order_is_explicit_for_every_resource() -> None:
 
     assert [f.name for f in AGENT_FIELDS] == [
         "name",
+        "llm_endpoint_code",
         "model",
-        "base_url",
-        "api_key",
-        "tools",
-        "skills",
         "system_prompt",
     ]
     assert [f.name for f in AGENT_CREATE_FIELDS] == [
         "code",
         "name",
+        "llm_endpoint_code",
         "model",
-        "base_url",
-        "api_key",
-        "tools",
-        "skills",
         "system_prompt",
         "enabled",
     ]
-    assert [f.name for f in SKILL_FIELDS] == ["description", "status", "body"]
+    assert [f.name for f in SKILL_FIELDS] == [
+        "description",
+        "allowed_tools",
+        "status",
+        "body",
+    ]
     assert [f.name for f in SKILL_CREATE_FIELDS] == [
         "code",
         "description",
+        "allowed_tools",
         "status",
         "body",
         "enabled",
@@ -763,6 +799,8 @@ def test_agent_edit_form_renders_empty_system_prompt_for_none() -> None:
         density="comfortable",
         rows=[row],
         can_write=True,
+            # 编辑表单现在放在独立面板里（UX-09），要显式指定编辑对象。
+            editing_row=row,
     ).to_html()
 
     match = re.search(

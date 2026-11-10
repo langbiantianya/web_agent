@@ -510,6 +510,16 @@ async def update_skill(
     target_status = fields.get("status", skill.status)
     if target_status == "draft":
         fields["enabled"] = 0
+    used_by = await _used_by_map(db, tenant_id)
+    disables_active_skill = bool(skill.enabled) and (
+        ("enabled" in fields and not fields["enabled"])
+        or target_status == "draft"
+    )
+    if code in used_by and disables_active_skill:
+        raise ConflictError(
+            f"技能「{code}」仍被这些 Agent 使用：{'、'.join(used_by[code])}。"
+            "先解绑再停用或设为草稿。"
+        )
     if "body" in fields:
         # 正文变了 → 指纹要一起改。指纹与版本号在**同一次更新**里落库，
         # 这样任何一个版本号都唯一对应一份内容（修订快照按版本号唯一）。
@@ -520,7 +530,6 @@ async def update_skill(
     if skill is None:
         raise NotFoundError(f"技能不存在：{code}")
     await _write_revision(db, skill, _operator_name(author), "更新")
-    used_by = await _used_by_map(db, tenant_id)
     return _to_out(skill, used_by.get(code, []))
 
 

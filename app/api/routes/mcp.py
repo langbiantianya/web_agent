@@ -313,15 +313,31 @@ async def update_server(
             raise BadRequestError(str(exc)) from exc
     if "enabled" in fields and fields["enabled"] is not None:
         fields["enabled"] = 1 if fields["enabled"] else 0
+    invalidating_keys = {
+        "command", "args", "env", "url", "headers", "auth_type",
+        "oauth_token_url", "oauth_revocation_url", "oauth_client_id",
+        "oauth_client_secret_cipher", "oauth_scopes", "oauth_resource",
+        "allow_tools",
+    }
+    changes_connection = bool(invalidating_keys.intersection(fields))
+    disabling = fields.get("enabled") == 0
+    if (
+        changes_connection or disabling
+    ) and await mcp_server_repo.agents_using(db, server, admin.tenant_id):
+        raise ConflictError(
+            "该 MCP 连接仍被 Agent 使用，请先解绑相关工具再修改连接或停用"
+        )
     updated = await mcp_server_repo.update(
         db, code, fields, bump_version=True, tenant_id=admin.tenant_id
     )
     if updated is None:
         raise NotFoundError(f"MCP 服务器不存在：{code}")
-    # 连接与快照失效：配置变了，旧的东西就不能继续用了。
-    await mcp_manager.close_all()
-    await mcp_tool_repo.replace_for_server(db, updated.id, [])
-    return _to_out(updated, 0)
+    # 连接配置变了才清空快照；仅改名或调整超时不改变工具目录。
+    if changes_connection:
+        await mcp_manager.close_all()
+        await mcp_tool_repo.replace_for_server(db, updated.id, [])
+    tools = await mcp_tool_repo.list_by_server(db, updated.id)
+    return _to_out(updated, len(tools))
 
 
 @router.delete("/{code}", status_code=204)
@@ -331,6 +347,11 @@ async def delete_server(
     admin: McpWriteDep,
 ) -> None:
     """删除服务器（连带删掉它的工具快照）。"""
+    server = await mcp_server_repo.get_by_code(db, code, admin.tenant_id)
+    if server is None:
+        raise NotFoundError(f"MCP 服务器不存在：{code}")
+    if await mcp_server_repo.agents_using(db, server, admin.tenant_id):
+        raise ConflictError("该 MCP 连接仍被 Agent 使用，不能删除")
     ok = await mcp_server_repo.delete(db, code, admin.tenant_id)
     if not ok:
         raise NotFoundError(f"MCP 服务器不存在：{code}")

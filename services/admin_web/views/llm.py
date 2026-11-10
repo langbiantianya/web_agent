@@ -21,7 +21,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
 from typing import Any
 
 from ludic.html import (
@@ -31,6 +30,7 @@ from ludic.html import (
     div,
     label,
     option,
+    p,
     select,
     small,
     span,
@@ -45,160 +45,20 @@ from services.admin_web.views.components import (
     _management_page,
     _toggle_and_delete,
 )
-from services.admin_web.views.fields import Field, render_form
-
-
-@dataclass(frozen=True)
-class LlmPreset:
-    """一条内置的 OpenAI 兼容接入预设。
-
-    ``code`` / ``name`` / ``base_url`` 是**无需保密**的默认值，可以写进
-    代码；API Key 不在预设里，否则等于把凭据打进镜像。
-    """
-
-    value: str
-    label: str
-    code: str
-    name: str
-    base_url: str
-
-
-# 只收录官方提供 OpenAI 兼容端点（``/v1/chat/completions``）的服务商，
-# 地址取各家文档里的「兼容模式」入口；同一服务商国内/国际站地址不同，
-# 这里取国内站，国际站可在创建后按行编辑修改。
-LLM_PRESETS: tuple[LlmPreset, ...] = (
-    LlmPreset(
-        value="deepseek",
-        label="DeepSeek (api.deepseek.com)",
-        code="deepseek",
-        name="DeepSeek",
-        base_url="https://api.deepseek.com/v1",
-    ),
-    LlmPreset(
-        value="bailian",
-        label="Alibaba Bailian (DashScope)",
-        code="bailian",
-        name="Alibaba Bailian",
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-    ),
+from services.admin_web.views.confirm import undo_panel
+from services.admin_web.views.edit_panel import edit_link, edit_panel
+from services.admin_web.views.list_controls import list_controls
+from services.admin_web.listing import ListParams
+from services.admin_web.views.fields import render_form
+from services.admin_web.views.llm_fields import (
+    CREATE_MODEL_LIST_ID,
+    LLM_CREATE_FIELDS,
+    LLM_FIELDS,
+    LlmPreset,
+    _form_fields,
+    _model_tools,
+    _preset_picker,
 )
-
-# 字段**只声明一次**：创建表单与编辑表单共用同一份描述。
-#
-# 但两者的**字段顺序不同**（创建态是 code/name/base_url/model/api_key/priority，
-# 编辑态是 name/base_url/model/priority/api_key），而渲染快照比的是元素树——
-# children 的顺序变了就是差异。所以用「字段字典 + 两个显式顺序」表达，
-# 而不是「一份元组 + 展开」。
-#
-# ``model.list_id`` 故意留空：模型候选按**表单**隔离（见 ``_form_fields``），
-# 共享一个 datalist 会让 A 端点的模型名出现在 B 端点的候选里。
-_LLM_FIELD_MAP = {
-    "code": Field("code", "Code", required=True, modes=("create",)),
-    "name": Field("name", "Name"),
-    "base_url": Field("base_url", "Base URL", required=True, edit_required=False),
-    "model": Field("model", "Model", placeholder="deepseek-chat"),
-    "api_key": Field(
-        "api_key",
-        "API key",
-        kind="password",
-        autocomplete="new-password",
-        edit_placeholder="Leave blank to keep current key",
-        edit_label="Replacement API key",
-    ),
-    "priority": Field(
-        "priority",
-        "Priority",
-        kind="number",
-        min_value="0",
-        # 编辑态显式取消 min（既有编辑表单没有这个属性）。
-        edit_min_value="",
-    ),
-}
-
-LLM_FIELDS = tuple(
-    _LLM_FIELD_MAP[name]
-    for name in ("name", "base_url", "model", "priority", "api_key")
-)
-
-LLM_CREATE_FIELDS = tuple(
-    _LLM_FIELD_MAP[name]
-    for name in ("code", "name", "base_url", "model", "api_key", "priority")
-)
-
-# 创建表单的模型候选容器 id；每行编辑表单用 ``llm-model-{code}``。
-CREATE_MODEL_LIST_ID = "llm-model-new"
-
-
-def _form_fields(fields: tuple[Field, ...], list_id: str) -> tuple[Field, ...]:
-    """把模型输入框挂到**该表单自己的** datalist 上。"""
-    return tuple(
-        replace(field, list_id=list_id) if field.name == "model" else field
-        for field in fields
-    )
-
-
-def _model_tools(list_id: str, *, endpoint_code: str) -> Any:
-    """模型候选容器 + 「获取模型 / 测试连接」按钮 + 结果位。
-
-    按钮一律 ``type="button"``，不会提交表单；真正的请求由
-    ``admin-ui.js`` 发到 ``/admin/llm/probe``。``data-llm-endpoint`` 让
-    服务端知道「编辑态留空的 API Key 该用哪个端点已存的密钥」——创建态
-    传空串，表示必须用表单里现填的 Key。
-    """
-    return div(
-        datalist(id=list_id),
-        button(
-            "Fetch models",
-            type="button",
-            class_="btn btn-secondary btn-small",
-            data_llm_fetch=list_id,
-            data_llm_endpoint=endpoint_code,
-        ),
-        button(
-            "Test connection",
-            type="button",
-            class_="btn btn-secondary btn-small",
-            data_llm_test=list_id,
-            data_llm_endpoint=endpoint_code,
-        ),
-        span("", class_="block-muted", data_llm_status=list_id),
-        class_="row-actions",
-    )
-
-
-def _preset_picker() -> Any:
-    """渲染「内置预设」下拉框。
-
-    选中的 ``option`` 用 ``data-*`` 携带编码、名称与地址，由
-    ``admin-ui.js`` 写进下面创建表单的对应输入框；服务端**不接收**这个
-    下拉框的值（没有 ``name``），所以预设不是一条独立业务数据，也不会
-    多出一个需要校验的字段。
-
-    ``data-llm-preset`` 是纯前端挂钩：ludic 会丢掉空属性值，所以这里必须
-    给一个非空值，否则 JS 的选择器匹配不到它。
-    """
-    return label(
-        span("Provider preset"),
-        select(
-            option("Custom endpoint (fill in manually)", value="custom"),
-            *(
-                option(
-                    preset.label,
-                    value=preset.value,
-                    data_code=preset.code,
-                    data_name=preset.name,
-                    data_base_url=preset.base_url,
-                )
-                for preset in LLM_PRESETS
-            ),
-            data_llm_preset="picker",
-        ),
-        span(
-            "Choosing a preset fills the endpoint code, name and base URL; "
-            "it never fills the API key or the model.",
-            class_="block-muted",
-        ),
-    )
 
 
 def llm_page(
@@ -207,64 +67,157 @@ def llm_page(
     csrf: str,
     pages: Iterable[AdminPageDefinition],
     rows: list[Any],
+    used_by_by_endpoint: dict[str, list[str]] | None = None,
     theme: str,
     color_mode: str,
     density: str,
     can_write: bool,
     flash: str | None = None,
+    undo_id: int | None = None,
+    create_errors: dict[str, str] | None = None,
+    create_values: dict[str, str] | None = None,
+    edit_errors: dict[str, dict[str, str]] | None = None,
+    edit_values: dict[str, dict[str, str]] | None = None,
+    list_params: ListParams | None = None,
+    list_total: int = 0,
+    editing_row: Any | None = None,
 ) -> Any:
     """渲染 LLM 接口优先级与故障切换配置页。"""
+    # 校验失败时把已填的值与字段级错误带回表单（UX-03）。
+    create_errors = dict(create_errors or {})
+    create_values = dict(create_values or {})
+    per_row_errors = dict(edit_errors or {})
+    per_row_values = dict(edit_values or {})
+    usage_map = used_by_by_endpoint or {}
     table_rows = []
+    panel = None
+
+    def _editor_form(row: Any, list_id: str) -> Any:
+        """构造某个 LLM 端点的编辑表单（面板内使用）。"""
+        return render_form(
+            _form_fields(LLM_FIELDS, list_id),
+            mode="edit",
+            values={
+                "name": row.name or row.code,
+                "base_url": row.base_url,
+                "model": row.model,
+                "priority": row.priority,
+                **per_row_values.get(row.code, {}),
+            },
+            csrf=csrf,
+            action=f"/admin/llm/{row.code}/update",
+            submit_label="Save endpoint",
+            layout="stack",
+            errors=per_row_errors.get(row.code),
+            form_id=f"llm-edit-{row.code}",
+            error_summary=(
+                "The endpoint could not be saved. Fix the highlighted fields."
+                if per_row_errors.get(row.code)
+                else ""
+            ),
+            actions=_model_tools(list_id, endpoint_code=row.code),
+        )
+
     for row in rows:
+        agents = usage_map.get(row.code, [])
+        in_use_reason = (
+            f"Used by agents: {', '.join(agents)}" if agents else ""
+        )
         actions = _toggle_and_delete(
             csrf=csrf,
             prefix=f"/admin/llm/{row.code}",
             enabled=bool(row.enabled),
             can_write=can_write,
+            label=f"LLM endpoint {row.name or row.code}",
+            toggle_disabled_reason=in_use_reason,
+            delete_disabled_reason=in_use_reason,
+            delete_title=f"Delete LLM endpoint {row.name or row.code}",
+            delete_summary=(
+                f"LLM endpoint {row.name or row.code} ({row.code}) and its "
+                "stored API key will be permanently removed."
+            ),
+            delete_impacts=(
+                f"Used by agents: {', '.join(agents)}",
+                "Agents bound to it will fail to resolve an LLM connection.",
+            ) if agents else (
+                "No agent uses this endpoint.",
+            ),
         )
         list_id = f"llm-model-{row.code}"
-        edit = (
-            details(
-                summary("Edit endpoint"),
-                render_form(
-                    _form_fields(LLM_FIELDS, list_id),
-                    mode="edit",
-                    values={
-                        "name": row.name or row.code,
-                        "base_url": row.base_url,
-                        "model": row.model,
-                        "priority": row.priority,
-                    },
-                    csrf=csrf,
-                    action=f"/admin/llm/{row.code}/update",
-                    submit_label="Save endpoint",
-                    layout="stack",
-                    actions=_model_tools(list_id, endpoint_code=row.code),
-                ),
-            )
+        edit_form = (
+            _editor_form(row, list_id)
             if can_write
-            else span("")
+            else None
         )
+        if editing_row is not None and editing_row.code == row.code \
+                and edit_form is not None:
+            panel = edit_panel(
+                resource=row.code,
+                title=f"Edit endpoint {row.name or row.code}",
+                form=edit_form,
+                close_url="/admin/llm",
+            )
+            edit = span("")
+        else:
+            edit = (
+                edit_link(
+                    action="/admin/llm",
+                    resource=row.code,
+                    label="Edit endpoint",
+                )
+                if edit_form is not None
+                else span("")
+            )
         table_rows.append(
             tr(
                 td(row.name or row.code, small(row.code, class_="block-muted")),
                 td(row.base_url),
                 td(row.model or "—"),
+                td(
+                    div(
+                        span(
+                            f"{len(agents)} agent(s)",
+                            class_="reference-count",
+                            data_reference_count=len(agents),
+                        ),
+                        small(
+                            ", ".join(agents),
+                            class_="block-muted",
+                        ),
+                    )
+                    if agents
+                    else span("None")
+                ),
                 td(str(row.priority)),
                 td("Enabled" if row.enabled else "Disabled"),
                 td(actions, edit),
             )
+        )
+    if panel is None and editing_row is not None and can_write:
+        # 深链接指向的对象不在当前页时，面板照样打开。
+        panel = edit_panel(
+            resource=editing_row.code,
+            title=f"Edit endpoint {editing_row.name or editing_row.code}",
+            form=_editor_form(editing_row, f"llm-model-{editing_row.code}"),
+            close_url="/admin/llm",
         )
     create_form = (
         render_form(
             _form_fields(LLM_CREATE_FIELDS, CREATE_MODEL_LIST_ID),
             mode="create",
             # 既有创建表单把优先级写死成 100。
-            values={"priority": "100"},
+            values={"priority": "100", **create_values},
             csrf=csrf,
             action="/admin/llm",
             submit_label="Create endpoint",
             layout="grid",
+            errors=create_errors,
+            form_id="llm-create",
+            error_summary=(
+                "The endpoint could not be created. Fix the highlighted fields."
+                if create_errors
+                else ""
+            ),
             actions=_model_tools(CREATE_MODEL_LIST_ID, endpoint_code=""),
         )
         if can_write
@@ -289,14 +242,35 @@ def llm_page(
         color_mode=color_mode,
         density=density,
         create_form=create_form,
+        panel=panel,
+        controls=(
+            list_controls(
+                action="/admin/llm",
+                params=list_params or ListParams(),
+                total=list_total,
+                sort_options=("name", "code", "priority"),
+            )
+            if list_params is not None
+            else None
+        ),
         headers=[
             "Endpoint",
             "Base URL",
             "Model",
+            "Used by agents",
             "Priority",
             "State",
             "Actions",
         ],
         rows=table_rows,
         flash=flash,
+        undo=(
+            undo_panel(
+                csrf=csrf,
+                undo_id=undo_id,
+                resource_label="LLM endpoint",
+            )
+            if undo_id is not None
+            else None
+        ),
     )

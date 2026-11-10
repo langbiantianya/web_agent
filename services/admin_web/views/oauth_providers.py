@@ -2,6 +2,14 @@
 
 客户端用户与管理员共用同一套 Provider 配置，页面用
 ``views/components.py`` 的通用骨架渲染。
+
+表单改成用 ``views/fields.py`` 的数据驱动字段渲染，因此：
+
+- 校验失败可以**保留已填内容并逐字段标错**（UX-03）；
+- 编辑表单放进独立面板，同一时刻只展开一个 Provider，并且可以用
+  ``?resource=<code>`` 深链接直接打开（UX-09）。
+
+``client_secret`` 永远是只写字段：失败回显时也不会被带回来。
 """
 
 from __future__ import annotations
@@ -9,29 +17,70 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from ludic.html import (
-    button,
-    details,
-    form,
-    input as input_,
-    label,
-    option,
-    select,
-    small,
-    span,
-    summary,
-    td,
-    tr,
-)
+from ludic.html import small, span, td, tr
 
 from app.models.admin_control import AdminPageDefinition
 from app.models.oauth import OAuthProvider
 from services.admin_web.accounts import AdminPrincipal
 from services.admin_web.views.components import (
-    _csrf,
     _management_page,
     _toggle_and_delete,
 )
+from services.admin_web.views.edit_panel import edit_link, edit_panel
+from services.admin_web.views.fields import render_form
+from services.admin_web.views.oauth_fields import (
+    PROVIDER_CREATE_FIELDS,
+    PROVIDER_EDIT_FIELDS,
+    PROVIDER_FIELDS,
+)
+
+_CREATE_VALUES = {
+    "display_name": "",
+    "issuer": "",
+    "client_id": "",
+    "client_secret": "",
+    "discovery_url": "",
+    "authorization_endpoint": "",
+    "token_endpoint": "",
+    "jwks_uri": "",
+    "token_auth_method": "client_secret_basic",
+    "scopes": "openid profile email phone",
+    "username_claim": "preferred_username",
+    "role_claim": "groups",
+    "role_sync_max_age_seconds": "1800",
+    "client_login_enabled": "1",
+    "admin_login_enabled": "1",
+    "role_claim_required": "1",
+    "auto_create": "1",
+    "enabled": "1",
+}
+
+
+def _edit_values(provider: OAuthProvider) -> dict[str, Any]:
+    """把 Provider 行转成编辑表单的取值。"""
+    return {
+        "display_name": provider.display_name,
+        "issuer": provider.issuer,
+        "client_id": provider.client_id,
+        "client_secret": "",
+        "discovery_url": provider.discovery_url or "",
+        "authorization_endpoint": provider.authorization_endpoint or "",
+        "token_endpoint": provider.token_endpoint or "",
+        "jwks_uri": provider.jwks_uri or "",
+        "token_auth_method": provider.token_auth_method,
+        "scopes": provider.scopes,
+        "username_claim": provider.username_claim,
+        "role_claim": provider.role_claim,
+        "role_sync_max_age_seconds": str(
+            provider.role_sync_max_age_seconds
+        ),
+        "client_login_enabled": "1" if provider.client_login_enabled else "0",
+        "admin_login_enabled": "1" if provider.admin_login_enabled else "0",
+        "role_claim_required": "1" if provider.role_claim_required else "0",
+        "auto_create": "1" if provider.auto_create else "0",
+        "enabled": "1" if provider.enabled else "0",
+        "clear_client_secret": "0",
+    }
 
 
 def _provider_form(
@@ -39,213 +88,40 @@ def _provider_form(
     csrf: str,
     provider: OAuthProvider | None = None,
     create: bool,
+    values: dict[str, Any] | None = None,
+    errors: dict[str, str] | None = None,
+    form_id: str = "oauth-provider-form",
 ) -> Any:
     """渲染 OAuth Provider 创建或编辑表单；secret 永远不回显。"""
-    code_field = (
-        label(
-            span("Provider code"),
-            input_(name="code", value=provider.code if provider else "", required=True),
-        )
-        if create
-        else input_(type="hidden", name="code", value=provider.code if provider else "")
-    )
-    enabled = bool(provider.enabled) if provider else True
-    client_enabled = bool(provider.client_login_enabled) if provider else True
-    admin_enabled = bool(provider.admin_login_enabled) if provider else True
-    role_required = bool(provider.role_claim_required) if provider else True
-    auto_create = bool(provider.auto_create) if provider else True
-    return form(
-        _csrf(csrf),
-        code_field,
-        label(
-            span("Display name"),
-            input_(
-                name="display_name",
-                value=provider.display_name if provider else "",
-                required=True,
-            ),
-        ),
-        label(
-            span("Issuer"),
-            input_(
-                name="issuer",
-                type="url",
-                value=provider.issuer if provider else "",
-                placeholder="https://id.example.com",
-                required=True,
-            ),
-        ),
-        label(
-            span("Client ID"),
-            input_(
-                name="client_id",
-                value=provider.client_id if provider else "",
-                required=True,
-            ),
-        ),
-        label(
-            span("Client secret"),
-            input_(
-                name="client_secret",
-                type="password",
-                autocomplete="new-password",
-                placeholder=(
-                    "Leave blank to keep current secret"
-                    if provider
-                    else "Optional for public clients"
-                ),
-            ),
-        ),
-        label(
-            span("Discovery URL"),
-            input_(
-                name="discovery_url",
-                type="url",
-                value=(provider.discovery_url or "") if provider else "",
-            ),
-        ),
-        label(
-            span("Authorization endpoint"),
-            input_(
-                name="authorization_endpoint",
-                type="url",
-                value=(provider.authorization_endpoint or "") if provider else "",
-            ),
-        ),
-        label(
-            span("Token endpoint"),
-            input_(
-                name="token_endpoint",
-                type="url",
-                value=(provider.token_endpoint or "") if provider else "",
-            ),
-        ),
-        label(
-            span("JWKS URI"),
-            input_(
-                name="jwks_uri",
-                type="url",
-                value=(provider.jwks_uri or "") if provider else "",
-            ),
-        ),
-        label(
-            span("Token auth method"),
-            select(
-                option(
-                    "Client secret basic",
-                    value="client_secret_basic",
-                    selected=(
-                        provider.token_auth_method == "client_secret_basic"
-                        if provider
-                        else True
-                    ),
-                ),
-                option(
-                    "Client secret post",
-                    value="client_secret_post",
-                    selected=(
-                        provider.token_auth_method == "client_secret_post"
-                        if provider
-                        else False
-                    ),
-                ),
-                name="token_auth_method",
-            ),
-        ),
-        label(
-            span("Scopes"),
-            input_(
-                name="scopes",
-                value=(provider.scopes if provider else "openid profile email phone"),
-            ),
-        ),
-        label(
-            span("Username claim"),
-            input_(
-                name="username_claim",
-                value=provider.username_claim if provider else "preferred_username",
-            ),
-        ),
-        label(
-            span("Role claim"),
-            input_(
-                name="role_claim",
-                value=provider.role_claim if provider else "groups",
-            ),
-        ),
-        label(
-            span("Role sync max age (seconds)"),
-            input_(
-                name="role_sync_max_age_seconds",
-                type="number",
-                min="1",
-                value=provider.role_sync_max_age_seconds if provider else "1800",
-            ),
-        ),
-        label(
-            span("Client login"),
-            select(
-                option("Enabled", value="1", selected=client_enabled),
-                option("Disabled", value="0", selected=not client_enabled),
-                name="client_login_enabled",
-            ),
-        ),
-        label(
-            span("Admin login"),
-            select(
-                option("Enabled", value="1", selected=admin_enabled),
-                option("Disabled", value="0", selected=not admin_enabled),
-                name="admin_login_enabled",
-            ),
-        ),
-        label(
-            span("Role claim required"),
-            select(
-                option("Yes", value="1", selected=role_required),
-                option("No", value="0", selected=not role_required),
-                name="role_claim_required",
-            ),
-        ),
-        label(
-            span("Auto create client users"),
-            select(
-                option("Yes", value="1", selected=auto_create),
-                option("No", value="0", selected=not auto_create),
-                name="auto_create",
-            ),
-        ),
-        label(
-            span("Provider enabled"),
-            select(
-                option("Yes", value="1", selected=enabled),
-                option("No", value="0", selected=not enabled),
-                name="enabled",
-            ),
-        ),
-        (
-            label(
-                span("Clear existing client secret"),
-                select(
-                    option("No", value="0"),
-                    option("Yes", value="1"),
-                    name="clear_client_secret",
-                ),
-            )
-            if provider is not None
-            else span("")
-        ),
-        button(
-            "Create provider" if create else "Save provider",
-            type="submit",
-            class_="btn btn-primary",
-        ),
+    if create:
+        fields = PROVIDER_CREATE_FIELDS
+        current = {**_CREATE_VALUES, **(values or {})}
+    else:
+        fields = PROVIDER_EDIT_FIELDS
+        assert provider is not None
+        current = {
+            **_edit_values(provider),
+            **(values or {}),
+        }
+    return render_form(
+        fields,
+        mode="create" if create else "edit",
+        values=current,
+        csrf=csrf,
         action=(
             "/admin/oauth-providers"
             if create
             else f"/admin/oauth-providers/{provider.code}/update"
         ),
-        method="post",
-        class_="form-grid",
+        submit_label="Create provider" if create else "Save provider",
+        layout="grid",
+        errors=errors,
+        form_id=form_id,
+        error_summary=(
+            "The provider could not be saved. Fix the highlighted fields."
+            if errors
+            else ""
+        ),
     )
 
 
@@ -260,9 +136,17 @@ def oauth_providers_page(
     density: str,
     can_manage: bool,
     flash: str | None = None,
+    create_errors: dict[str, str] | None = None,
+    create_values: dict[str, str] | None = None,
+    edit_errors: dict[str, dict[str, str]] | None = None,
+    edit_values: dict[str, dict[str, str]] | None = None,
+    editing_code: str | None = None,
 ) -> Any:
     """渲染客户端和管理端共用的动态 OAuth Provider 配置页。"""
+    per_row_errors = dict(edit_errors or {})
+    per_row_values = dict(edit_values or {})
     rows = []
+    panel = None
     for provider in providers:
         actions = (
             _toggle_and_delete(
@@ -270,18 +154,36 @@ def oauth_providers_page(
                 prefix=f"/admin/oauth-providers/{provider.code}",
                 enabled=bool(provider.enabled),
                 can_write=can_manage,
+                label=f"OAuth provider {provider.display_name}",
             )
             if can_manage
             else span("Read only", class_="status-badge")
         )
-        editor = (
-            details(
-                summary("Edit provider"),
-                _provider_form(csrf=csrf, provider=provider, create=False),
+        if editing_code == provider.code and can_manage:
+            panel = edit_panel(
+                resource=provider.code,
+                title=f"Edit provider {provider.display_name}",
+                form=_provider_form(
+                    csrf=csrf,
+                    provider=provider,
+                    create=False,
+                    values=per_row_values.get(provider.code),
+                    errors=per_row_errors.get(provider.code),
+                    form_id=f"oauth-provider-edit-{provider.code}",
+                ),
+                close_url="/admin/oauth-providers",
             )
-            if can_manage
-            else span("")
-        )
+            editor = span("")
+        else:
+            editor = (
+                edit_link(
+                    action="/admin/oauth-providers",
+                    resource=provider.code,
+                    label="Edit provider",
+                )
+                if can_manage
+                else span("")
+            )
         rows.append(
             tr(
                 td(
@@ -320,7 +222,17 @@ def oauth_providers_page(
                 td(actions, editor),
             )
         )
-    create_form = _provider_form(csrf=csrf, create=True) if can_manage else None
+    create_form = (
+        _provider_form(
+            csrf=csrf,
+            create=True,
+            values=create_values,
+            errors=create_errors,
+            form_id="oauth-provider-create",
+        )
+        if can_manage
+        else None
+    )
     return _management_page(
         title_text="OAuth providers",
         lead=(
@@ -334,6 +246,7 @@ def oauth_providers_page(
         color_mode=color_mode,
         density=density,
         create_form=create_form,
+        panel=panel,
         headers=["Provider", "Issuer", "Login scopes", "Role sync", "State", "Actions"],
         rows=rows,
         flash=flash,

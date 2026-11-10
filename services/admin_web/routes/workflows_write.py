@@ -14,6 +14,7 @@ from app.repo.agent_repo import agent_repo
 from app.repo.workflow_repo import workflow_repo
 from app.schemas.workflow import WorkflowCreate, WorkflowUpdate
 from services.admin_web.audit import audit_principal_action
+from services.admin_web.deletion import record_deletion
 from services.admin_web.common import (
     as_bool, business_redirect, can_edit_resource, json_object, not_found,
     operation_authorized, origin_ok, require_csrf, safe_next, tenant_id_of,
@@ -310,6 +311,17 @@ def register(app: Any) -> None:
                 form=form,
             ):
                 return not_found()
+            existing = await workflow_repo.get_by_code(db, code)
+            if existing is None:
+                return business_redirect("/admin/workflows", error="missing")
+            # 删除前留快照：误删能在撤销窗口内原样恢复（UX-01）。
+            entry = await record_deletion(
+                db,
+                resource_type="workflow",
+                row=existing,
+                actor_id=principal.principal_id,
+                actor_username=principal.username,
+            )
             if not await workflow_repo.delete(db, code):
                 return business_redirect("/admin/workflows", error="missing")
             await audit_principal_action(
@@ -321,6 +333,9 @@ def register(app: Any) -> None:
                 tenant_id=principal.tenant_id,
             )
             await db.commit()
-            return business_redirect("/admin/workflows", notice="deleted")
+            return RedirectResponse(
+                f"/admin/workflows?notice=deleted&undo={entry.id}",
+                status_code=303,
+            )
         finally:
             await db.close()

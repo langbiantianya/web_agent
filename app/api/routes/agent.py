@@ -11,6 +11,7 @@ from app.core.skill_names import SkillConfigError, known_skill_codes, normalize_
 from app.core.tool_policy import normalize_tool_policy
 from app.core.tools import known_tool_names, normalize_tool_names
 from app.repo.agent_repo import agent_repo
+from app.repo.llm_endpoint_repo import llm_endpoint_repo
 from app.repo.skill_repo import skill_repo
 from app.schemas.agent import AgentCreate, AgentOut, AgentUpdate
 from app.schemas.skill import SkillPromptPreviewOut
@@ -37,14 +38,16 @@ async def _skill_code_sets(
 
 
 async def _known_mcp_names(db, tenant_id: str = "default") -> set[str]:
-    """已发现的 MCP 工具限定名集合。
+    """当前启用的 MCP 服务器上已发现的工具限定名集合。
 
     内置工具的名字在注册表里，是全集；MCP 工具的名字得从 ``mcp_tool`` 快照查
     ——服务器从没连过时快照是空的，于是保存期直接拒（§21.8）。
     """
     from app.repo.mcp_repo import mcp_tool_repo
 
-    return await mcp_tool_repo.qualified_names(db, tenant_id=tenant_id)
+    return await mcp_tool_repo.qualified_names(
+        db, tenant_id=tenant_id, only_enabled=True
+    )
 
 
 def _to_out(
@@ -78,6 +81,7 @@ def _to_out(
         description=agent.description or "",
         system_prompt=agent.system_prompt,
         model=agent.model,
+        llm_endpoint_code=agent.llm_endpoint_code,
         base_url=agent.base_url,
         temperature=float(agent.temperature or 0.7),
         max_tokens=agent.max_tokens or 2048,
@@ -107,6 +111,12 @@ async def create_agent(
     # 同 code 时一直走到 INSERT 才抛数据库唯一约束异常。
     if await agent_repo.get_by_code(db, payload.code):
         raise ConflictError(f"Agent code 已存在：{payload.code}")
+    if payload.llm_endpoint_code:
+        endpoint = await llm_endpoint_repo.get_by_code(
+            db, payload.llm_endpoint_code
+        )
+        if endpoint is None or not endpoint.enabled:
+            raise BadRequestError("所选 LLM 连接不存在或已停用")
     tenant_id = admin.tenant_id or "default"
     all_codes, enabled_codes = await _skill_code_sets(db, tenant_id)
     known_mcp = await _known_mcp_names(db, tenant_id)
@@ -123,6 +133,7 @@ async def create_agent(
         description=payload.description,
         system_prompt=payload.system_prompt,
         model=payload.model,
+        llm_endpoint_code=payload.llm_endpoint_code,
         base_url=payload.base_url,
         api_key_cipher=encrypt(payload.api_key),
         temperature=payload.temperature,
@@ -223,6 +234,12 @@ async def update_agent(
         fields["skills"] = [] if normalized is None else normalized
     if "enabled" in fields and fields["enabled"] is not None:
         fields["enabled"] = 1 if fields["enabled"] else 0
+    if fields.get("llm_endpoint_code"):
+        endpoint = await llm_endpoint_repo.get_by_code(
+            db, fields["llm_endpoint_code"]
+        )
+        if endpoint is None or not endpoint.enabled:
+            raise BadRequestError("所选 LLM 连接不存在或已停用")
     agent = await agent_repo.update(
         db,
         code,

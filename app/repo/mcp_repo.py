@@ -5,8 +5,18 @@ from __future__ import annotations
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.agent import Agent
 from app.models.mcp_server import McpServer
 from app.models.mcp_tool import McpTool
+
+
+def _mcp_sort(sort: str) -> tuple[Any, ...]:
+    """把排序字段名翻译成 ORDER BY 片段（白名单）。"""
+    if sort == "name":
+        return (McpServer.name.asc(), McpServer.id.desc())
+    if sort == "code":
+        return (McpServer.code.asc(), McpServer.id.desc())
+    return (McpServer.id.desc(),)
 
 
 class McpServerRepo:
@@ -36,15 +46,50 @@ class McpServerRepo:
         limit: int = 200,
         offset: int = 0,
         tenant_id: str | None = None,
+        search: str | None = None,
+        sort: str = "",
     ) -> list[McpServer]:
-        """分页列出服务器，按 id 倒序。"""
+        """分页列出服务器，按 id 倒序。
+
+        ``search`` 按编码或名称做包含匹配，``sort`` 支持 ``name`` /
+        ``code``（管理端列表，UX-06）。
+        """
         stmt = sa.select(McpServer)
         if only_enabled:
             stmt = stmt.where(McpServer.enabled == 1)
         if tenant_id is not None:
             stmt = stmt.where(McpServer.tenant_id == tenant_id)
-        stmt = stmt.order_by(McpServer.id.desc()).limit(limit).offset(offset)
+        if search:
+            pattern = f"%{search}%"
+            stmt = stmt.where(
+                sa.or_(
+                    McpServer.code.like(pattern),
+                    McpServer.name.like(pattern),
+                )
+            )
+        stmt = stmt.order_by(*_mcp_sort(sort)).limit(limit).offset(offset)
         return list(await db.scalars(stmt))
+
+    async def count(
+        self,
+        db: AsyncSession,
+        *,
+        tenant_id: str | None = None,
+        search: str | None = None,
+    ) -> int:
+        """统计符合条件的服务器数量（管理端分页用，UX-06）。"""
+        stmt = sa.select(sa.func.count(McpServer.id))
+        if tenant_id is not None:
+            stmt = stmt.where(McpServer.tenant_id == tenant_id)
+        if search:
+            pattern = f"%{search}%"
+            stmt = stmt.where(
+                sa.or_(
+                    McpServer.code.like(pattern),
+                    McpServer.name.like(pattern),
+                )
+            )
+        return int(await db.scalar(stmt) or 0)
 
     async def update(
         self,
@@ -92,6 +137,32 @@ class McpServerRepo:
         await db.delete(server)
         await db.commit()
         return True
+
+    async def agents_using(
+        self,
+        db: AsyncSession,
+        server: McpServer,
+        tenant_id: str | None = None,
+    ) -> list[str]:
+        """列出绑定了该服务器任一已发现工具的 Agent code。"""
+        tool_names = set(await db.scalars(
+            sa.select(McpTool.qualified_name).where(
+                McpTool.server_id == server.id
+            )
+        ))
+        if not tool_names:
+            return []
+        stmt = sa.select(Agent.code, Agent.tools)
+        if tenant_id is not None:
+            stmt = stmt.where(Agent.tenant_id == tenant_id)
+        return sorted(
+            {
+                code
+                for code, tools in await db.execute(stmt)
+                for name in (tools or [])
+                if name in tool_names
+            }
+        )
 
     async def map_by_id(
         self,
@@ -156,17 +227,23 @@ class McpToolRepo:
         )
 
     async def qualified_names(
-        self, db: AsyncSession, tenant_id: str | None = None
+        self,
+        db: AsyncSession,
+        tenant_id: str | None = None,
+        *,
+        only_enabled: bool = False,
     ) -> set[str]:
         """全部已发现的限定名集合。
 
         保存期校验要用它：``agent.tools`` 里的 ``mcp__`` 名字要在这里查得到。
         """
-        stmt = sa.select(McpTool.qualified_name)
+        stmt = sa.select(McpTool.qualified_name).join(
+            McpServer, McpServer.id == McpTool.server_id
+        )
         if tenant_id is not None:
-            stmt = stmt.join(
-                McpServer, McpServer.id == McpTool.server_id
-            ).where(McpServer.tenant_id == tenant_id)
+            stmt = stmt.where(McpServer.tenant_id == tenant_id)
+        if only_enabled:
+            stmt = stmt.where(McpServer.enabled == 1)
         rows = await db.scalars(stmt)
         return set(rows)
 

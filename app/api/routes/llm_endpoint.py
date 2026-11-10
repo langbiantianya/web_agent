@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query
 from app.api.deps import DbSession, LlmReadDep, LlmWriteDep
 from app.core.crypto import encrypt
 from app.core.errors import ConflictError, NotFoundError
+from app.repo.agent_repo import agent_repo
 from app.repo.llm_endpoint_repo import llm_endpoint_repo
 from app.schemas.llm_endpoint import (
     LlmEndpointCreate,
@@ -24,6 +25,7 @@ def _to_out(row) -> LlmEndpointOut:
         code=row.code,
         name=row.name or row.code,
         base_url=row.base_url,
+        model=row.model,
         priority=row.priority,
         enabled=bool(row.enabled),
         version=row.version or 1,
@@ -62,6 +64,7 @@ async def create_endpoint(
         code=payload.code,
         name=payload.name or payload.code,
         base_url=payload.base_url,
+        model=payload.model,
         api_key_cipher=encrypt(payload.api_key),
         priority=payload.priority,
         enabled=1 if payload.enabled else 0,
@@ -95,6 +98,11 @@ async def update_endpoint(
         fields["api_key_cipher"] = encrypt(fields.pop("api_key"))
     if "enabled" in fields and fields["enabled"] is not None:
         fields["enabled"] = 1 if fields["enabled"] else 0
+        if (
+            not fields["enabled"]
+            and await agent_repo.count_for_llm_endpoint(db, code)
+        ):
+            raise ConflictError("该 LLM 连接仍被 Agent 使用，不能停用")
     row = await llm_endpoint_repo.update(db, code, fields)
     if row is None:
         raise NotFoundError(f"LLM 接口不存在：{code}")
@@ -108,5 +116,7 @@ async def delete_endpoint(
     _admin: LlmWriteDep,
 ) -> None:
     """删除接口配置。"""
+    if await agent_repo.count_for_llm_endpoint(db, code):
+        raise ConflictError("该 LLM 连接仍被 Agent 使用，不能删除")
     if not await llm_endpoint_repo.delete(db, code):
         raise NotFoundError(f"LLM 接口不存在：{code}")

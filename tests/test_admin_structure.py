@@ -218,6 +218,27 @@ def test_every_route_domain_module_exposes_register() -> None:
         assert callable(getattr(module, "register", None)), path.name
 
 
+def test_mobile_layout_contains_table_overflow() -> None:
+    """窄屏表格应只在自身容器横滚，不能撑宽整页和表单。"""
+    stylesheet = (ADMIN / "static" / "admin.css").read_text(encoding="utf-8")
+    assert re.search(
+        r"\.stack\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)",
+        stylesheet,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"\.table-scroll\s*\{[^}]*min-width:\s*0;[^}]*max-width:\s*100%;"
+        r"[^}]*overflow-x:\s*auto;",
+        stylesheet,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"\.main-content\s*\{[^}]*min-width:\s*0;",
+        stylesheet,
+        re.DOTALL,
+    )
+
+
 def _parent_app_imports(path: Path) -> list[str]:
     """列出 ``path`` 中直接依赖 ``services.admin_web.app`` 的 import 位置。
 

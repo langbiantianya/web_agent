@@ -406,5 +406,12 @@
     ],
     "name": "preferences_post",
     "path": "/admin/preferences"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "undo",
+    "path": "/admin/undo/{entry_id}"
   }
 ]

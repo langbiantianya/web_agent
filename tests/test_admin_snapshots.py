@@ -115,10 +115,25 @@ PAGE_FACTORIES = {
     "workflow_editor_page": lambda: workflow_editor_page(
         **COMMON, workflow=WORKFLOW, agents=[], can_write=True
     ),
-    "agents_page": lambda: agents_page(**COMMON, rows=[], can_write=True),
-    "skills_page": lambda: skills_page(**COMMON, rows=[], can_write=True),
+    "agents_page": lambda: agents_page(
+        **COMMON,
+        rows=[],
+        llm_endpoints=[LLM_ROW],
+        skills=[SKILL_ROW],
+        mcp_servers=[MCP_ROW],
+        mcp_tools=[MCP_TOOL_ROW],
+        can_write=True,
+    ),
+    "skills_page": lambda: skills_page(
+        **COMMON, rows=[], used_by={}, can_write=True
+    ),
     "mcp_page": lambda: mcp_page(
-        **COMMON, rows=[], can_write=True, can_refresh=True
+        **COMMON,
+        rows=[],
+        tools_by_server={},
+        used_by_by_server={},
+        can_write=True,
+        can_refresh=True,
     ),
     "llm_page": lambda: llm_page(**COMMON, rows=[], can_write=True),
     "audit_page": lambda: audit_page(**COMMON, rows=[], total=0),
@@ -220,9 +235,10 @@ WORKFLOW_WITH_NODES = SimpleNamespace(
 AGENT_ROW = SimpleNamespace(
     code="snapshot-agent",
     name="Snapshot Agent",
+    llm_endpoint_code="snapshot-llm",
     model="gpt-4.1-mini",
     base_url="https://api.example.com/v1",
-    tools=["web_search", "run_skill"],
+    tools=["calc", "mcp__snapshot-mcp__lookup"],
     skills=["snapshot-skill"],
     system_prompt="You are a snapshot fixture.",
     enabled=True,
@@ -235,6 +251,7 @@ SKILL_ROW = SimpleNamespace(
     code="snapshot-skill",
     name="Snapshot Skill",
     description="快照用的技能定义",
+    allowed_tools="calc, mcp__snapshot-mcp__lookup",
     status="published",
     body="Step 1. Do the thing.\n",
     enabled=True,
@@ -244,6 +261,7 @@ SKILL_ROW = SimpleNamespace(
 # mcp_page 的 rows：读 code/name/transport/timeout_sec/command/url/enabled/
 # version（views/mcp.py）。
 MCP_ROW = SimpleNamespace(
+    id=5,
     code="snapshot-mcp",
     name="Snapshot MCP",
     transport="http",
@@ -252,6 +270,13 @@ MCP_ROW = SimpleNamespace(
     url="https://mcp.example.com",
     enabled=True,
     version=4,
+)
+
+MCP_TOOL_ROW = SimpleNamespace(
+    server_id=5,
+    qualified_name="mcp__snapshot-mcp__lookup",
+    tool_name="lookup",
+    description="Look up a snapshot record.",
 )
 
 # llm_page 的 rows：读 code/name/base_url/model/priority/enabled（views/llm.py）。
@@ -403,14 +428,27 @@ PAGE_FACTORIES_WITH_DATA = {
         flash=FLASH,
     ),
     "agents_page": lambda: agents_page(
-        **WITH_DATA_COMMON, rows=[AGENT_ROW], can_write=True, flash=FLASH
+        **WITH_DATA_COMMON,
+        rows=[AGENT_ROW],
+        llm_endpoints=[LLM_ROW],
+        skills=[SKILL_ROW],
+        mcp_servers=[MCP_ROW],
+        mcp_tools=[MCP_TOOL_ROW],
+        can_write=True,
+        flash=FLASH,
     ),
     "skills_page": lambda: skills_page(
-        **WITH_DATA_COMMON, rows=[SKILL_ROW], can_write=True, flash=FLASH
+        **WITH_DATA_COMMON,
+        rows=[SKILL_ROW],
+        used_by={"snapshot-skill": ["snapshot-agent"]},
+        can_write=True,
+        flash=FLASH,
     ),
     "mcp_page": lambda: mcp_page(
         **WITH_DATA_COMMON,
         rows=[MCP_ROW],
+        tools_by_server={5: [MCP_TOOL_ROW]},
+        used_by_by_server={"snapshot-mcp": ["snapshot-agent"]},
         can_write=True,
         can_refresh=True,
         flash=FLASH,

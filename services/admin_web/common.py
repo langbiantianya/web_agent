@@ -13,7 +13,7 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import sqlalchemy as sa
 from ludic.web import Request
-from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.config.settings import settings
 from app.models.admin_control import (
@@ -38,6 +38,16 @@ from services.admin_web.security import (
     request_session_token,
 )
 from services.admin_web.views import error_page
+
+
+def json_response_no_store(
+    payload: dict[str, Any],
+    status_code: int = 200,
+) -> JSONResponse:
+    """返回禁止中间层缓存的 JSON，供含凭据或探测结果的接口复用。"""
+    response = JSONResponse(payload, status_code=status_code)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def origin_ok(request: Request) -> bool:
@@ -215,6 +225,7 @@ def flash_from_query(request: Request) -> tuple[str | None, str]:
         "created": "Resource created.",
         "updated": "Changes saved.",
         "deleted": "Resource deleted.",
+        "restored": "Resource restored.",
         "toggled": "Resource state updated.",
         "refreshed": "MCP tool catalog refreshed.",
     }
@@ -222,8 +233,15 @@ def flash_from_query(request: Request) -> tuple[str | None, str]:
         "invalid": "The submitted values are invalid.",
         "duplicate": "A resource with that code already exists.",
         "missing": "The requested resource no longer exists.",
+        "in_use": "This resource is in use and cannot be changed.",
+        "agent_in_use": "This Agent is referenced by one or more workflows.",
+        "owner_protected": "The owner account cannot be deleted.",
         "forbidden": "The operation is not permitted.",
         "failed": "The operation could not be completed.",
+        "undo_failed": (
+            "The deleted resource could not be restored. "
+            "The undo window may have expired."
+        ),
     }
     notice = request.query_params.get("notice", "")
     if notice in notices:
@@ -232,6 +250,19 @@ def flash_from_query(request: Request) -> tuple[str | None, str]:
     if error in errors:
         return errors[error], "warn"
     return None, "info"
+
+
+def undo_id_from_query(request: Request) -> int | None:
+    """读取 URL 上的撤销令牌。
+
+    只接受**正整数**：令牌是内部生成的，URL 上出现别的形态说明请求
+    不是本模块构造的，直接当作没有撤销入口。
+    """
+    raw = request.query_params.get("undo", "")
+    if not raw.isdigit():
+        return None
+    value = int(raw)
+    return value if value > 0 else None
 
 
 def as_bool(value: object, default: bool = False) -> bool:
@@ -294,7 +325,7 @@ __all__ = [
     "origin_ok", "safe_next", "callback_uri", "append_query", "principal_of",
     "preference_of", "authenticated", "with_auth", "require_csrf",
     "login_redirect", "unauthorized", "not_found", "html_error",
-    "tenant_id_of", "flash_from_query", "as_bool", "csv_list",
+    "tenant_id_of", "flash_from_query", "undo_id_from_query", "as_bool", "csv_list",
     "json_object", "can_edit_resource", "operation_authorized",
     "business_redirect",
 ]

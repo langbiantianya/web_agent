@@ -18,6 +18,8 @@ from services.admin_web.common import (
     html_error, not_found, origin_ok, require_csrf, unauthorized, with_auth,
 )
 from services.admin_web.rbac import casbin_service
+from services.admin_web.casbin_rules import _filter_rules, _sort_rules
+from services.admin_web.listing import parse_list_params
 from services.admin_web.registry import can_access_page, visible_pages
 from services.admin_web.routes.access import (
     _may_bind_permissions, _parse_permissions, _target_binding_tenant,
@@ -182,21 +184,34 @@ def register(app: Any) -> None:
         try:
             if not await can_access_page(db, principal, "access_roles"):
                 return not_found()
+            # 列表页的搜索 / 排序 / 分页（UX-06）。
+            list_params = parse_list_params(
+                request,
+                allowed_sorts=("type", "subject"),
+            )
+            rules = await casbin_service.list_policies(
+                db,
+                tenant_id=(
+                    None
+                    if principal.is_platform_super_admin
+                    else principal.tenant_id
+                ),
+            )
+            rules = _filter_rules(rules, list_params.q)
+            rules = _sort_rules(rules, list_params.sort)
+            total = len(rules)
+            start = list_params.offset
+            rules = rules[start:start + list_params.size]
             return roles_page(
                 principal=principal,
                 csrf=csrf,
                 pages=await visible_pages(db, principal),
-                rules=await casbin_service.list_policies(
-                    db,
-                    tenant_id=(
-                        None
-                        if principal.is_platform_super_admin
-                        else principal.tenant_id
-                    ),
-                ),
+                rules=rules,
                 theme=pref.theme,
                 color_mode=pref.color_mode,
                 density=pref.density,
+                list_params=list_params,
+                list_total=total,
             )
         finally:
             await db.close()

@@ -10,6 +10,15 @@ from app.models.base import utcnow
 from app.models.skill import Skill, SkillResource, SkillRevision, SkillRevisionResource
 
 
+def _skill_sort(sort: str) -> tuple[Any, ...]:
+    """把排序字段名翻译成 ORDER BY 片段（白名单）。"""
+    if sort == "name":
+        return (Skill.name.asc(), Skill.id.desc())
+    if sort == "code":
+        return (Skill.code.asc(), Skill.id.desc())
+    return (Skill.id.desc(),)
+
+
 class SkillRepo:
     """技能表的读写。
 
@@ -57,15 +66,53 @@ class SkillRepo:
         offset: int = 0,
         tenant_id: str = "default",
         include_deleted: bool = False,
+        search: str | None = None,
+        sort: str = "",
     ) -> list[Skill]:
-        """分页列出技能，按 id 倒序。"""
+        """分页列出技能，按 id 倒序。
+
+        ``search`` 按编码或名称做包含匹配，``sort`` 支持 ``name`` /
+        ``code``（管理端列表，UX-06）。
+        """
         stmt = sa.select(Skill).where(Skill.tenant_id == tenant_id)
         if not include_deleted:
             stmt = stmt.where(Skill.status != "archived")
         if only_enabled:
             stmt = stmt.where(Skill.enabled == 1, Skill.status == "published")
-        stmt = stmt.order_by(Skill.id.desc()).limit(limit).offset(offset)
+        if search:
+            pattern = f"%{search}%"
+            stmt = stmt.where(
+                sa.or_(
+                    Skill.code.like(pattern),
+                    Skill.name.like(pattern),
+                )
+            )
+        stmt = stmt.order_by(*_skill_sort(sort)).limit(limit).offset(offset)
         return list(await db.scalars(stmt))
+
+    async def count(
+        self,
+        db: AsyncSession,
+        *,
+        tenant_id: str = "default",
+        include_deleted: bool = False,
+        search: str | None = None,
+    ) -> int:
+        """统计符合条件的技能数量（管理端分页用，UX-06）。"""
+        stmt = sa.select(sa.func.count(Skill.id)).where(
+            Skill.tenant_id == tenant_id
+        )
+        if not include_deleted:
+            stmt = stmt.where(Skill.status != "archived")
+        if search:
+            pattern = f"%{search}%"
+            stmt = stmt.where(
+                sa.or_(
+                    Skill.code.like(pattern),
+                    Skill.name.like(pattern),
+                )
+            )
+        return int(await db.scalar(stmt) or 0)
 
     async def list_by_codes(
         self, db: AsyncSession, codes: list[str], tenant_id: str = "default"

@@ -228,7 +228,13 @@ class AgentRunner:
         self.hub = hub
         self.is_cancelled = is_cancelled or (lambda: False)
         self.user_texts = user_texts
-        self.endpoints = tuple(endpoints or (legacy_agent_endpoint(agent),))
+        # 显式空元组表示「存在配置但当前没有可用连接」，不能退回旧内嵌地址；
+        # 只有调用方完全没提供 endpoints（None）时才走升级前兼容路径。
+        self.endpoints = (
+            tuple(endpoints)
+            if endpoints is not None
+            else (legacy_agent_endpoint(agent),)
+        )
         # 当前已确认可用的端点。一次流式调用内若发生故障切换，后续工具轮次
         # 从成功端点继续，避免每一轮都先重试一个已知失败的配置。
         self._endpoint_index = 0

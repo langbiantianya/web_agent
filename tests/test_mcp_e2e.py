@@ -37,6 +37,7 @@ from app.core.errors import SensitiveContentError
 from app.core.mcp.manager import mcp_manager
 from app.core.tools import build_openai_tools, execute_tool
 from app.main import create_app
+from app.repo.agent_repo import agent_repo
 from app.repo.mcp_repo import mcp_server_repo, mcp_tool_repo
 from app.repo.run_repo import run_repo
 from tests.conftest import authenticate_admin, authenticate_client
@@ -142,10 +143,16 @@ async def mcp_stdio(client: httpx.AsyncClient, monkeypatch):
     monkeypatch.setattr(
         settings, "mcp_allowed_command_prefixes", [str(Path(sys.executable).parent)]
     )
-    # 测试库是 session 级建表且**用例之间不清理**——上一轮跑留下的同名服务器
-    # 还在，先删掉再来，保证这个 fixture 可以重复用。
-    stale = await client.delete(f"/api/mcp/servers/{SERVER_CODE}", headers=ADMIN_HEADERS)
-    assert stale.status_code in (204, 404), stale.text
+    # 同一测试进程里的前一个用例可能留下了绑定 Agent。这里直接清仓储数据，
+    # 避免把 fixture 准备和“API 必须阻止删除被使用服务器”的产品规则混在一起。
+    async with SessionLocal() as db:
+        for agent in await agent_repo.list(db, limit=5000):
+            if any(
+                str(name).startswith(f"mcp__{SERVER_CODE}__")
+                for name in (agent.tools or [])
+            ):
+                await agent_repo.delete(db, agent.code, agent.tenant_id)
+        await mcp_server_repo.delete(db, SERVER_CODE)
     created = await client.post(
         "/api/mcp/servers",
         json={

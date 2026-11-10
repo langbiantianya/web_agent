@@ -20,11 +20,32 @@ from services.admin_web.common import (
     login_redirect, not_found, origin_ok, require_csrf, unauthorized, with_auth,
 )
 from services.admin_web.db import AdminSessionLocal
+from services.admin_web.listing import parse_list_params
 from services.admin_web.registry import visible_pages
 from services.admin_web.security import (
     clear_super_admin_cookies, normalize_super_admin_username,
 )
 from services.admin_web.views import platform_admins_page
+
+
+def _filter_accounts(accounts: list[Any], query: str) -> list[Any]:
+    """按关键字过滤平台超级管理员账号（大小写不敏感）。"""
+    keyword = (query or "").strip().casefold()
+    if not keyword:
+        return list(accounts)
+    return [
+        account
+        for account in accounts
+        if keyword
+        in " ".join(
+            str(value or "")
+            for value in (
+                getattr(account, "username", ""),
+                getattr(account, "email", ""),
+                getattr(account, "phone", ""),
+            )
+        ).casefold()
+    ]
 
 
 def register(app: Any) -> None:
@@ -40,18 +61,27 @@ def register(app: Any) -> None:
         try:
             if not principal.is_platform_super_admin or not principal.is_owner:
                 return not_found()
+            # 列表页的搜索 / 分页（UX-06）。
+            list_params = parse_list_params(request)
+            accounts = list(
+                await db.scalars(
+                    sa.select(SuperAdminAccount).order_by(SuperAdminAccount.id)
+                )
+            )
+            accounts = _filter_accounts(accounts, list_params.q)
+            total = len(accounts)
+            start = list_params.offset
+            accounts = accounts[start:start + list_params.size]
             return platform_admins_page(
                 principal=principal,
                 csrf=csrf,
                 pages=await visible_pages(db, principal),
-                accounts=list(
-                    await db.scalars(
-                        sa.select(SuperAdminAccount).order_by(SuperAdminAccount.id)
-                    )
-                ),
+                accounts=accounts,
                 theme=pref.theme,
                 color_mode=pref.color_mode,
                 density=pref.density,
+                list_params=list_params,
+                list_total=total,
             )
         finally:
             await db.close()

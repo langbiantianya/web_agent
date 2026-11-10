@@ -43,7 +43,11 @@ def legacy_agent_endpoint(agent: Agent) -> LlmEndpointSpec:
 async def load_llm_endpoints(agent: Agent) -> tuple[LlmEndpointSpec, ...]:
     """读取当前启用的数据库接口配置。
 
-    数据库一旦存在任何配置，就完全以启用项为准，并按 ``priority`` 从小到大
+    已绑定连接的 Agent 只使用所选连接，不再偷偷切到其它模型连接；连接不存在
+    或已停用时返回空链，让错误在运行期显式暴露。
+
+    未绑定连接的存量 Agent 继续使用升级前的行为：数据库一旦存在任何配置，
+    就完全以启用项为准，并按 ``priority`` 从小到大
     尝试；管理员把全部配置停用意味着明确关闭调用，不会偷偷回退到旧 Agent
     地址。只有表里完全没有配置时才回退旧地址。每个节点执行前重新加载，因此
     管理端修改后下一次节点执行立即生效。
@@ -55,6 +59,21 @@ async def load_llm_endpoints(agent: Agent) -> tuple[LlmEndpointSpec, ...]:
         按尝试顺序排列的接口快照；数据库配置全部停用或没有任何可用地址时为空。
     """
     async with SessionLocal() as db:
+        if agent.llm_endpoint_code:
+            row = await llm_endpoint_repo.get_by_code(
+                db, agent.llm_endpoint_code
+            )
+            if row is None or not row.enabled:
+                return ()
+            return (
+                LlmEndpointSpec(
+                    code=row.code,
+                    name=row.name or row.code,
+                    base_url=row.base_url.rstrip("/"),
+                    api_key_cipher=row.api_key_cipher,
+                    priority=row.priority,
+                ),
+            )
         rows = await llm_endpoint_repo.list(db, only_enabled=True, limit=500)
         has_config = await llm_endpoint_repo.has_any(db)
     if rows:

@@ -3,48 +3,37 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 from ludic.web import Request
 from pydantic import ValidationError
+from starlette.responses import RedirectResponse
 
 from app.core.crypto import encrypt
-from app.core.skill_names import SkillConfigError, normalize_skill_codes
-from app.core.tools import normalize_tool_names
+from services.admin_web.agent_forms import (
+    _agent_form_values,
+    _business_field_errors,
+    _form_list,
+)
 from app.repo.agent_repo import agent_repo
-from app.repo.mcp_repo import mcp_tool_repo
+from app.repo.llm_endpoint_repo import llm_endpoint_repo
+from app.repo.mcp_repo import mcp_server_repo, mcp_tool_repo
 from app.repo.skill_repo import skill_repo
+from app.repo.workflow_repo import workflow_repo
 from app.schemas.agent import AgentCreate, AgentUpdate
 from services.admin_web.audit import audit_principal_action
+from services.admin_web.deletion import record_deletion
+from services.admin_web.listing import parse_list_params, search_term
+from services.admin_web.form_state import (
+    field_errors, invalid_form_redirect, take_invalid,
+)
 from services.admin_web.common import (
     as_bool, business_redirect, can_edit_resource, csv_list, flash_from_query,
-    not_found, operation_authorized, tenant_id_of, unauthorized, with_auth,
+    not_found, operation_authorized, tenant_id_of, unauthorized,
+    undo_id_from_query, with_auth,
 )
 from services.admin_web.registry import can_access_page, visible_pages
 from services.admin_web.views import agents_page
-
-
-async def _agent_form_values(db, tenant_id: str, form) -> dict:
-    """解析并校验 Agent 表单，同时过滤失效 Skill/MCP 绑定。"""
-    skills = [row.code for row in await skill_repo.list(
-        db, only_enabled=True, limit=1000, tenant_id=tenant_id
-    )]
-    mcp_names = await mcp_tool_repo.qualified_names(db, tenant_id=tenant_id)
-    tools = normalize_tool_names(csv_list(form.get("tools")), mcp_names)
-    try:
-        normalized_skills = normalize_skill_codes(csv_list(form.get("skills")), set(skills))
-    except SkillConfigError as exc:
-        raise ValueError("invalid_skill_binding") from exc
-    return {
-        "name": str(form.get("name") or ""),
-        "description": str(form.get("description") or ""),
-        "system_prompt": str(form.get("system_prompt") or ""),
-        "model": str(form.get("model") or ""),
-        "base_url": str(form.get("base_url") or ""),
-        "api_key": str(form.get("api_key") or ""),
-        "tools": tools,
-        "skills": [] if normalized_skills is None else normalized_skills,
-        "enabled": as_bool(form.get("enabled"), True),
-    }
 
 
 def register(app: Any) -> None:
@@ -61,15 +50,61 @@ def register(app: Any) -> None:
             if not await can_access_page(db, principal, "agents"):
                 return not_found()
             flash, _ = flash_from_query(request)
+            undo_id = undo_id_from_query(request)
+            # 深链接到编辑面板（UX-09）：``?resource=<code>`` 决定打开
+            # 哪个 Agent 的编辑面板。
+            resource = (request.query_params.get("resource") or "").strip()
+            invalid_nonce = request.query_params.get("invalid")
+            if resource:
+                edit_values, edit_errors = take_invalid(invalid_nonce)
+                create_values, create_errors = {}, {}
+            else:
+                create_values, create_errors = take_invalid(invalid_nonce)
+                edit_values, edit_errors = {}, {}
+            # 列表页的搜索 / 排序 / 分页（UX-06）。分页在**服务端**做，
+            # 页面只拿到当前页的数据。
+            list_params = parse_list_params(
+                request,
+                allowed_sorts=("name", "code", "created"),
+            )
+            search = search_term(list_params.q)
+            tenant_id = tenant_id_of(principal)
+            total = await agent_repo.count(
+                db, tenant_id=tenant_id, search=search or None
+            )
+            rows = await agent_repo.list(
+                db,
+                limit=list_params.size,
+                offset=list_params.offset,
+                tenant_id=tenant_id,
+                search=search or None,
+                sort=list_params.sort,
+            )
+            editing_row = None
+            if resource:
+                editing_row = next(
+                    (row for row in rows if row.code == resource), None
+                )
+                if editing_row is None:
+                    editing_row = await agent_repo.get_by_code(
+                        db, resource, tenant_id=tenant_id
+                    )
             return agents_page(
                 principal=principal,
                 csrf=csrf,
                 pages=await visible_pages(db, principal),
-                rows=await agent_repo.list(
-                    db,
-                    limit=500,
-                    tenant_id=tenant_id_of(principal),
+                rows=rows,
+                llm_endpoints=await llm_endpoint_repo.list(db, limit=500),
+                skills=await skill_repo.list(
+                    db, limit=1000, tenant_id=tenant_id_of(principal)
                 ),
+                mcp_servers=await mcp_server_repo.list(
+                    db, limit=1000, tenant_id=tenant_id_of(principal)
+                ),
+                mcp_tools=await mcp_tool_repo.list_all(
+                    db, tenant_id=tenant_id_of(principal)
+                ),
+                used_by_workflows=await workflow_repo.agent_binding_map(db),
                 theme=pref.theme,
                 color_mode=pref.color_mode,
                 density=pref.density,
@@ -80,6 +115,18 @@ def register(app: Any) -> None:
                     component_code="agent_editor",
                 ),
                 flash=flash,
+                undo_id=undo_id,
+                create_errors=create_errors,
+                create_values=create_values,
+                list_params=list_params,
+                list_total=total,
+                editing_row=editing_row,
+                edit_errors=(
+                    {resource: edit_errors} if resource and edit_errors else {}
+                ),
+                edit_values=(
+                    {resource: edit_values} if resource and edit_values else {}
+                ),
             )
         finally:
             await db.close()
@@ -102,14 +149,43 @@ def register(app: Any) -> None:
                 form=form,
             ):
                 return not_found()
+            submitted = {
+                "code": str(form.get("code") or ""),
+                "name": str(form.get("name") or ""),
+                "description": str(form.get("description") or ""),
+                "system_prompt": str(form.get("system_prompt") or ""),
+                "model": str(form.get("model") or ""),
+                "llm_endpoint_code": str(
+                    form.get("llm_endpoint_code") or ""
+                ),
+                "enabled": as_bool(form.get("enabled"), True),
+            }
             try:
                 fields = await _agent_form_values(db, tenant_id_of(principal), form)
                 payload = AgentCreate(
-                    code=str(form.get("code") or ""),
+                    code=submitted["code"],
                     **fields,
                 )
-            except (ValidationError, ValueError):
-                return business_redirect("/admin/agents", error="invalid")
+            except ValidationError as exc:
+                # 校验失败：保留已填内容并逐字段标错（UX-03）。
+                return RedirectResponse(
+                    invalid_form_redirect(
+                        "/admin/agents",
+                        submitted,
+                        field_errors(exc),
+                    ),
+                    status_code=303,
+                )
+            except ValueError as exc:
+                # 业务级校验（如连接不存在 / 无默认模型）也定位到字段上。
+                return RedirectResponse(
+                    invalid_form_redirect(
+                        "/admin/agents",
+                        submitted,
+                        _business_field_errors(exc),
+                    ),
+                    status_code=303,
+                )
             if await agent_repo.get_by_code(db, payload.code):
                 return business_redirect("/admin/agents", error="duplicate")
             row = await agent_repo.create(
@@ -120,6 +196,7 @@ def register(app: Any) -> None:
                 description=payload.description,
                 system_prompt=payload.system_prompt,
                 model=payload.model,
+                llm_endpoint_code=payload.llm_endpoint_code,
                 base_url=payload.base_url,
                 api_key_cipher=encrypt(payload.api_key),
                 tools=payload.tools,
@@ -133,137 +210,9 @@ def register(app: Any) -> None:
                 target_type="agent",
                 target_id=row.code,
                 tenant_id=tenant_id_of(principal),
+                detail={"llm_endpoint_code": row.llm_endpoint_code},
             )
             await db.commit()
             return business_redirect("/admin/agents", notice="created")
-        finally:
-            await db.close()
-
-    @app.post("/admin/agents/{code}/update")
-    async def agents_update(code: str, request: Request):
-        """更新当前租户的 Agent 配置。"""
-        values = await with_auth(request)
-        if values is None:
-            return unauthorized()
-        db, principal, _, _ = values
-        try:
-            form = await request.form()
-            if not await operation_authorized(
-                request,
-                db,
-                principal,
-                page_code="agents",
-                component_code="agent_editor",
-                form=form,
-            ):
-                return not_found()
-            existing = await agent_repo.get_by_code(
-                db, code, tenant_id=tenant_id_of(principal)
-            )
-            if existing is None:
-                return business_redirect("/admin/agents", error="missing")
-            try:
-                raw = await _agent_form_values(db, tenant_id_of(principal), form)
-                if not raw["api_key"]:
-                    raw.pop("api_key")
-                payload = AgentUpdate(**raw)
-            except (ValidationError, ValueError):
-                return business_redirect("/admin/agents", error="invalid")
-            fields = payload.model_dump(exclude_unset=True)
-            if "api_key" in fields:
-                fields["api_key_cipher"] = encrypt(fields.pop("api_key"))
-            if "enabled" in fields:
-                fields["enabled"] = 1 if fields["enabled"] else 0
-            await agent_repo.update(
-                db,
-                code,
-                fields,
-                tenant_id=tenant_id_of(principal),
-            )
-            await audit_principal_action(
-                db,
-                principal,
-                action="agent.update",
-                target_type="agent",
-                target_id=code,
-                tenant_id=tenant_id_of(principal),
-            )
-            await db.commit()
-            return business_redirect("/admin/agents", notice="updated")
-        finally:
-            await db.close()
-
-    @app.post("/admin/agents/{code}/toggle")
-    async def agents_toggle(code: str, request: Request):
-        """切换当前租户 Agent 的启用状态。"""
-        values = await with_auth(request)
-        if values is None:
-            return unauthorized()
-        db, principal, _, _ = values
-        try:
-            form = await request.form()
-            if not await operation_authorized(
-                request,
-                db,
-                principal,
-                page_code="agents",
-                component_code="agent_editor",
-                form=form,
-            ):
-                return not_found()
-            row = await agent_repo.update(
-                db,
-                code,
-                {"enabled": 1 if as_bool(form.get("enabled")) else 0},
-                tenant_id=tenant_id_of(principal),
-            )
-            if row is None:
-                return business_redirect("/admin/agents", error="missing")
-            await audit_principal_action(
-                db,
-                principal,
-                action="agent.toggle",
-                target_type="agent",
-                target_id=code,
-                tenant_id=tenant_id_of(principal),
-                detail={"enabled": bool(row.enabled)},
-            )
-            await db.commit()
-            return business_redirect("/admin/agents", notice="toggled")
-        finally:
-            await db.close()
-
-    @app.post("/admin/agents/{code}/delete")
-    async def agents_delete(code: str, request: Request):
-        """删除当前租户的 Agent。"""
-        values = await with_auth(request)
-        if values is None:
-            return unauthorized()
-        db, principal, _, _ = values
-        try:
-            form = await request.form()
-            if not await operation_authorized(
-                request,
-                db,
-                principal,
-                page_code="agents",
-                component_code="agent_editor",
-                form=form,
-            ):
-                return not_found()
-            if not await agent_repo.delete(
-                db, code, tenant_id=tenant_id_of(principal)
-            ):
-                return business_redirect("/admin/agents", error="missing")
-            await audit_principal_action(
-                db,
-                principal,
-                action="agent.delete",
-                target_type="agent",
-                target_id=code,
-                tenant_id=tenant_id_of(principal),
-            )
-            await db.commit()
-            return business_redirect("/admin/agents", notice="deleted")
         finally:
             await db.close()

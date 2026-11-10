@@ -35,7 +35,7 @@
         },
         {
           "attrs": {
-            "href": "/admin/static/admin.css?v=login-slide-20261107-3",
+            "href": "/admin/static/admin.css?v=admin-responsive-20261110-6",
             "rel": "stylesheet"
           },
           "children": [],
@@ -43,7 +43,7 @@
         },
         {
           "attrs": {
-            "src": "/admin/static/admin-ui.js?v=llm-probe-20261109-1"
+            "src": "/admin/static/admin-ui.js?v=admin-ui-20261110-10"
           },
           "children": [],
           "tag": "script"
@@ -278,41 +278,51 @@
                 },
                 {
                   "attrs": {
-                    "class": "surface"
+                    "class": "stack"
                   },
                   "children": [
                     {
-                      "attrs": {},
-                      "children": [
-                        {
-                          "text": "Casbin policy"
-                        }
-                      ],
-                      "tag": "h1"
-                    },
-                    {
                       "attrs": {
-                        "class": "lead"
+                        "class": "surface"
                       },
                       "children": [
                         {
-                          "text": "OAuth administrators are authorized through Casbin. Platform super admins bypass role checks."
+                          "attrs": {},
+                          "children": [
+                            {
+                              "text": "Casbin roles"
+                            }
+                          ],
+                          "tag": "h1"
+                        },
+                        {
+                          "attrs": {
+                            "class": "lead"
+                          },
+                          "children": [
+                            {
+                              "text": "OAuth administrators are authorized through Casbin. Platform super admins bypass role checks."
+                            }
+                          ],
+                          "tag": "p"
                         }
                       ],
-                      "tag": "p"
+                      "tag": "section"
                     },
                     {
                       "attrs": {
-                        "class": "table-scroll"
+                        "class": "surface"
                       },
                       "children": [
                         {
                           "attrs": {
-                            "class": "data-table"
+                            "class": "table-scroll"
                           },
                           "children": [
                             {
-                              "attrs": {},
+                              "attrs": {
+                                "class": "data-table"
+                              },
                               "children": [
                                 {
                                   "attrs": {},
@@ -321,60 +331,163 @@
                                       "attrs": {},
                                       "children": [
                                         {
-                                          "text": "Type"
-                                        }
-                                      ],
-                                      "tag": "th"
-                                    },
-                                    {
-                                      "attrs": {},
-                                      "children": [
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Type"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
                                         {
-                                          "text": "v0"
-                                        }
-                                      ],
-                                      "tag": "th"
-                                    },
-                                    {
-                                      "attrs": {},
-                                      "children": [
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "v0"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
                                         {
-                                          "text": "v1"
-                                        }
-                                      ],
-                                      "tag": "th"
-                                    },
-                                    {
-                                      "attrs": {},
-                                      "children": [
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "v1"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
                                         {
-                                          "text": "v2"
-                                        }
-                                      ],
-                                      "tag": "th"
-                                    },
-                                    {
-                                      "attrs": {},
-                                      "children": [
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "v2"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
                                         {
-                                          "text": "v3"
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "v3"
+                                            }
+                                          ],
+                                          "tag": "th"
                                         }
                                       ],
-                                      "tag": "th"
+                                      "tag": "tr"
                                     }
                                   ],
-                                  "tag": "tr"
+                                  "tag": "thead"
+                                },
+                                {
+                                  "attrs": {},
+                                  "children": [],
+                                  "tag": "tbody"
                                 }
                               ],
-                              "tag": "thead"
-                            },
-                            {
-                              "attrs": {},
-                              "children": [],
-                              "tag": "tbody"
+                              "tag": "table"
                             }
                           ],
-                          "tag": "table"
+                          "tag": "div"
+                        }
+                      ],
+                      "tag": "section"
+                    }
+                  ],
+                  "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "aria-modelledby": "confirm-dialog-title",
+                    "class": "confirm-dialog",
+                    "data-confirm-dialog": "1",
+                    "role": "dialog"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "confirm-body"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "id": "confirm-dialog-title"
+                          },
+                          "children": [
+                            {
+                              "text": ""
+                            }
+                          ],
+                          "tag": "h2"
+                        },
+                        {
+                          "attrs": {
+                            "class": "lead",
+                            "data-confirm-dialog-summary": "1"
+                          },
+                          "children": [
+                            {
+                              "text": ""
+                            }
+                          ],
+                          "tag": "p"
+                        },
+                        {
+                          "attrs": {
+                            "class": "confirm-impacts",
+                            "data-confirm-dialog-impacts": "1"
+                          },
+                          "children": [
+                            {
+                              "text": ""
+                            }
+                          ],
+                          "tag": "div"
+                        },
+                        {
+                          "attrs": {
+                            "class": "confirm-actions",
+                            "method": "post"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "name": "csrf_token",
+                                "type": "hidden"
+                              },
+                              "children": [],
+                              "tag": "input"
+                            },
+                            {
+                              "attrs": {
+                                "class": "btn btn-secondary",
+                                "data-confirm-dialog-close": "1",
+                                "type": "button"
+                              },
+                              "children": [
+                                {
+                                  "text": "Cancel"
+                                }
+                              ],
+                              "tag": "button"
+                            },
+                            {
+                              "attrs": {
+                                "class": "btn btn-danger",
+                                "data-confirm-dialog-submit": "1",
+                                "type": "submit"
+                              },
+                              "children": [
+                                {
+                                  "text": "Delete"
+                                }
+                              ],
+                              "tag": "button"
+                            }
+                          ],
+                          "tag": "form"
                         }
                       ],
                       "tag": "div"

@@ -691,7 +691,9 @@ async def test_llm_probe_lists_models_and_runs_minimal_chat(monkeypatch):
     from app.models.admin_control import AdminAuditEvent
     from app.models.llm_endpoint import LlmEndpoint
     from services.admin_web.llm_probe import LlmProbeError, ProbeResult
-    from services.admin_web.routes import llm as llm_routes
+    # 探测接口的处理器在 ``llm_write`` 里（写操作拆分出来的模块），
+    # 桩要打在**真正持有处理器**的模块上，否则打补丁等于没打。
+    from services.admin_web.routes import llm_write as llm_routes
 
     client, _, _, csrf = await _create_seeded_logged_in_super_admin()
     tag = uuid.uuid4().hex[:8]
@@ -1102,15 +1104,28 @@ async def test_admin_web_manages_workflow_agent_and_llm_without_client_api():
     workflow_code = f"workflow-{tag}"
     llm_code = f"llm-{tag}"
     try:
+        llm = await client.post(
+            "/admin/llm",
+            data={
+                "csrf_token": csrf,
+                "code": llm_code,
+                "name": "Primary",
+                "base_url": "https://llm.example.com/v1",
+                "model": "test-model",
+                "api_key": "llm-admin-secret",
+                "priority": "5",
+            },
+        )
+        assert llm.status_code == 303, llm.text
+
         agent = await client.post(
             "/admin/agents",
             data={
                 "csrf_token": csrf,
                 "code": agent_code,
                 "name": "Admin Agent",
-                "model": "test-model",
-                "base_url": "https://llm.example.com/v1",
-                "api_key": "admin-web-secret",
+                "llm_endpoint_code": llm_code,
+                "model": "",
                 "tools": "",
                 "skills": "",
                 "system_prompt": "Use the admin configuration.",
@@ -1120,7 +1135,7 @@ async def test_admin_web_manages_workflow_agent_and_llm_without_client_api():
         assert agent.status_code == 303, agent.text
         agent_page = await client.get("/admin/agents")
         assert agent_code in agent_page.text
-        assert "admin-web-secret" not in agent_page.text
+        assert "llm-admin-secret" not in agent_page.text
 
         workflow = await client.post(
             "/admin/workflows",
@@ -1152,24 +1167,6 @@ async def test_admin_web_manages_workflow_agent_and_llm_without_client_api():
         )
         assert updated.status_code == 303, updated.text
 
-        llm = await client.post(
-            "/admin/llm",
-            data={
-                "csrf_token": csrf,
-                "code": llm_code,
-                "name": "Primary",
-                "base_url": "https://llm.example.com/v1",
-                "api_key": "llm-admin-secret",
-                "priority": "5",
-            },
-        )
-        assert llm.status_code == 303, llm.text
-        toggled = await client.post(
-            f"/admin/llm/{llm_code}/toggle",
-            data={"csrf_token": csrf, "enabled": "0"},
-        )
-        assert toggled.status_code == 303, toggled.text
-
         async with AdminSessionLocal() as db:
             from app.models.agent import Agent
             from app.models.llm_endpoint import LlmEndpoint
@@ -1185,10 +1182,12 @@ async def test_admin_web_manages_workflow_agent_and_llm_without_client_api():
                 sa.select(LlmEndpoint).where(LlmEndpoint.code == llm_code)
             )
             assert stored_agent is not None
-            assert stored_agent.api_key_cipher != "admin-web-secret"
+            assert stored_agent.llm_endpoint_code == llm_code
+            assert stored_agent.model == "test-model"
+            assert stored_agent.base_url == ""
             assert stored_workflow is not None
             assert stored_workflow.name == "Admin Workflow Updated"
-            assert stored_llm is not None and not stored_llm.enabled
+            assert stored_llm is not None and stored_llm.enabled
             audit_actions = set(
                 await db.scalars(
                     sa.select(AdminAuditEvent.action).where(
@@ -1203,7 +1202,6 @@ async def test_admin_web_manages_workflow_agent_and_llm_without_client_api():
                 "workflow.create",
                 "workflow.update",
                 "llm.create",
-                "llm.toggle",
             } <= audit_actions
     finally:
         await client.aclose()

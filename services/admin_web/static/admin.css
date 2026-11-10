@@ -522,6 +522,7 @@ summary:focus-visible {
 
 .main-content {
   width: min(1380px, 100%);
+  min-width: 0;
   padding: 30px;
 }
 
@@ -545,7 +546,14 @@ h2 {
 
 .stack {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
+  min-width: 0;
+}
+
+.stack > *,
+.surface {
+  min-width: 0;
 }
 
 .surface,
@@ -599,6 +607,8 @@ h2 {
 }
 
 .table-scroll {
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
 }
 
@@ -627,6 +637,80 @@ h2 {
   display: block;
   margin-top: 3px;
   font-size: 12px;
+}
+
+.surface-callout {
+  display: block;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-subtle);
+  line-height: 1.6;
+}
+
+.capability-fieldset {
+  margin: 4px 0 0;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg-subtle);
+}
+
+.capability-fieldset legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.capability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.capability-group {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-surface);
+}
+
+.capability-group-title {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.capability-group.is-warning {
+  border-color: var(--color-warning, #b45309);
+}
+
+.capability-choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  align-items: start;
+  font-weight: 500;
+}
+
+.capability-choice input {
+  grid-row: span 2;
+  margin-top: 4px;
+}
+
+.capability-choice .block-muted {
+  grid-column: 2;
+  margin-top: 0;
+}
+
+.warning-text {
+  color: var(--color-warning-text, #b45309);
 }
 
 .stack label,
@@ -2249,4 +2333,314 @@ html[data-theme="material"] .error-shell {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ---------------------------------------------------------------- 确认对话框 */
+
+/* 未打开时完全不渲染：对话框的壳子不该在页面上留一张空卡片。 */
+.confirm-dialog {
+  display: none;
+}
+
+/* 打开时是一个覆盖全屏的遮罩层，卡片本身由 .confirm-body 承担。 */
+.confirm-dialog[open] {
+  display: flex;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 45%);
+}
+
+.confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(520px, calc(100vw - 32px));
+  max-width: 100%;
+  padding: 22px;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-surface);
+}
+
+.confirm-body h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 24px;
+}
+
+.confirm-impacts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border-radius: var(--radius-control);
+  background: var(--color-bg-subtle);
+}
+
+.confirm-impact {
+  margin: 0;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--color-text-secondary);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ------------------------------------------------------------ 字段级错误提示 */
+
+.field-invalid label {
+  color: var(--color-danger);
+}
+
+.field-error {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--color-danger);
+}
+
+.form-errors {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: var(--border-width) solid var(--color-danger);
+  border-radius: var(--radius-control);
+  background: var(--color-bg-subtle);
+}
+
+.form-error-summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--color-danger);
+}
+
+/* ------------------------------------------------------------------ 撤销面板 */
+
+.undo-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.undo-panel p {
+  margin: 0;
+}
+
+.list-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.list-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.list-controls .list-summary {
+  margin: 0 0 0 auto;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+/* ------------------------------------------------- 列表页搜索 / 排序 / 分页 */
+
+.list-controls-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.list-filter-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.list-filter-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.list-pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.list-summary {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.btn.is-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------- 独立编辑面板（UX-09） */
+
+.edit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scroll-margin-top: 16px;
+}
+
+.edit-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.edit-panel[data-edit-dirty="1"] {
+  border-color: var(--color-warning, #b45309);
+}
+
+/* ------------------------------------------------- 能力选择器工具条（UX-19） */
+
+.capability-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-surface);
+}
+
+.capability-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.capability-toolbar .capability-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.capability-count {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.capability-group-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.capability-group-toggle {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.capability-group-toggle::before {
+  content: "▾ ";
+}
+
+.capability-group.is-collapsed .capability-group-toggle::before {
+  content: "▸ ";
+}
+
+.capability-group.is-collapsed .capability-choice {
+  display: none;
+}
+
+.capability-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.capability-suggestion {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+}
+
+.capability-suggestion.is-granted {
+  color: var(--color-success-text, #15803d);
+  border-color: var(--color-success, #15803d);
+}
+
+.capability-suggestion.is-disabled,
+.capability-suggestion.is-missing {
+  color: var(--color-warning-text, #b45309);
+  border-color: var(--color-warning, #b45309);
+}
+
+.capability-suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.capability-suggestion-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.reference-count {
+  font-weight: 600;
+}
+
+/* ------------------------------------------------- LLM 探测排查指引（UX-07） */
+
+.llm-probe-help {
+  flex-basis: 100%;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.llm-probe-help summary {
+  cursor: pointer;
 }

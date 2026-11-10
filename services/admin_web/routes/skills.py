@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import hashlib
 from typing import Any
+from urllib.parse import quote
 
 from ludic.web import Request
 from pydantic import ValidationError
+from starlette.responses import RedirectResponse
 
 from app.core.skill_pack import compute_content_hash
+from app.repo.agent_repo import agent_repo
 from app.repo.skill_repo import skill_repo
 from app.schemas.skill import SkillCreate, SkillUpdate
 from services.admin_web.audit import audit_principal_action
+from services.admin_web.listing import parse_list_params, search_term
+from services.admin_web.form_state import (
+    field_errors, invalid_form_redirect, take_invalid,
+)
 from services.admin_web.common import (
-    as_bool, business_redirect, can_edit_resource, flash_from_query, not_found,
-    operation_authorized, tenant_id_of, unauthorized, with_auth,
+    as_bool, business_redirect, can_edit_resource, csv_list, flash_from_query,
+    not_found, operation_authorized, tenant_id_of, unauthorized, with_auth,
 )
 from services.admin_web.registry import can_access_page, visible_pages
 from services.admin_web.views import skills_page
@@ -34,15 +41,49 @@ def register(app: Any) -> None:
             if not await can_access_page(db, principal, "skills"):
                 return not_found()
             flash, _ = flash_from_query(request)
+            tenant_id = tenant_id_of(principal)
+            # 深链接到编辑面板（UX-09）：``?resource=<code>`` 决定打开
+            # 哪个对象的编辑面板。
+            resource = (request.query_params.get("resource") or "").strip()
+            invalid_nonce = request.query_params.get("invalid")
+            if resource:
+                edit_values, edit_errors = take_invalid(invalid_nonce)
+                create_values, create_errors = {}, {}
+            else:
+                create_values, create_errors = take_invalid(invalid_nonce)
+                edit_values, edit_errors = {}, {}
+            # 列表页的搜索 / 排序 / 分页（UX-06）。
+            list_params = parse_list_params(
+                request,
+                allowed_sorts=("name", "code"),
+            )
+            search = search_term(list_params.q)
+            total = await skill_repo.count(
+                db, tenant_id=tenant_id, search=search or None
+            )
+            rows = await skill_repo.list(
+                db,
+                limit=list_params.size,
+                offset=list_params.offset,
+                tenant_id=tenant_id,
+                search=search or None,
+                sort=list_params.sort,
+            )
+            editing_row = None
+            if resource:
+                editing_row = next(
+                    (row for row in rows if row.code == resource), None
+                )
+                if editing_row is None:
+                    editing_row = await skill_repo.get_by_code(
+                        db, resource, tenant_id
+                    )
             return skills_page(
                 principal=principal,
                 csrf=csrf,
                 pages=await visible_pages(db, principal),
-                rows=await skill_repo.list(
-                    db,
-                    limit=500,
-                    tenant_id=tenant_id_of(principal),
-                ),
+                rows=rows,
+                used_by=await agent_repo.skill_binding_map(db, tenant_id),
                 theme=pref.theme,
                 color_mode=pref.color_mode,
                 density=pref.density,
@@ -53,6 +94,17 @@ def register(app: Any) -> None:
                     component_code="skill_editor",
                 ),
                 flash=flash,
+                create_errors=create_errors,
+                create_values=create_values,
+                list_params=list_params,
+                list_total=total,
+                editing_row=editing_row,
+                edit_errors=(
+                    {resource: edit_errors} if resource and edit_errors else {}
+                ),
+                edit_values=(
+                    {resource: edit_values} if resource and edit_values else {}
+                ),
             )
         finally:
             await db.close()
@@ -75,16 +127,28 @@ def register(app: Any) -> None:
                 form=form,
             ):
                 return not_found()
+            submitted = {
+                "code": str(form.get("code") or ""),
+                "description": str(form.get("description") or ""),
+                "allowed_tools": ", ".join(
+                    csv_list(form.get("allowed_tools"))
+                ),
+                "body": str(form.get("body") or ""),
+                "status": str(form.get("status") or "published"),
+                "enabled": as_bool(form.get("enabled"), True),
+            }
             try:
-                payload = SkillCreate(
-                    code=str(form.get("code") or ""),
-                    description=str(form.get("description") or ""),
-                    body=str(form.get("body") or ""),
-                    status=str(form.get("status") or "published"),
-                    enabled=as_bool(form.get("enabled"), True),
+                payload = SkillCreate(**submitted)
+            except ValidationError as exc:
+                # 校验失败：保留已填内容并逐字段标错（UX-03）。
+                return RedirectResponse(
+                    invalid_form_redirect(
+                        "/admin/skills",
+                        submitted,
+                        field_errors(exc),
+                    ),
+                    status_code=303,
                 )
-            except ValidationError:
-                return business_redirect("/admin/skills", error="invalid")
             tenant_id = tenant_id_of(principal)
             if await skill_repo.get_by_code(db, payload.code, tenant_id):
                 return business_redirect("/admin/skills", error="duplicate")
@@ -94,6 +158,7 @@ def register(app: Any) -> None:
                 code=payload.code,
                 name=payload.code,
                 description=payload.description,
+                allowed_tools=payload.allowed_tools,
                 body=payload.body,
                 status=payload.status,
                 enabled=1 if payload.enabled else 0,
@@ -138,12 +203,37 @@ def register(app: Any) -> None:
             try:
                 payload = SkillUpdate(
                     description=str(form.get("description") or ""),
+                    allowed_tools=", ".join(csv_list(form.get("allowed_tools"))),
                     body=str(form.get("body") or ""),
                     status=str(form.get("status") or existing.status),
                     enabled=as_bool(form.get("enabled"), bool(existing.enabled)),
                 )
-            except ValidationError:
-                return business_redirect("/admin/skills", error="invalid")
+            except ValidationError as exc:
+                # 校验失败：回到编辑面板，保留已填内容并逐字段标错
+                # （UX-03 + UX-09）。
+                submitted = {
+                    "description": str(form.get("description") or ""),
+                    "allowed_tools": ", ".join(
+                        csv_list(form.get("allowed_tools"))
+                    ),
+                    "body": str(form.get("body") or ""),
+                    "status": str(form.get("status") or existing.status),
+                }
+                return RedirectResponse(
+                    invalid_form_redirect(
+                        f"/admin/skills?resource={quote(code, safe='')}",
+                        submitted,
+                        field_errors(exc),
+                    ),
+                    status_code=303,
+                )
+            used_by = await agent_repo.skill_binding_map(db, tenant_id)
+            disables_active_skill = (
+                bool(existing.enabled)
+                and (not payload.enabled or payload.status == "draft")
+            )
+            if code in used_by and disables_active_skill:
+                return business_redirect("/admin/skills", error="in_use")
             resources = await skill_repo.list_resources(db, existing.id)
             await skill_repo.add_revision(
                 db,
@@ -215,6 +305,9 @@ def register(app: Any) -> None:
             ):
                 return not_found()
             tenant_id = tenant_id_of(principal)
+            used_by = await agent_repo.skill_binding_map(db, tenant_id)
+            if code in used_by:
+                return business_redirect("/admin/skills", error="in_use")
             if not await skill_repo.soft_delete(db, code, tenant_id):
                 return business_redirect("/admin/skills", error="missing")
             await audit_principal_action(

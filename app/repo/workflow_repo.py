@@ -8,6 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.workflow import Workflow
 
 
+def _workflow_sort(sort: str) -> tuple[Any, ...]:
+    """把排序字段名翻译成 ORDER BY 片段（白名单）。"""
+    if sort == "name":
+        return (Workflow.name.asc(), Workflow.id.desc())
+    if sort == "code":
+        return (Workflow.code.asc(), Workflow.id.desc())
+    return (Workflow.id.desc(),)
+
+
 class WorkflowRepo:
     async def create(self, db: AsyncSession, **kwargs) -> Workflow:
         """插入 Workflow 并 commit + refresh，返回值可直接喂给缓存与响应模型。
@@ -30,15 +39,84 @@ class WorkflowRepo:
         """按自增 id 取 Workflow（会话绑定的是 workflow_id）。"""
         return await db.get(Workflow, wf_id)
 
+    async def agent_binding_map(
+        self, db: AsyncSession
+    ) -> dict[str, list[str]]:
+        """返回 Agent code → 引用它的 Workflow code 列表。
+
+        Workflow definition 是 JSON，跨数据库驱动统一在 Python 侧解析，避免
+        依赖 SQLite/PostgreSQL 不一致的 JSON 查询语法。
+        """
+        out: dict[str, list[str]] = {}
+        rows = await db.execute(
+            sa.select(Workflow.code, Workflow.definition).order_by(Workflow.id)
+        )
+        for workflow_code, definition in rows:
+            nodes = (
+                definition.get("nodes", [])
+                if isinstance(definition, dict)
+                else []
+            )
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                agent_code = node.get("agentCode")
+                if isinstance(agent_code, str) and agent_code:
+                    out.setdefault(agent_code, []).append(workflow_code)
+        return out
+
+    async def agents_using(
+        self, db: AsyncSession, agent_code: str
+    ) -> list[str]:
+        """列出 definition 中引用指定 Agent 的 Workflow code。"""
+        bindings = await self.agent_binding_map(db)
+        return bindings.get(agent_code, [])
+
     async def list(
-        self, db: AsyncSession, only_enabled: bool = False, limit: int = 200, offset: int = 0
+        self,
+        db: AsyncSession,
+        only_enabled: bool = False,
+        limit: int = 200,
+        offset: int = 0,
+        search: str | None = None,
+        sort: str = "",
     ) -> list[Workflow]:
-        """分页列出 Workflow，按 id 倒序；``only_enabled`` 过滤掉已停用的编排。"""
+        """分页列出 Workflow，按 id 倒序；``only_enabled`` 过滤掉已停用的编排。
+
+        ``search`` 按编码或名称做包含匹配，``sort`` 支持 ``name`` /
+        ``code``（管理端列表，UX-06）。
+        """
         stmt = sa.select(Workflow)
         if only_enabled:
             stmt = stmt.where(Workflow.enabled == 1)
-        stmt = stmt.order_by(Workflow.id.desc()).limit(limit).offset(offset)
+        if search:
+            pattern = f"%{search}%"
+            stmt = stmt.where(
+                sa.or_(
+                    Workflow.code.like(pattern),
+                    Workflow.name.like(pattern),
+                )
+            )
+        stmt = stmt.order_by(*_workflow_sort(sort)).limit(limit).offset(offset)
         return list(await db.scalars(stmt))
+
+    async def count(
+        self,
+        db: AsyncSession,
+        *,
+        search: str | None = None,
+    ) -> int:
+        """统计符合条件的编排数量（管理端分页用，UX-06）。"""
+        stmt = sa.select(sa.func.count(Workflow.id))
+        if search:
+            pattern = f"%{search}%"
+            stmt = stmt.where(
+                sa.or_(
+                    Workflow.code.like(pattern),
+                    Workflow.name.like(pattern),
+                )
+            )
+        return int(await db.scalar(stmt) or 0)
 
     async def update(
         self, db: AsyncSession, code: str, fields: dict, bump_version: bool = True

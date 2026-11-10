@@ -11,9 +11,10 @@ from pydantic import ValidationError
 from app.core.workflow_def import WorkflowDefinition, collect_graph_issues
 from app.repo.agent_repo import agent_repo
 from app.repo.workflow_repo import workflow_repo
+from services.admin_web.listing import parse_list_params, search_term
 from services.admin_web.common import (
     can_edit_resource, flash_from_query, not_found, tenant_id_of,
-    unauthorized, with_auth,
+    unauthorized, undo_id_from_query, with_auth,
 )
 from services.admin_web.registry import can_access_page, visible_pages
 from services.admin_web.views import workflow_editor_page, workflows_page
@@ -208,11 +209,25 @@ def register(app: Any) -> None:
             if not await can_access_page(db, principal, "workflows"):
                 return not_found()
             flash, kind = flash_from_query(request)
+            undo_id = undo_id_from_query(request)
+            # 列表页的搜索 / 排序 / 分页（UX-06）。
+            list_params = parse_list_params(
+                request,
+                allowed_sorts=("name", "code"),
+            )
+            search = search_term(list_params.q)
+            total = await workflow_repo.count(db, search=search or None)
             return workflows_page(
                 principal=principal,
                 csrf=csrf,
                 pages=await visible_pages(db, principal),
-                rows=await workflow_repo.list(db, limit=500),
+                rows=await workflow_repo.list(
+                    db,
+                    limit=list_params.size,
+                    offset=list_params.offset,
+                    search=search or None,
+                    sort=list_params.sort,
+                ),
                 agents=await agent_repo.list(
                     db, only_enabled=True, limit=500, tenant_id=tenant_id_of(principal)
                 ),
@@ -226,6 +241,9 @@ def register(app: Any) -> None:
                     component_code="workflow_editor",
                 ),
                 flash=flash,
+                undo_id=undo_id,
+                list_params=list_params,
+                list_total=total,
             )
         finally:
             await db.close()

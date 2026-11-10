@@ -24,16 +24,17 @@ from typing import Any
 
 from ludic.html import (
     button,
+    div,
     form,
-    input as input_,
     label,
-    option,
+    p,
     select,
     span,
     textarea,
 )
 
 from services.admin_web.views.components import _csrf
+from services.admin_web.views.field_controls import _Input, _Option
 
 
 @dataclass(frozen=True)
@@ -58,8 +59,8 @@ class Field:
     - ``value``：全部 kind（语义见 :func:`render_field`）；
     - ``modes``：全部 kind（决定字段出现在哪些表单；``render_form`` 用
       ``mode in field.modes`` 过滤，不在当前模式里的字段整条不渲染）；
-    - ``required``：``text`` 系与 ``textarea``；``select`` 忽略；
-    - ``edit_required``：``text`` 系与 ``textarea``；``select`` 忽略。
+    - ``required``：``text`` 系、``textarea`` 与 ``select``；
+    - ``edit_required``：``text`` 系、``textarea`` 与 ``select``。
       ``None`` = 继承 ``required``；``True`` = 编辑态必填；``False`` =
       编辑态**显式不必填**（不渲染 ``required`` 属性）；
     - ``placeholder``：``text`` 系；``textarea`` / ``select`` 忽略；
@@ -105,43 +106,6 @@ class Field:
     edit_min_value: str | None = None
     edit_max_value: str | None = None
     list_id: str = ""
-
-
-class _Input(input_):
-    """能把空字符串 ``value`` 渲染出来的输入框。
-
-    ludic 1.x 的 ``format_attrs`` 只保留非空值，空字符串属性会被整个丢掉，
-    于是 ``value=""`` 与「压根没有 value 属性」渲染出的 HTML 完全一样。
-    这里把被丢掉的空 ``value`` 补回 HTML 文本层。
-
-    元素树（``aliased_attrs``）不受影响：空 ``value`` 仍然不进树，与既有
-    表单（``input_(name="x", value="")``）的树结构保持一致。
-
-    **这是有意为之的私有 API 依赖**：``_format_attributes`` 是 ludic 的私有
-    方法（``ludic/base.py``），没有公共 API 能渲染出 ``value=""``——raw
-    attrs 通道（``attrs={"value": ""}``）同样被真值判断丢掉，而
-    ``value=None`` 会被渲染成字面量 ``value="None"``。``requirements.admin.txt``
-    钉的是 ``ludic[full]>=1.0,<2``，一旦 ludic 改了这条规则，本模块的
-    ``value=""`` 断言会立刻变红——升级 ludic 之后先跑
-    ``tests/test_admin_fields.py``。
-
-    **已知副作用**：
-
-    - ``to_string()`` 用的是类型名，会渲染成 ``<_Input name="x" value="" />``，
-      类名泄漏到输出里；
-    - ludic 的 ``__eq__`` 要求 ``type(self) is type(other)``，所以
-      ``_Input(...) == input_(...)`` 是 **False**。
-
-    仓库现在没有 ``to_string`` 的调用点，快照只取 ``html_name`` 与
-    ``aliased_attrs``，所以今天没有影响；但将来写
-    ``assert element == expected_element`` 会以极难懂的方式失败。
-    """
-
-    def _format_attributes(self, is_html: bool = False) -> str:
-        rendered = super()._format_attributes(is_html=is_html)
-        if self.attrs.get("value") == "":
-            rendered = f'{rendered} value=""' if rendered else 'value=""'
-        return rendered
 
 
 def _control(field: Field, value: object | None, *, mode: str) -> Any:
@@ -196,12 +160,17 @@ def _control(field: Field, value: object | None, *, mode: str) -> Any:
         # （创建态）则一个 selected 都不发。
         return select(
             *(
-                option(label_text, value=option_value, selected=option_value in matched)
+                _Option(
+                    label_text,
+                    value=option_value,
+                    selected=option_value in matched,
+                )
                 if current is not None
-                else option(label_text, value=option_value)
+                else _Option(label_text, value=option_value)
                 for label_text, option_value in field.options
             ),
             name=field.name,
+            required=required,
         )
 
     placeholder = (
@@ -233,8 +202,41 @@ def _control(field: Field, value: object | None, *, mode: str) -> Any:
     return _Input(**attrs)
 
 
-def render_field(field: Field, value: object | None, *, mode: str) -> Any:
+def _error_id(field_name: str, form_id: str) -> str:
+    """返回字段级错误提示的 DOM id。
+
+    错误提示要能被读屏软件关联到控件上，靠的就是 ``aria-describedby``
+    指向这个 id。同一页面上可能有多个表单（每行一个编辑表单），
+    所以 id 必须带上表单自身的标识，否则会串到别的表单上。
+    """
+    safe = "".join(
+        char if char.isalnum() or char in "-_" else "-"
+        for char in f"{form_id}-{field_name}"
+    )
+    return f"err-{safe}"
+
+
+def _apply_error_attrs(control: Any, error: str, error_id: str) -> Any:
+    """给控件挂上 ``aria-invalid`` 与 ``aria-describedby``。"""
+    control.attrs["aria-invalid"] = "true"
+    control.attrs["aria-describedby"] = error_id
+    return control
+
+
+def render_field(
+    field: Field,
+    value: object | None,
+    *,
+    mode: str,
+    error: str = "",
+    form_id: str = "form",
+) -> Any:
     """渲染单个字段（``label`` 包裹控件）。
+
+    ``error`` 非空时，控件会被标记为 ``aria-invalid``，并在其下方渲染
+    一条**字段级**错误说明（id 由 ``form_id`` + 字段名决定）。这是
+    UX-03 的直接修复：校验失败要指到具体字段，而不是一句通用的
+    「提交的值无效」。
 
     ``value`` 接受 ``str`` / ``int`` / ``float`` / ``bool`` / ``None``，
     但**布尔值的语义按 kind 而不同**，不能当成一条通用规则：
@@ -263,7 +265,16 @@ def render_field(field: Field, value: object | None, *, mode: str) -> Any:
     label_text = (
         field.edit_label if mode == "edit" and field.edit_label else field.label
     )
-    return label(span(label_text), _control(field, value, mode=mode))
+    control = _control(field, value, mode=mode)
+    if not error:
+        return label(span(label_text), control)
+    error_id = _error_id(field.name, form_id)
+    _apply_error_attrs(control, error, error_id)
+    return div(
+        label(span(label_text), control),
+        p(error, id=error_id, class_="field-error", role="alert"),
+        class_="field field-invalid",
+    )
 
 
 def render_form(
@@ -276,6 +287,9 @@ def render_form(
     submit_label: str,
     layout: str = "grid",
     actions: Any | None = None,
+    errors: Mapping[str, str] | None = None,
+    form_id: str = "form",
+    error_summary: str = "",
 ) -> Any:
     """渲染整个表单。
 
@@ -302,10 +316,28 @@ def render_form(
     内部，按钮才拿得到同一表单里的 ``base_url`` / ``api_key`` / ``model``；
     默认 ``None`` 时不渲染，其它页面的元素树不变。
     """
+    field_errors = dict(errors or {})
     return form(
         _csrf(csrf),
         *(
-            render_field(field, values.get(field.name), mode=mode)
+            [
+                div(
+                    p(error_summary, class_="form-error-summary"),
+                    class_="form-errors",
+                    role="alert",
+                )
+            ]
+            if error_summary
+            else []
+        ),
+        *(
+            render_field(
+                field,
+                values.get(field.name),
+                mode=mode,
+                error=field_errors.get(field.name, ""),
+                form_id=form_id,
+            )
             for field in fields
             if mode in field.modes
         ),

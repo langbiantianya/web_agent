@@ -35,7 +35,7 @@
         },
         {
           "attrs": {
-            "href": "/admin/static/admin.css?v=login-slide-20261107-3",
+            "href": "/admin/static/admin.css?v=admin-responsive-20261110-6",
             "rel": "stylesheet"
           },
           "children": [],
@@ -43,7 +43,7 @@
         },
         {
           "attrs": {
-            "src": "/admin/static/admin-ui.js?v=llm-probe-20261109-1"
+            "src": "/admin/static/admin-ui.js?v=admin-ui-20261110-10"
           },
           "children": [],
           "tag": "script"
@@ -299,10 +299,67 @@
                           },
                           "children": [
                             {
-                              "text": "Prompt, model, tool, and skill bindings are managed inside the isolated admin service."
+                              "text": "Each Agent selects a configured LLM connection and explicit Skills and tools. Tool hints from a Skill remain suggestions; only checked tools are authorized."
                             }
                           ],
                           "tag": "p"
+                        },
+                        {
+                          "attrs": {
+                            "class": "surface-callout"
+                          },
+                          "children": [
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "text": "Capabilities are managed on "
+                                }
+                              ],
+                              "tag": "span"
+                            },
+                            {
+                              "attrs": {
+                                "href": "/admin/skills"
+                              },
+                              "children": [
+                                {
+                                  "text": "Skills"
+                                }
+                              ],
+                              "tag": "a"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "text": " and "
+                                }
+                              ],
+                              "tag": "span"
+                            },
+                            {
+                              "attrs": {
+                                "href": "/admin/mcp"
+                              },
+                              "children": [
+                                {
+                                  "text": "MCP servers"
+                                }
+                              ],
+                              "tag": "a"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "text": "."
+                                }
+                              ],
+                              "tag": "span"
+                            }
+                          ],
+                          "tag": "div"
                         }
                       ],
                       "tag": "section"
@@ -390,6 +447,50 @@
                                   "attrs": {},
                                   "children": [
                                     {
+                                      "text": "LLM connection"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "llm_endpoint_code",
+                                    "required": "true"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {},
+                                      "children": [
+                                        {
+                                          "text": "Select a configured LLM connection"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "value": "snapshot-llm"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Snapshot LLM (snapshot-llm) · snapshot-model"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    }
+                                  ],
+                                  "tag": "select"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
                                       "text": "Model"
                                     }
                                   ],
@@ -398,97 +499,7 @@
                                 {
                                   "attrs": {
                                     "name": "model",
-                                    "required": "true"
-                                  },
-                                  "children": [],
-                                  "tag": "input"
-                                }
-                              ],
-                              "tag": "label"
-                            },
-                            {
-                              "attrs": {},
-                              "children": [
-                                {
-                                  "attrs": {},
-                                  "children": [
-                                    {
-                                      "text": "Base URL"
-                                    }
-                                  ],
-                                  "tag": "span"
-                                },
-                                {
-                                  "attrs": {
-                                    "name": "base_url"
-                                  },
-                                  "children": [],
-                                  "tag": "input"
-                                }
-                              ],
-                              "tag": "label"
-                            },
-                            {
-                              "attrs": {},
-                              "children": [
-                                {
-                                  "attrs": {},
-                                  "children": [
-                                    {
-                                      "text": "API key"
-                                    }
-                                  ],
-                                  "tag": "span"
-                                },
-                                {
-                                  "attrs": {
-                                    "autocomplete": "new-password",
-                                    "name": "api_key",
-                                    "type": "password"
-                                  },
-                                  "children": [],
-                                  "tag": "input"
-                                }
-                              ],
-                              "tag": "label"
-                            },
-                            {
-                              "attrs": {},
-                              "children": [
-                                {
-                                  "attrs": {},
-                                  "children": [
-                                    {
-                                      "text": "Tools (comma separated)"
-                                    }
-                                  ],
-                                  "tag": "span"
-                                },
-                                {
-                                  "attrs": {
-                                    "name": "tools"
-                                  },
-                                  "children": [],
-                                  "tag": "input"
-                                }
-                              ],
-                              "tag": "label"
-                            },
-                            {
-                              "attrs": {},
-                              "children": [
-                                {
-                                  "attrs": {},
-                                  "children": [
-                                    {
-                                      "text": "Skills (comma separated)"
-                                    }
-                                  ],
-                                  "tag": "span"
-                                },
-                                {
-                                  "attrs": {
-                                    "name": "skills"
+                                    "placeholder": "Uses the LLM connection default when blank"
                                   },
                                   "children": [],
                                   "tag": "input"
@@ -534,7 +545,8 @@
                                 },
                                 {
                                   "attrs": {
-                                    "name": "enabled"
+                                    "name": "enabled",
+                                    "required": "false"
                                   },
                                   "children": [
                                     {
@@ -564,6 +576,508 @@
                                 }
                               ],
                               "tag": "label"
+                            },
+                            {
+                              "attrs": {
+                                "class": "capability-fieldset",
+                                "data-capability-selector": "1"
+                              },
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "Capabilities"
+                                    }
+                                  ],
+                                  "tag": "legend"
+                                },
+                                {
+                                  "attrs": {
+                                    "class": "block-muted"
+                                  },
+                                  "children": [
+                                    {
+                                      "text": "Bind published Skills and discovered tools. Skill tool hints are suggestions only; tool access is granted by the checked tools below."
+                                    }
+                                  ],
+                                  "tag": "p"
+                                },
+                                {
+                                  "attrs": {
+                                    "class": "capability-toolbar"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "class": "capability-search"
+                                      },
+                                      "children": [
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Search tools"
+                                            }
+                                          ],
+                                          "tag": "span"
+                                        },
+                                        {
+                                          "attrs": {
+                                            "autocomplete": "off",
+                                            "data-capability-search": "1",
+                                            "placeholder": "Tool name or description",
+                                            "type": "search"
+                                          },
+                                          "children": [],
+                                          "tag": "input"
+                                        }
+                                      ],
+                                      "tag": "label"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "class": "capability-toggle"
+                                      },
+                                      "children": [
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Only available"
+                                            }
+                                          ],
+                                          "tag": "span"
+                                        },
+                                        {
+                                          "attrs": {
+                                            "data-capability-available-only": "1",
+                                            "type": "checkbox"
+                                          },
+                                          "children": [],
+                                          "tag": "input"
+                                        }
+                                      ],
+                                      "tag": "label"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "aria-live": "polite",
+                                        "class": "capability-count",
+                                        "data-capability-count": "1",
+                                        "role": "status"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "0 selected"
+                                        }
+                                      ],
+                                      "tag": "span"
+                                    }
+                                  ],
+                                  "tag": "div"
+                                },
+                                {
+                                  "attrs": {
+                                    "class": "capability-grid"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "class": "capability-group",
+                                        "data-capability-group": "1"
+                                      },
+                                      "children": [
+                                        {
+                                          "attrs": {
+                                            "class": "capability-group-header"
+                                          },
+                                          "children": [
+                                            {
+                                              "attrs": {
+                                                "aria-expanded": "true",
+                                                "class": "capability-group-toggle",
+                                                "data-capability-toggle": "1",
+                                                "type": "button"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "Published Skills"
+                                                }
+                                              ],
+                                              "tag": "button"
+                                            }
+                                          ],
+                                          "tag": "div"
+                                        },
+                                        {
+                                          "attrs": {
+                                            "class": "capability-choice",
+                                            "data-capability-title": "snapshot skill (snapshot-skill) v2 · published",
+                                            "data-capability-value": "snapshot-skill"
+                                          },
+                                          "children": [
+                                            {
+                                              "attrs": {
+                                                "checked": "false",
+                                                "disabled": "false",
+                                                "name": "skills",
+                                                "type": "checkbox",
+                                                "value": "snapshot-skill"
+                                              },
+                                              "children": [],
+                                              "tag": "input"
+                                            },
+                                            {
+                                              "attrs": {},
+                                              "children": [
+                                                {
+                                                  "text": "Snapshot Skill (snapshot-skill)"
+                                                }
+                                              ],
+                                              "tag": "span"
+                                            },
+                                            {
+                                              "attrs": {
+                                                "class": "block-muted"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "v2 · published"
+                                                }
+                                              ],
+                                              "tag": "small"
+                                            }
+                                          ],
+                                          "tag": "label"
+                                        }
+                                      ],
+                                      "tag": "div"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "class": "capability-group",
+                                        "data-capability-group": "1"
+                                      },
+                                      "children": [
+                                        {
+                                          "attrs": {
+                                            "class": "capability-group-header"
+                                          },
+                                          "children": [
+                                            {
+                                              "attrs": {
+                                                "aria-expanded": "true",
+                                                "class": "capability-group-toggle",
+                                                "data-capability-toggle": "1",
+                                                "type": "button"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "Built-in tools"
+                                                }
+                                              ],
+                                              "tag": "button"
+                                            }
+                                          ],
+                                          "tag": "div"
+                                        },
+                                        {
+                                          "attrs": {
+                                            "class": "capability-choice",
+                                            "data-capability-title": "calc built-in tool",
+                                            "data-capability-value": "calc"
+                                          },
+                                          "children": [
+                                            {
+                                              "attrs": {
+                                                "checked": "false",
+                                                "disabled": "false",
+                                                "name": "tools",
+                                                "type": "checkbox",
+                                                "value": "calc"
+                                              },
+                                              "children": [],
+                                              "tag": "input"
+                                            },
+                                            {
+                                              "attrs": {},
+                                              "children": [
+                                                {
+                                                  "text": "calc"
+                                                }
+                                              ],
+                                              "tag": "span"
+                                            },
+                                            {
+                                              "attrs": {
+                                                "class": "block-muted"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "Built-in tool"
+                                                }
+                                              ],
+                                              "tag": "small"
+                                            }
+                                          ],
+                                          "tag": "label"
+                                        },
+                                        {
+                                          "attrs": {
+                                            "class": "capability-choice",
+                                            "data-capability-title": "now built-in tool",
+                                            "data-capability-value": "now"
+                                          },
+                                          "children": [
+                                            {
+                                              "attrs": {
+                                                "checked": "false",
+                                                "disabled": "false",
+                                                "name": "tools",
+                                                "type": "checkbox",
+                                                "value": "now"
+                                              },
+                                              "children": [],
+                                              "tag": "input"
+                                            },
+                                            {
+                                              "attrs": {},
+                                              "children": [
+                                                {
+                                                  "text": "now"
+                                                }
+                                              ],
+                                              "tag": "span"
+                                            },
+                                            {
+                                              "attrs": {
+                                                "class": "block-muted"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "Built-in tool"
+                                                }
+                                              ],
+                                              "tag": "small"
+                                            }
+                                          ],
+                                          "tag": "label"
+                                        },
+                                        {
+                                          "attrs": {
+                                            "class": "capability-choice",
+                                            "data-capability-title": "skill_resource built-in tool",
+                                            "data-capability-value": "skill_resource"
+                                          },
+                                          "children": [
+                                            {
+                                              "attrs": {
+                                                "checked": "false",
+                                                "disabled": "false",
+                                                "name": "tools",
+                                                "type": "checkbox",
+                                                "value": "skill_resource"
+                                              },
+                                              "children": [],
+                                              "tag": "input"
+                                            },
+                                            {
+                                              "attrs": {},
+                                              "children": [
+                                                {
+                                                  "text": "skill_resource"
+                                                }
+                                              ],
+                                              "tag": "span"
+                                            },
+                                            {
+                                              "attrs": {
+                                                "class": "block-muted"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "Built-in tool"
+                                                }
+                                              ],
+                                              "tag": "small"
+                                            }
+                                          ],
+                                          "tag": "label"
+                                        }
+                                      ],
+                                      "tag": "div"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "class": "capability-group",
+                                        "data-capability-group": "1"
+                                      },
+                                      "children": [
+                                        {
+                                          "attrs": {
+                                            "class": "capability-group-header"
+                                          },
+                                          "children": [
+                                            {
+                                              "attrs": {
+                                                "aria-expanded": "true",
+                                                "class": "capability-group-toggle",
+                                                "data-capability-toggle": "1",
+                                                "type": "button"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "Snapshot MCP"
+                                                }
+                                              ],
+                                              "tag": "button"
+                                            },
+                                            {
+                                              "attrs": {
+                                                "class": "block-muted"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "snapshot-mcp"
+                                                }
+                                              ],
+                                              "tag": "small"
+                                            }
+                                          ],
+                                          "tag": "div"
+                                        },
+                                        {
+                                          "attrs": {
+                                            "class": "capability-choice",
+                                            "data-capability-title": "lookup look up a snapshot record.",
+                                            "data-capability-value": "mcp__snapshot-mcp__lookup"
+                                          },
+                                          "children": [
+                                            {
+                                              "attrs": {
+                                                "checked": "false",
+                                                "disabled": "false",
+                                                "name": "tools",
+                                                "type": "checkbox",
+                                                "value": "mcp__snapshot-mcp__lookup"
+                                              },
+                                              "children": [],
+                                              "tag": "input"
+                                            },
+                                            {
+                                              "attrs": {},
+                                              "children": [
+                                                {
+                                                  "text": "lookup"
+                                                }
+                                              ],
+                                              "tag": "span"
+                                            },
+                                            {
+                                              "attrs": {
+                                                "class": "block-muted"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "Look up a snapshot record."
+                                                }
+                                              ],
+                                              "tag": "small"
+                                            }
+                                          ],
+                                          "tag": "label"
+                                        }
+                                      ],
+                                      "tag": "div"
+                                    }
+                                  ],
+                                  "tag": "div"
+                                },
+                                {
+                                  "attrs": {
+                                    "class": "capability-suggestion-list"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "class": "capability-group-title"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Skill tool suggestions"
+                                        }
+                                      ],
+                                      "tag": "span"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "class": "capability-suggestion-row"
+                                      },
+                                      "children": [
+                                        {
+                                          "attrs": {
+                                            "class": "block-muted"
+                                          },
+                                          "children": [
+                                            {
+                                              "text": "snapshot-skill"
+                                            }
+                                          ],
+                                          "tag": "span"
+                                        },
+                                        {
+                                          "attrs": {
+                                            "class": "capability-suggestions",
+                                            "data-capability-suggestions": "1"
+                                          },
+                                          "children": [
+                                            {
+                                              "attrs": {
+                                                "class": "block-muted"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "Suggested tools:"
+                                                }
+                                              ],
+                                              "tag": "span"
+                                            },
+                                            {
+                                              "attrs": {
+                                                "class": "capability-suggestion is-not-granted",
+                                                "title": "not granted to this agent"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "calc · not granted to this agent"
+                                                }
+                                              ],
+                                              "tag": "span"
+                                            },
+                                            {
+                                              "attrs": {
+                                                "class": "capability-suggestion is-not-granted",
+                                                "title": "not granted to this agent"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "mcp__snapshot-mcp__lookup · not granted to this agent"
+                                                }
+                                              ],
+                                              "tag": "span"
+                                            }
+                                          ],
+                                          "tag": "div"
+                                        }
+                                      ],
+                                      "tag": "div"
+                                    }
+                                  ],
+                                  "tag": "div"
+                                }
+                              ],
+                              "tag": "fieldset"
                             },
                             {
                               "attrs": {
@@ -626,7 +1140,34 @@
                                           "attrs": {},
                                           "children": [
                                             {
+                                              "text": "LLM connection"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
                                               "text": "Model"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Capabilities"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "text": "Used by workflows"
                                             }
                                           ],
                                           "tag": "th"
@@ -696,6 +1237,103 @@
                     }
                   ],
                   "tag": "div"
+                },
+                {
+                  "attrs": {
+                    "aria-modelledby": "confirm-dialog-title",
+                    "class": "confirm-dialog",
+                    "data-confirm-dialog": "1",
+                    "role": "dialog"
+                  },
+                  "children": [
+                    {
+                      "attrs": {
+                        "class": "confirm-body"
+                      },
+                      "children": [
+                        {
+                          "attrs": {
+                            "id": "confirm-dialog-title"
+                          },
+                          "children": [
+                            {
+                              "text": ""
+                            }
+                          ],
+                          "tag": "h2"
+                        },
+                        {
+                          "attrs": {
+                            "class": "lead",
+                            "data-confirm-dialog-summary": "1"
+                          },
+                          "children": [
+                            {
+                              "text": ""
+                            }
+                          ],
+                          "tag": "p"
+                        },
+                        {
+                          "attrs": {
+                            "class": "confirm-impacts",
+                            "data-confirm-dialog-impacts": "1"
+                          },
+                          "children": [
+                            {
+                              "text": ""
+                            }
+                          ],
+                          "tag": "div"
+                        },
+                        {
+                          "attrs": {
+                            "class": "confirm-actions",
+                            "method": "post"
+                          },
+                          "children": [
+                            {
+                              "attrs": {
+                                "name": "csrf_token",
+                                "type": "hidden"
+                              },
+                              "children": [],
+                              "tag": "input"
+                            },
+                            {
+                              "attrs": {
+                                "class": "btn btn-secondary",
+                                "data-confirm-dialog-close": "1",
+                                "type": "button"
+                              },
+                              "children": [
+                                {
+                                  "text": "Cancel"
+                                }
+                              ],
+                              "tag": "button"
+                            },
+                            {
+                              "attrs": {
+                                "class": "btn btn-danger",
+                                "data-confirm-dialog-submit": "1",
+                                "type": "submit"
+                              },
+                              "children": [
+                                {
+                                  "text": "Delete"
+                                }
+                              ],
+                              "tag": "button"
+                            }
+                          ],
+                          "tag": "form"
+                        }
+                      ],
+                      "tag": "div"
+                    }
+                  ],
+                  "tag": "section"
                 }
               ],
               "tag": "main"
