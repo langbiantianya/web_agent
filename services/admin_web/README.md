@@ -122,8 +122,10 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
 ## 当前页面
 
 - `/admin/`：概览。
-- `/admin/access/pages`：页面权限与租户覆盖。
-- `/admin/access/components`：组件权限与租户覆盖。
+- `/admin/access/pages`：按页面展示推荐权限、全局默认和租户覆盖；权限使用
+  可勾选矩阵编辑，租户覆盖可显式重置为全局默认。
+- `/admin/access/components`：按页面分组管理组件权限，权限使用矩阵编辑；
+  表格、编辑器、操作按钮和表单可分别配置租户覆盖与回退。
 - `/admin/access/roles`：按角色展示权限矩阵、作用域、成员和被映射数量；
   支持创建角色、原子替换权限、配置角色继承以及在无引用时删除自定义角色。
   内置角色可以调整权限但不能删除；存在成员、映射或子角色引用时也会阻止删除。
@@ -177,6 +179,7 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
 # 后台行为（登录、权限、业务页、CSRF）
 python -m pytest tests/test_admin_web.py tests/test_migrations.py -q
 python -m pytest tests/test_admin_access_management.py -q
+python -m pytest tests/test_admin_page_component_access.py -q
 
 # 页面渲染快照 + 表单字段组件
 python -m pytest tests/test_admin_snapshots.py tests/test_admin_fields.py -q

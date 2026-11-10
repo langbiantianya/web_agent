@@ -43,6 +43,24 @@
     "Create a role or adjust the current search.":
       "请创建角色或调整当前搜索条件。",
     "Permission catalog": "权限目录",
+    "Permission policy": "权限策略",
+    "Recommended": "推荐权限",
+    "No recommendation": "无推荐权限",
+    "Global default": "全局默认",
+    "Tenant override": "租户覆盖",
+    "Add tenant override": "新增租户覆盖",
+    "Tenant ID": "租户 ID",
+    "Create override": "创建覆盖",
+    "Reset to global": "重置为全局默认",
+    "No permissions are bound.": "尚未绑定权限。",
+    "No default": "无全局默认",
+    "Default set": "已设置全局默认",
+    "tenant overrides": "个租户覆盖",
+    "Access mode": "访问模式",
+    "Select permissions from groups below. API routes still perform their own authorization checks; page visibility is not an API boundary.":
+      "从下方权限组中勾选。API 路由仍会独立执行授权检查，页面可见性不是 API 权限边界。",
+    "Tenant overrides replace the global binding while they exist. Use reset instead of saving an empty tenant selection.":
+      "租户覆盖存在时会替换全局绑定。需要回退时请使用“重置为全局默认”，不要保存空租户权限。",
     "Choose permissions or clear to remove this override":
       "选择权限；清空可移除当前覆盖",
     "Save scope": "保存作用域",

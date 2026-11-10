@@ -967,6 +967,119 @@ details[open] > summary {
   min-width: 120px;
 }
 
+.access-note {
+  margin: 14px 0 18px;
+  max-width: 920px;
+}
+
+.permission-table td:last-child {
+  min-width: 420px;
+}
+
+.scope-badges,
+.component-card-head,
+.component-page-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scope-badges {
+  margin-bottom: 10px;
+}
+
+.recommended-permissions {
+  margin-bottom: 12px;
+}
+
+.scope-matrix {
+  display: grid;
+  gap: 8px;
+}
+
+.scope-editor {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-bg-subtle);
+}
+
+.scope-editor.readonly {
+  opacity: 0.88;
+}
+
+.scope-editor > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scope-label {
+  overflow-wrap: anywhere;
+}
+
+.scope-save-form,
+.new-scope-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.scope-save-form > .btn,
+.new-scope-form > .btn {
+  justify-self: start;
+}
+
+.scope-reset-form {
+  margin-top: 10px;
+}
+
+.new-scope-editor {
+  border-style: dashed;
+}
+
+.component-page-list {
+  gap: 18px;
+}
+
+.component-page-head {
+  justify-content: flex-start;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.component-page-head h2 {
+  margin: 0;
+}
+
+.component-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 14px;
+}
+
+.component-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-bg-subtle);
+}
+
+.component-card-head {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.component-card-head h2 {
+  margin: 0 0 2px;
+  font-size: 16px;
+}
+
 .btn {
   min-height: 42px;
   padding: 9px 16px;
@@ -2247,6 +2360,14 @@ html[data-theme="material"] .error-shell {
 
   .permission-matrix {
     grid-template-columns: 1fr;
+  }
+
+  .component-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .permission-table td:last-child {
+    min-width: 0;
   }
 
   .metric-pill {

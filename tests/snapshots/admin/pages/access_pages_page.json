@@ -35,7 +35,7 @@
         },
         {
           "attrs": {
-            "href": "/admin/static/admin.css?v=admin-responsive-20261110-7",
+            "href": "/admin/static/admin.css?v=admin-responsive-20261110-8",
             "rel": "stylesheet"
           },
           "children": [],
@@ -43,7 +43,7 @@
         },
         {
           "attrs": {
-            "src": "/admin/static/admin-ui.js?v=admin-ui-20261110-11"
+            "src": "/admin/static/admin-ui.js?v=admin-ui-20261110-12"
           },
           "children": [],
           "tag": "script"
@@ -315,7 +315,7 @@
                               },
                               "children": [
                                 {
-                                  "text": "Bind known pages to RBAC permissions. Global bindings are defaults; tenant scopes replace them when present."
+                                  "text": "Define which RBAC permissions make each registered page visible. Tenant overrides replace the global default."
                                 }
                               ],
                               "tag": "p"
@@ -369,205 +369,14 @@
                     },
                     {
                       "attrs": {
-                        "class": "chip-list"
+                        "class": "block-muted access-note"
                       },
                       "children": [
                         {
-                          "attrs": {
-                            "id": "permission-list"
-                          },
-                          "children": [
-                            {
-                              "attrs": {
-                                "value": "admin.read"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "admin_ui.manage"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "admin_ui.read"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "admin_user.manage"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "admin_user.read"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "agent.read"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "agent.write"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "audit.read"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "casbin.mapping_manage"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "casbin.role_manage"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "casbin.role_read"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "cross_tenant.manage"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "cross_tenant.read"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "llm.read"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "llm.write"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "mcp.read"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "mcp.refresh"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "mcp.write"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "oauth_provider.manage"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "oauth_provider.read"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "platform_admin.owner"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "skill.read"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "skill.write"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "workflow.read"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            },
-                            {
-                              "attrs": {
-                                "value": "workflow.write"
-                              },
-                              "children": [],
-                              "tag": "option"
-                            }
-                          ],
-                          "tag": "datalist"
-                        },
-                        {
-                          "attrs": {
-                            "class": "eyebrow"
-                          },
-                          "children": [
-                            {
-                              "text": "Permission catalog"
-                            }
-                          ],
-                          "tag": "p"
+                          "text": "Select permissions from groups below. API routes still perform their own authorization checks; page visibility is not an API boundary."
                         }
                       ],
-                      "tag": "div"
+                      "tag": "p"
                     },
                     {
                       "attrs": {
@@ -576,7 +385,7 @@
                       "children": [
                         {
                           "attrs": {
-                            "class": "data-table"
+                            "class": "data-table permission-table"
                           },
                           "children": [
                             {
@@ -607,7 +416,7 @@
                                       "attrs": {},
                                       "children": [
                                         {
-                                          "text": "Permissions"
+                                          "text": "Permission policy"
                                         }
                                       ],
                                       "tag": "th"
