@@ -153,7 +153,13 @@ async def test_all_mutating_admin_routes_reject_missing_csrf():
         "/admin/oauth-providers/not-there/delete",
         "/admin/access/pages/dashboard/permissions",
         "/admin/access/components/agents/agent_editor/permissions",
+        "/admin/access/roles",
+        "/admin/access/roles/not-there/permissions",
+        "/admin/access/roles/not-there/inheritance",
+        "/admin/access/roles/not-there/delete",
         "/admin/access/mappings",
+        "/admin/access/mappings/999999/update",
+        "/admin/access/mappings/999999/delete",
         "/admin/preferences",
         "/admin/super-admin/reset-my-password",
     ]

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import sqlalchemy as sa
 from casbin import Enforcer, Model
+from casbin.util import key_match2
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.admin_control import AuthzPolicyVersion, CasbinRule
@@ -71,6 +72,9 @@ class CasbinService:
         model = Model()
         model.load_model_from_text(CASBIN_MODEL)
         self._enforcer = Enforcer(model)
+        # p 规则已支持 tenant:*，角色继承的 g 规则也必须使用相同域名语义；
+        # 否则全局角色可以继承父角色，但实际登录到 tenant:acme 时无法匹配。
+        self._enforcer.add_named_domain_matching_func("g", key_match2)
         self._version = -1
         self._lock = asyncio.Lock()
 

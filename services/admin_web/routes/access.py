@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import sqlalchemy as sa
@@ -13,6 +12,14 @@ from app.models.admin_control import (
     AdminPageDefinition, AdminPagePermission, permission_binding_scope,
 )
 from services.admin_web.accounts import AdminPrincipal
+from services.admin_web.access_policy import (
+    CRITICAL_PAGES,
+    KNOWN_PERMISSIONS,
+    PLATFORM_ONLY_PERMISSIONS,
+    TENANT_ID_RE,
+    form_permissions,
+    parse_permission_values,
+)
 from services.admin_web.audit import audit_principal_action
 from services.admin_web.common import (
     html_error, not_found, origin_ok, require_csrf, unauthorized, with_auth,
@@ -22,61 +29,9 @@ from services.admin_web.registry import can_access_page, visible_pages
 from services.admin_web.views import access_pages_page
 
 
-CRITICAL_PAGES = {
-    "dashboard",
-    "access_pages",
-    "access_components",
-    "platform_admins",
-}
-
-
-TENANT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
-
-
-KNOWN_PERMISSIONS = {
-    ("admin", "read"),
-    ("admin_ui", "read"),
-    ("admin_ui", "manage"),
-    ("workflow", "read"),
-    ("workflow", "write"),
-    ("agent", "read"),
-    ("agent", "write"),
-    ("skill", "read"),
-    ("skill", "write"),
-    ("mcp", "read"),
-    ("mcp", "write"),
-    ("mcp", "refresh"),
-    ("llm", "read"),
-    ("llm", "write"),
-    ("audit", "read"),
-    ("admin_user", "read"),
-    ("admin_user", "manage"),
-    ("casbin", "role_read"),
-    ("casbin", "role_manage"),
-    ("casbin", "mapping_manage"),
-    ("oauth_provider", "read"),
-    ("oauth_provider", "manage"),
-    ("cross_tenant", "read"),
-    ("cross_tenant", "manage"),
-    ("platform_admin", "owner"),
-}
-
-
 def _parse_permissions(raw: str) -> list[tuple[str, str]]:
     """解析 `object.action` 逗号列表并拒绝未知权限。"""
-    result: list[tuple[str, str]] = []
-    for chunk in raw.replace("\n", ",").split(","):
-        value = chunk.strip()
-        if not value:
-            continue
-        if "." not in value:
-            raise ValueError("invalid_permission")
-        object_name, action = value.rsplit(".", 1)
-        item = (object_name.strip(), action.strip())
-        if item not in KNOWN_PERMISSIONS:
-            raise ValueError("unknown_permission")
-        result.append(item)
-    return sorted(set(result))
+    return parse_permission_values([raw])
 
 
 async def _may_bind_permissions(
@@ -89,6 +44,8 @@ async def _may_bind_permissions(
         if (object_name, action) not in KNOWN_PERMISSIONS:
             return False
         if object_name in {"cross_tenant", "oauth_provider", "platform_admin"}:
+            return False
+        if (object_name, action) in PLATFORM_ONLY_PERMISSIONS:
             return False
         if not await casbin_service.can(
             db,
@@ -193,7 +150,7 @@ def register(app: Any) -> None:
             definition = await db.get(AdminPageDefinition, page_code)
             if definition is None:
                 return not_found()
-            permissions = _parse_permissions(str(form.get("permissions") or ""))
+            permissions = form_permissions(form)
             if page_code in CRITICAL_PAGES and not permissions:
                 return html_error(
                     title_text="Invalid policy",

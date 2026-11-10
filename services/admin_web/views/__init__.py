@@ -54,7 +54,8 @@ from services.admin_web.views.login import login_page
 from services.admin_web.views.oauth_providers import oauth_providers_page
 from services.admin_web.views.platform_admins import platform_admins_page
 from services.admin_web.views.preferences import preferences_page
-from services.admin_web.views.roles import mappings_page, roles_page
+from services.admin_web.views.role_mappings import mappings_page
+from services.admin_web.views.roles import roles_page
 
 __all__ = [
     "ADMIN_STYLESHEET",

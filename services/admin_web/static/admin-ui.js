@@ -26,6 +26,38 @@
 
   const ZH = {
     // —— 本轮新增的界面文案（独立编辑面板、能力工具条、列表控件）——
+    "ACCESS CONTROL": "访问控制",
+    "IDENTITY MAPPING": "身份映射",
+    "Roles & permissions": "角色与权限",
+    "Role code": "角色编码",
+    "Domain": "作用域",
+    "Create role": "创建角色",
+    "Edit permissions": "编辑权限",
+    "Save permissions": "保存权限",
+    "Role inheritance": "角色继承",
+    "No parent roles": "无父角色",
+    "Save inheritance": "保存继承",
+    "Search roles": "搜索角色",
+    "Role, permission or scope": "角色、权限或作用域",
+    "No roles found": "没有找到角色",
+    "Create a role or adjust the current search.":
+      "请创建角色或调整当前搜索条件。",
+    "Permission catalog": "权限目录",
+    "Choose permissions or clear to remove this override":
+      "选择权限；清空可移除当前覆盖",
+    "Save scope": "保存作用域",
+    "Role and status": "角色与状态",
+    "Built-in role": "内置角色",
+    "Custom role": "自定义角色",
+    "No permissions": "无权限",
+    "No other role exists in this domain yet.":
+      "该作用域下还没有其他角色。",
+    "roles": "个角色",
+    "permission grants": "条权限授权",
+    "scopes": "个作用域",
+    "components": "个组件",
+    "grants": "条授权",
+    "pages": "个页面",
     "Edit agent": "编辑智能体",
     "Edit skill": "编辑技能",
     "Edit endpoint": "编辑端点",

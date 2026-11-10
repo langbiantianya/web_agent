@@ -35,7 +35,7 @@
         },
         {
           "attrs": {
-            "href": "/admin/static/admin.css?v=admin-responsive-20261110-6",
+            "href": "/admin/static/admin.css?v=admin-responsive-20261110-7",
             "rel": "stylesheet"
           },
           "children": [],
@@ -43,7 +43,7 @@
         },
         {
           "attrs": {
-            "src": "/admin/static/admin-ui.js?v=admin-ui-20261110-10"
+            "src": "/admin/static/admin-ui.js?v=admin-ui-20261110-11"
           },
           "children": [],
           "tag": "script"
@@ -602,6 +602,17 @@
                       },
                       "children": [
                         {
+                          "attrs": {
+                            "class": "eyebrow"
+                          },
+                          "children": [
+                            {
+                              "text": "IDENTITY MAPPING"
+                            }
+                          ],
+                          "tag": "p"
+                        },
+                        {
                           "attrs": {},
                           "children": [
                             {
@@ -616,7 +627,7 @@
                           },
                           "children": [
                             {
-                              "text": "Only exact external values are accepted. Mapping changes apply on the administrator's next OAuth synchronization."
+                              "text": "Map exact external claim values to managed roles. Updates apply on the administrator's next OAuth synchronization."
                             }
                           ],
                           "tag": "p"
@@ -660,7 +671,7 @@
                                       },
                                       "children": [
                                         {
-                                          "text": "Snapshot IDP"
+                                          "text": "Snapshot IDP · "
                                         }
                                       ],
                                       "tag": "option"
@@ -732,7 +743,7 @@
                                 },
                                 {
                                   "attrs": {
-                                    "list": "role-codes",
+                                    "list": "mapping-role-codes",
                                     "name": "role_code",
                                     "required": "true"
                                   },
@@ -756,6 +767,13 @@
                             }
                           ],
                           "tag": "form"
+                        },
+                        {
+                          "attrs": {
+                            "id": "mapping-role-codes"
+                          },
+                          "children": [],
+                          "tag": "datalist"
                         }
                       ],
                       "tag": "section"
@@ -821,7 +839,7 @@
                                           "attrs": {},
                                           "children": [
                                             {
-                                              "text": "Role"
+                                              "text": "Role and status"
                                             }
                                           ],
                                           "tag": "th"
@@ -830,7 +848,7 @@
                                           "attrs": {},
                                           "children": [
                                             {
-                                              "text": "Status"
+                                              "text": "Actions"
                                             }
                                           ],
                                           "tag": "th"
@@ -851,7 +869,18 @@
                                           "attrs": {},
                                           "children": [
                                             {
-                                              "text": "7"
+                                              "text": "Snapshot IDP"
+                                            },
+                                            {
+                                              "attrs": {
+                                                "class": "block-muted"
+                                              },
+                                              "children": [
+                                                {
+                                                  "text": "provider #7"
+                                                }
+                                              ],
+                                              "tag": "small"
                                             }
                                           ],
                                           "tag": "td"
@@ -878,7 +907,81 @@
                                           "attrs": {},
                                           "children": [
                                             {
-                                              "text": "oauth_admin"
+                                              "attrs": {
+                                                "action": "/admin/access/mappings/0/update",
+                                                "class": "mapping-edit-form",
+                                                "method": "post"
+                                              },
+                                              "children": [
+                                                {
+                                                  "attrs": {
+                                                    "name": "csrf_token",
+                                                    "type": "hidden",
+                                                    "value": "<CSRF>"
+                                                  },
+                                                  "children": [],
+                                                  "tag": "input"
+                                                },
+                                                {
+                                                  "attrs": {
+                                                    "class": "mapping-actions"
+                                                  },
+                                                  "children": [
+                                                    {
+                                                      "attrs": {
+                                                        "aria-label": "Role for platform-admins",
+                                                        "list": "mapping-role-codes",
+                                                        "name": "role_code",
+                                                        "required": "true",
+                                                        "value": "oauth_admin"
+                                                      },
+                                                      "children": [],
+                                                      "tag": "input"
+                                                    },
+                                                    {
+                                                      "attrs": {
+                                                        "class": "permission-choice compact"
+                                                      },
+                                                      "children": [
+                                                        {
+                                                          "attrs": {
+                                                            "checked": "true",
+                                                            "name": "enabled",
+                                                            "type": "checkbox",
+                                                            "value": "1"
+                                                          },
+                                                          "children": [],
+                                                          "tag": "input"
+                                                        },
+                                                        {
+                                                          "attrs": {},
+                                                          "children": [
+                                                            {
+                                                              "text": "Enabled"
+                                                            }
+                                                          ],
+                                                          "tag": "span"
+                                                        }
+                                                      ],
+                                                      "tag": "label"
+                                                    },
+                                                    {
+                                                      "attrs": {
+                                                        "class": "btn btn-small",
+                                                        "type": "submit"
+                                                      },
+                                                      "children": [
+                                                        {
+                                                          "text": "Save"
+                                                        }
+                                                      ],
+                                                      "tag": "button"
+                                                    }
+                                                  ],
+                                                  "tag": "div"
+                                                }
+                                              ],
+                                              "tag": "form"
                                             }
                                           ],
                                           "tag": "td"
@@ -887,7 +990,42 @@
                                           "attrs": {},
                                           "children": [
                                             {
-                                              "text": "enabled"
+                                              "attrs": {
+                                                "action": "/admin/access/mappings/0/delete",
+                                                "class": "inline-form",
+                                                "method": "post"
+                                              },
+                                              "children": [
+                                                {
+                                                  "attrs": {
+                                                    "name": "csrf_token",
+                                                    "type": "hidden",
+                                                    "value": "<CSRF>"
+                                                  },
+                                                  "children": [],
+                                                  "tag": "input"
+                                                },
+                                                {
+                                                  "attrs": {
+                                                    "aria-label": "Delete mapping platform-admins",
+                                                    "class": "btn btn-danger btn-small",
+                                                    "data-confirm-impacts": "Provider: Snapshot IDP\nExternal value: platform-admins\nRole: oauth_admin",
+                                                    "data-confirm-summary": "Future OAuth synchronizations stop granting this role.",
+                                                    "data-confirm-title": "Delete mapping platform-admins",
+                                                    "data-confirm-trigger": "1",
+                                                    "disabled": "false",
+                                                    "title": "None",
+                                                    "type": "button"
+                                                  },
+                                                  "children": [
+                                                    {
+                                                      "text": "Delete"
+                                                    }
+                                                  ],
+                                                  "tag": "button"
+                                                }
+                                              ],
+                                              "tag": "form"
                                             }
                                           ],
                                           "tag": "td"

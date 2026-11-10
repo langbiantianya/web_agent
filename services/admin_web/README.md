@@ -46,11 +46,10 @@ services/admin_web/
 ```
 
 `routes/` 的文件比业务域多两个：工作流域的写操作在 `workflows_write.py`、
-访问控制的组件权限与角色策略在 `access_components.py`——整域塞进单文件会突破
-单文件 350 行的上限，拆分只切代码位置，路由的路径、方法与注册顺序都没变。
-注意 `access_components.py` 里同时挂着 `/admin/access/components`、
-`/admin/access/roles`、`/admin/access/mappings` 三条访问控制路由，**没有**
-`routes/roles.py`；找角色与映射的处理器时别去 `access.py`。
+访问控制路由按职责拆分：`access.py` 管页面权限，`access_components.py` 管组件权限，
+`access_roles.py` / `access_roles_write.py` 管角色矩阵与写操作，
+`access_mappings.py` 管 OAuth 外部角色映射。拆分后单个文件仍遵守 350 行上限。
+权限目录、角色投影和继承环检测集中在 `access_policy.py`。
 
 **路由注册顺序是行为的一部分。** Starlette 首个匹配 path 的路由胜出，所以
 顺序固化在 `routes/__init__.py` 的 `register_all` 里，并由
@@ -125,8 +124,11 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
 - `/admin/`：概览。
 - `/admin/access/pages`：页面权限与租户覆盖。
 - `/admin/access/components`：组件权限与租户覆盖。
-- `/admin/access/roles`：当前租户可见的 Casbin 规则。
-- `/admin/access/mappings`：OAuth 外部角色到 Casbin role 的映射。
+- `/admin/access/roles`：按角色展示权限矩阵、作用域、成员和被映射数量；
+  支持创建角色、原子替换权限、配置角色继承以及在无引用时删除自定义角色。
+  内置角色可以调整权限但不能删除；存在成员、映射或子角色引用时也会阻止删除。
+- `/admin/access/mappings`：OAuth 外部角色到 Casbin role 的映射；支持新增、
+  修改目标角色、启停和删除。变更在下一次 OAuth 角色同步时生效。
 - `/admin/platform-admins`：仅 `owner_slot=superAdmin` 可访问的账号管理。
 - `/admin/preferences`：Fluent、Cloudscape、Material 主题及深浅色/密度。
 - `/admin/workflows`：Workflow 图定义、启停和删除。
@@ -174,6 +176,7 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
 ```bash
 # 后台行为（登录、权限、业务页、CSRF）
 python -m pytest tests/test_admin_web.py tests/test_migrations.py -q
+python -m pytest tests/test_admin_access_management.py -q
 
 # 页面渲染快照 + 表单字段组件
 python -m pytest tests/test_admin_snapshots.py tests/test_admin_fields.py -q

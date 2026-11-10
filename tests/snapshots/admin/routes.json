@@ -343,6 +343,34 @@
   },
   {
     "methods": [
+      "POST"
+    ],
+    "name": "access_roles_create",
+    "path": "/admin/access/roles"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "access_role_permissions",
+    "path": "/admin/access/roles/{role_code}/permissions"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "access_role_inheritance",
+    "path": "/admin/access/roles/{role_code}/inheritance"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "access_role_delete",
+    "path": "/admin/access/roles/{role_code}/delete"
+  },
+  {
+    "methods": [
       "GET",
       "HEAD"
     ],
@@ -353,8 +381,22 @@
     "methods": [
       "POST"
     ],
-    "name": "access_mappings_post",
+    "name": "access_mappings_create",
     "path": "/admin/access/mappings"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "access_mappings_update",
+    "path": "/admin/access/mappings/{mapping_id}/update"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "access_mappings_delete",
+    "path": "/admin/access/mappings/{mapping_id}/delete"
   },
   {
     "methods": [

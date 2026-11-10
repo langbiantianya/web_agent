@@ -11,10 +11,12 @@ from typing import Any
 
 from ludic.html import (
     button,
+    datalist,
     div,
     form,
     h1,
     input as input_,
+    option,
     p,
     section,
     small,
@@ -33,6 +35,7 @@ from app.models.admin_control import (
     AdminPageDefinition,
     AdminPagePermission,
 )
+from services.admin_web.access_policy import KNOWN_PERMISSIONS
 from services.admin_web.accounts import AdminPrincipal
 from services.admin_web.views.shell import shell
 
@@ -70,6 +73,12 @@ def access_pages_page(
                 ),
             )
         )
+    scopes = {
+        row.binding_scope
+        for rows in bindings.values()
+        for row in rows
+    }
+    grant_count = sum(len(rows) for rows in bindings.values())
     return shell(
         title_text="Page permissions",
         principal=principal,
@@ -80,11 +89,23 @@ def access_pages_page(
         pages=pages,
         flash=flash,
         content=section(
-            h1("Page permissions"),
-            p(
-                "Bind known pages to RBAC object/action permissions. UI bindings "
-                "never replace API authorization.",
-                class_="lead",
+            div(
+                div(
+                    p("ACCESS CONTROL", class_="eyebrow"),
+                    h1("Page permissions"),
+                    p(
+                        "Bind known pages to RBAC permissions. Global bindings are "
+                        "defaults; tenant scopes replace them when present.",
+                        class_="lead",
+                    ),
+                ),
+                div(
+                    span(f"{len(definitions)} pages", class_="metric-pill"),
+                    span(f"{len(scopes)} scopes", class_="metric-pill"),
+                    span(f"{grant_count} grants", class_="metric-pill"),
+                    class_="access-summary",
+                ),
+                class_="access-hero",
             ),
             _permission_datalist(bindings),
             div(
@@ -100,9 +121,9 @@ def access_pages_page(
     )
 
 
-def _permission_datalist(bindings: dict[str, list[AdminPagePermission]]) -> Any:
+def _permission_datalist(bindings: dict[Any, list[Any]]) -> Any:
     """提供权限输入提示。"""
-    values = sorted(
+    current = sorted(
         {
             f"{row.object_name}.{row.action_name}"
             for rows in bindings.values()
@@ -110,9 +131,17 @@ def _permission_datalist(bindings: dict[str, list[AdminPagePermission]]) -> Any:
         }
     )
     return div(
+        datalist(
+            *[
+                option(value=f"{object_name}.{action}")
+                for object_name, action in sorted(KNOWN_PERMISSIONS)
+            ],
+            id="permission-list",
+        ),
+        p("Permission catalog", class_="eyebrow"),
         *[
             span(value, class_="chip")
-            for value in values
+            for value in current
         ],
         class_="chip-list",
     )
@@ -161,9 +190,10 @@ def _permission_editor(
                     name="permissions",
                     value=current,
                     list="permission-list",
+                    placeholder="Choose permissions or clear to remove this override",
                     aria_label=f"{aria_label}, {scope_name} permissions",
                 ),
-                button("Save", type="submit", class_="btn btn-small"),
+                button("Save scope", type="submit", class_="btn btn-small"),
                 action=action,
                 method="post",
                 class_="inline-edit",
@@ -246,12 +276,27 @@ def access_components_page(
         pages=pages,
         flash=flash,
         content=section(
-            h1("Component permissions"),
-            p(
-                "Components without bindings are hidden. Hidden components are not "
-                "an API authorization boundary.",
-                class_="lead",
+            div(
+                div(
+                    p("ACCESS CONTROL", class_="eyebrow"),
+                    h1("Component permissions"),
+                    p(
+                        "Control page-level actions, editors and tables. Components "
+                        "without bindings are hidden; API authorization remains separate.",
+                        class_="lead",
+                    ),
+                ),
+                div(
+                    span(f"{len(components)} components", class_="metric-pill"),
+                    span(
+                        f"{sum(len(rows) for rows in bindings.values())} grants",
+                        class_="metric-pill",
+                    ),
+                    class_="access-summary",
+                ),
+                class_="access-hero",
             ),
+            _permission_datalist(bindings),
             div(
                 table(
                     thead(tr(th("Component"), th("Type"), th("Permissions"))),

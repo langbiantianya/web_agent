@@ -248,7 +248,7 @@ PAGE_SPECS: tuple[PageSpec, ...] = (
     PageSpec(
         code="access_roles",
         route="/admin/access/roles",
-        title="Casbin roles",
+        title="Roles & permissions",
         nav_group="Access control",
         nav_order=40,
         permissions=(("casbin", "role_manage"),),
@@ -256,7 +256,7 @@ PAGE_SPECS: tuple[PageSpec, ...] = (
             ComponentSpec(
                 "policy_list",
                 "access.policy_list",
-                "Policy rules",
+                "Role policy matrix",
                 "data_table",
                 (("casbin", "role_manage"),),
             ),

@@ -787,6 +787,186 @@ details[open] > summary {
   min-width: 540px;
 }
 
+.access-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.access-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.metric-pill {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.role-create-details,
+.role-policy-details {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.role-create-details > summary,
+.role-policy-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.role-create-form {
+  display: grid;
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.role-create-form > label {
+  display: grid;
+  gap: 6px;
+  max-width: 420px;
+}
+
+.permission-matrix {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.permission-group {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-bg-subtle);
+}
+
+.permission-group legend {
+  padding: 0 6px;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.permission-help {
+  min-height: 36px;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.permission-choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.permission-choice {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-bg-surface);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.permission-choice:has(input:checked) {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-surface));
+  color: var(--color-accent-strong);
+}
+
+.permission-choice input {
+  margin: 0;
+}
+
+.permission-choice.compact {
+  min-height: 28px;
+}
+
+.role-list {
+  gap: 14px;
+}
+
+.role-card {
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-accent);
+  border-radius: var(--radius-surface);
+  background: var(--color-bg-surface);
+  box-shadow: var(--shadow-surface);
+}
+
+.role-card-head,
+.role-badges {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.role-card-head h2 {
+  margin: 0 0 2px;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+}
+
+.role-card-head p {
+  margin: 0;
+}
+
+.role-badges {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.role-summary-permissions {
+  display: block;
+  margin-top: 5px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.role-policy-form,
+.role-inheritance-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.role-policy-form > .btn,
+.role-inheritance-form > .btn {
+  justify-self: start;
+}
+
+.mapping-actions {
+  display: flex;
+  min-width: 250px;
+  align-items: center;
+  gap: 8px;
+}
+
+.mapping-actions input[name="role_code"] {
+  min-width: 120px;
+}
+
 .btn {
   min-height: 42px;
   padding: 9px 16px;
@@ -2050,6 +2230,27 @@ html[data-theme="material"] .error-shell {
   .metric-grid,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .access-hero,
+  .role-card-head,
+  .role-badges,
+  .mapping-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .access-summary,
+  .role-badges {
+    justify-content: flex-start;
+  }
+
+  .permission-matrix {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-pill {
+    white-space: normal;
   }
 
   .theme-previews {
