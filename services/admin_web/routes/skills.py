@@ -161,7 +161,7 @@ def register(app: Any) -> None:
                 allowed_tools=payload.allowed_tools,
                 body=payload.body,
                 status=payload.status,
-                enabled=1 if payload.enabled else 0,
+                enabled=1 if payload.enabled and payload.status == "published" else 0,
                 origin="manual",
                 content_hash=compute_content_hash(payload.body, []),
             )
@@ -262,7 +262,11 @@ def register(app: Any) -> None:
                 ],
             )
             fields = payload.model_dump(exclude_unset=True)
-            fields["enabled"] = 1 if fields["enabled"] else 0
+            fields["enabled"] = (
+                1
+                if fields["enabled"] and fields["status"] == "published"
+                else 0
+            )
             fields["content_hash"] = compute_content_hash(
                 payload.body or "",
                 [(item.path, item.content) for item in resources],

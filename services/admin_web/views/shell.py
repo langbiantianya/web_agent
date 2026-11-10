@@ -45,7 +45,7 @@ ADMIN_STYLESHEET = "/admin/static/admin.css?v=admin-responsive-20261110-8"
 # Cache-Control 时浏览器会按启发式新鲜度直接用缓存，页面于是继续跑旧脚本
 # （表现就是「下拉框不填、按钮点了没反应」）。服务端另有 /admin/static 的
 # no-cache 头兜底，版本号是为了让**已经缓存过旧文件**的浏览器立刻换新。
-ADMIN_UI_SCRIPT = "/admin/static/admin-ui.js?v=admin-ui-20261110-12"
+ADMIN_UI_SCRIPT = "/admin/static/admin-ui.js?v=admin-ui-20261110-13"
 NAV_GROUP_ORDER = {
     "Overview": 0,
     "Access control": 10,

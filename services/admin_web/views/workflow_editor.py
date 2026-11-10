@@ -247,9 +247,9 @@ def workflow_editor_page(
             save_form,
             class_="stack",
         ),
-        extra_styles=["/admin/static/workflow-editor.css"],
+        extra_styles=["/admin/static/workflow-editor.css?v=workflow-i18n-20261110-1"],
         extra_scripts=[
             "/admin/static/workflow-editor-core.js",
-            "/admin/static/workflow-editor.js",
+            "/admin/static/workflow-editor.js?v=workflow-i18n-20261110-1",
         ],
     )

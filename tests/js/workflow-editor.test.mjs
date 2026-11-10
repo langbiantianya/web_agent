@@ -28,9 +28,16 @@ function loadCore() {
  * 默认关掉实时校验：它是防抖计时器驱动的异步副作用，会让计时器活过用例
  * 边界并污染后续用例。需要验校验的用例自己打开，并在结尾调 cancelValidation()。
  */
-function boot({ definition, canWrite = true, agents = [], validation = false }) {
+function boot({
+  definition,
+  canWrite = true,
+  agents = [],
+  validation = false,
+  lang = "zh-CN",
+}) {
   const core = loadCore();
   const dom = createDom({
+    lang,
     state: {
       code: "demo",
       canWrite,
@@ -155,7 +162,7 @@ test("用例 1：渲染出节点、边、箭头、标题、徽章与入口标记
 
   const step1 = findNodeGroup(dom, "step1");
   assert.equal(findInGroup(step1, "title").textContent, "识别");
-  assert.equal(findInGroup(step1, "badge").textContent, "Agent");
+  assert.equal(findInGroup(step1, "badge").textContent, "智能体");
   assert.equal(findInGroup(step1, "subtitle").textContent, "规划器");
 
   const step2 = findNodeGroup(dom, "step2");
@@ -466,6 +473,18 @@ test("用例 11：自环被拒绝并给出提示", () => {
   assert.equal(findByClass(dom, "workflow-edge").length, 1);
   // 被拒绝的连线不记撤销。
   assert.equal(editor.state.stack.size(), 0);
+});
+
+test("用例 11b：英文界面里的画布动态提示使用英文", () => {
+  const { dom } = boot({ definition: baseDefinition, lang: "en" });
+
+  dragPort(dom, "step1", "step1");
+
+  assert.deepEqual(noticeTexts(dom), ["Cannot connect a node to itself"]);
+  assert.equal(
+    findInGroup(findNodeGroup(dom, "step2"), "badge").textContent,
+    "Approval",
+  );
 });
 
 test("用例 12：重复边被拒绝并给出提示", () => {

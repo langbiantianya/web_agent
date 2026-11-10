@@ -227,13 +227,14 @@ class FakeElement {
  * 造一套最小页面：画布容器 + 调色板 + 检查器 + 提示条 +
  * 初始状态 textarea + 隐藏 definition input。
  */
-export function createDom({ state, definition = "" } = {}) {
+export function createDom({ state, definition = "", lang = "zh-CN" } = {}) {
   const registry = new Map();
   const documentListeners = new Map();
   const root = new FakeElement("div");
 
   const document = {
     readyState: "complete",
+    documentElement: { lang },
     createElementNS(namespaceURI, tagName) {
       return new FakeElement(tagName, namespaceURI);
     },

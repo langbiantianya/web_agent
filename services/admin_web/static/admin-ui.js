@@ -29,6 +29,8 @@
     "ACCESS CONTROL": "访问控制",
     "IDENTITY MAPPING": "身份映射",
     "Roles & permissions": "角色与权限",
+    "Manage reusable Casbin roles, permission matrices and inheritance. Platform super admins bypass these rules.":
+      "管理可复用的 Casbin 角色、权限矩阵和继承关系。平台超级管理员不受这些规则限制。",
     "Role code": "角色编码",
     "Domain": "作用域",
     "Create role": "创建角色",
@@ -70,6 +72,8 @@
     "No permissions": "无权限",
     "No other role exists in this domain yet.":
       "该作用域下还没有其他角色。",
+    "Map exact external claim values to managed roles. Updates apply on the administrator's next OAuth synchronization.":
+      "将外部声明的精确值映射到受管角色。更改会在管理员下一次 OAuth 同步时生效。",
     "roles": "个角色",
     "permission grants": "条权限授权",
     "scopes": "个作用域",
@@ -100,6 +104,7 @@
     "Search rules": "搜索规则",
     "Search accounts": "搜索账户",
     "Name or code": "名称或编码",
+    Newest: "最新",
     "Type, subject or role": "类型、主体或角色",
     "Username or email": "用户名或邮箱",
     "Sort by": "排序方式",
@@ -192,6 +197,7 @@
     "Create resource": "创建资源",
     "Create skill": "创建技能",
     "Create workflow": "创建工作流",
+    "View graph": "查看流程图",
     Created: "已创建",
     "Current mappings": "当前映射",
     "Custom endpoint (fill in manually)": "自定义端点（手动填写）",
@@ -259,6 +265,17 @@
     "Login scopes": "登录 Scope",
     "Manage graph definitions directly against the shared workflow repository.":
       "直接针对共享工作流仓库管理图定义。",
+    "Back to list": "返回列表",
+    Undo: "撤销",
+    Redo: "重做",
+    "Auto layout": "自动布局",
+    "Fit canvas": "适应画布",
+    "Node palette": "节点面板",
+    "Agent node": "智能体节点",
+    "Approval node": "审批节点",
+    "Available agents": "可用智能体",
+    Inspector: "属性面板",
+    "Save workflow": "保存工作流",
     "Manage platform configuration, access policy, and operations.":
       "管理平台配置、访问策略和运维操作。",
     MCP: "MCP",
@@ -269,6 +286,7 @@
     Name: "名称",
     No: "否",
     "No OAuth provider is configured.": "尚未配置 OAuth 身份提供方。",
+    None: "无",
     "No LLM connections configured": "尚未配置 LLM 连接",
     "No LLM connection selected": "未选择 LLM 连接",
     "No admin login.": "无管理员登录。",
@@ -447,6 +465,24 @@
   };
 
   const ZH_PATTERNS = [
+    [/^(.+) · Workflow editor$/, "$1 · 工作流编辑器"],
+    [/^(\d+) item\(s\) · page (\d+) of (\d+)$/, "共 $1 项 · 第 $2 / $3 页"],
+    [/^(\d+) members$/, "$1 个成员"],
+    [/^(\d+) permissions$/, "$1 项权限"],
+    [/^(\d+) components$/, "$1 个组件"],
+    [/^(\d+) roles$/, "$1 个角色"],
+    [/^(\d+) permission grants$/, "$1 条权限授权"],
+    [/^(\d+) scopes$/, "$1 个作用域"],
+    [/^(\d+) pages$/, "$1 个页面"],
+    [/^(\d+) grants$/, "$1 条授权"],
+    [/^(\d+) tenant overrides$/, "$1 个租户覆盖"],
+    [/^v(\d+) · published$/, "v$1 · 已发布"],
+    [/^v(\d+) · draft$/, "v$1 · 草稿"],
+    [/^v(\d+) · archived$/, "v$1 · 已归档"],
+    [/^v(\d+) · published · disabled$/, "v$1 · 已发布 · 已禁用"],
+    [/^v(\d+) · draft · disabled$/, "v$1 · 草稿 · 已禁用"],
+    [/^(\d+) agent\(s\)$/, "$1 个智能体"],
+    [/^provider #(\d+)$/, "身份提供方 #$1"],
     [/^Continue with (.+)$/, "使用 $1 继续"],
     [/^New scope permissions for (.+)$/, "为 $1 设置新的 Scope 权限"],
     [/^New tenant scope for (.+)$/, "为 $1 设置新的租户范围"],
@@ -1164,6 +1200,9 @@
       const choices = Array.from(
         selector.querySelectorAll(".capability-choice"),
       );
+      const suggestions = Array.from(
+        selector.querySelectorAll("[data-capability-suggestion-tool]"),
+      );
 
       const matches = (choice) => {
         const keyword = (search?.value || "").trim().toLowerCase();
@@ -1204,6 +1243,47 @@
             ? `已选 ${selected} 项`
             : `${selected} selected`;
           counter.dataset.capabilitySelected = String(selected);
+        }
+        const selectedTools = new Set(
+          Array.from(
+            selector.querySelectorAll(
+              'input[name="tools"]:checked',
+            ),
+          ).map((input) => input.value),
+        );
+        const zh = document.documentElement.lang === "zh-CN";
+        const labels = zh
+          ? {
+              granted: "已授予当前智能体",
+              disabled: "服务器已停用",
+              missing: "工具不存在",
+              "not-granted": "未授予当前智能体",
+            }
+          : {
+              granted: "granted to this agent",
+              disabled: "server is disabled",
+              missing: "tool does not exist",
+              "not-granted": "not granted to this agent",
+            };
+        for (const suggestion of suggestions) {
+          const toolName = suggestion.dataset.capabilitySuggestionTool || "";
+          const original =
+            suggestion.dataset.capabilitySuggestionStatus || "not-granted";
+          const status = selectedTools.has(toolName)
+            ? "granted"
+            : original === "disabled" || original === "missing"
+              ? original
+              : "not-granted";
+          for (const value of [
+            "granted",
+            "disabled",
+            "missing",
+            "not-granted",
+          ]) {
+            suggestion.classList.toggle(`is-${value}`, value === status);
+          }
+          suggestion.textContent = `${toolName} · ${labels[status]}`;
+          suggestion.title = labels[status];
         }
       };
 

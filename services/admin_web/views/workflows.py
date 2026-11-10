@@ -77,14 +77,10 @@ def workflows_page(
                 "Future runs of this workflow will fail with 'not found'.",
             ),
         )
-        editor = (
-            a(
-                "Open editor",
-                href=f"/admin/workflows/{row.code}",
-                class_="btn btn-secondary btn-small",
-            )
-            if can_write
-            else span("Read only", class_="status-badge")
+        editor = a(
+            "Open editor" if can_write else "View graph",
+            href=f"/admin/workflows/{row.code}",
+            class_="btn btn-secondary btn-small",
         )
         table_rows.append(
             tr(

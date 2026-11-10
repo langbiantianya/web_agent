@@ -94,4 +94,32 @@ test("删除确认对话框的文案能翻成中文", () => {
     translate("Undo delete LLM endpoint"),
     "撤销删除 LLM endpoint",
   );
+  assert.equal(
+    translate("0 item(s) · page 1 of 1"),
+    "共 0 项 · 第 1 / 1 页",
+  );
+  assert.equal(translate("Newest"), "最新");
+  assert.equal(translate("4 members"), "4 个成员");
+  assert.equal(translate("1 agent(s)"), "1 个智能体");
+  assert.equal(translate("3 roles"), "3 个角色");
+  assert.equal(translate("17 permission grants"), "17 条权限授权");
+  assert.equal(translate("1 scopes"), "1 个作用域");
+  assert.equal(translate("provider #7"), "身份提供方 #7");
+  assert.equal(translate("None"), "无");
+  assert.equal(translate("v3 · published"), "v3 · 已发布");
+  assert.equal(
+    translate("v3 · published · disabled"),
+    "v3 · 已发布 · 已禁用",
+  );
+  assert.equal(
+    translate("Sample flow · Workflow editor"),
+    "Sample flow · 工作流编辑器",
+  );
+  assert.equal(
+    translate(
+      "Manage reusable Casbin roles, permission matrices and inheritance. "
+        + "Platform super admins bypass these rules.",
+    ),
+    "管理可复用的 Casbin 角色、权限矩阵和继承关系。平台超级管理员不受这些规则限制。",
+  );
 });

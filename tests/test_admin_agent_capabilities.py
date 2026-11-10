@@ -119,6 +119,8 @@ async def test_admin_agent_binds_visible_skill_and_mcp_tools(db):
         assert "not granted to this agent" in page.text
         assert 'name="skills"' in page.text
         assert 'name="tools"' in page.text
+        assert 'data-capability-suggestion-tool="calc"' in page.text
+        assert 'data-capability-suggestion-status="not-granted"' in page.text
 
         created = await client.post(
             "/admin/agents",

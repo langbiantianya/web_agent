@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import re
 import uuid
+import json
 
 import httpx
 import pytest
+import sqlalchemy as sa
 
 from app.core.tools import tool_names
 from app.repo.agent_repo import agent_repo
@@ -21,6 +23,8 @@ from app.repo.skill_repo import skill_repo
 from app.repo.workflow_repo import workflow_repo
 from services.admin_web import app as admin_web_app
 from services.admin_web.registry import PAGE_SPECS
+from app.models.agent import Agent
+from app.models.skill import Skill
 
 
 async def _logged_in_client() -> tuple[httpx.AsyncClient, str]:
@@ -53,6 +57,163 @@ def _button_tag(markup: str, aria_label: str) -> str:
     start = markup.rfind("<button", 0, position)
     end = markup.index(">", position)
     return markup[start : end + 1]
+
+
+@pytest.mark.asyncio
+async def test_workflow_save_rejects_missing_or_disabled_agent_reference(db):
+    """Workflow saves must not keep broken Agent links after schema/config edits."""
+    tag = uuid.uuid4().hex[:8]
+    disabled_code = f"disabled-{tag}"
+    workflow_code = f"wf-link-{tag}"
+    await agent_repo.create(
+        db,
+        code=disabled_code,
+        tenant_id="default",
+        name="Disabled Agent",
+        system_prompt="disabled",
+        model="test-model",
+        base_url="",
+        api_key_cipher="",
+        tools=[],
+        skills=[],
+        enabled=0,
+    )
+    client, csrf = await _logged_in_client()
+    created = await client.post(
+        "/admin/workflows",
+        data={
+            "csrf_token": csrf,
+            "code": workflow_code,
+            "name": "Agent Link Flow",
+            "description": "",
+            "agent_code": disabled_code,
+            "enabled": "1",
+        },
+    )
+    assert created.status_code == 303
+    assert "error=invalid" in created.headers["location"]
+
+    await workflow_repo.create(
+        db,
+        code=workflow_code,
+        name="Agent Link Flow",
+        description="",
+        definition=_workflow_definition(disabled_code),
+        enabled=1,
+    )
+    missing_definition = _workflow_definition(f"missing-{tag}")
+    updated = await client.post(
+        f"/admin/workflows/{workflow_code}/update",
+        data={
+            "csrf_token": csrf,
+            "name": "Agent Link Flow",
+            "description": "",
+            "enabled": "1",
+            "definition": json.dumps(missing_definition),
+            "next": f"/admin/workflows/{workflow_code}",
+        },
+    )
+    assert updated.status_code == 303
+    assert "error=invalid" in updated.headers["location"]
+    row = await workflow_repo.get_by_code(db, workflow_code)
+    assert row is not None
+    assert row.definition["nodes"][0]["agentCode"] == disabled_code
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_workflow_validation_has_english_diagnostics():
+    """The canvas validation API follows the selected admin locale."""
+    client, csrf = await _logged_in_client()
+    response = await client.post(
+        "/admin/workflows/validate",
+        json={
+            "csrf_token": csrf,
+            "locale": "en",
+            "definition": {
+                "entry": "a",
+                "nodes": [
+                    {"id": "a", "type": "agent", "agentCode": "a"},
+                    {"id": "b", "type": "agent", "agentCode": "b"},
+                ],
+                "edges": [
+                    {"from": "a", "to": "b"},
+                    {"from": "b", "to": "a"},
+                ],
+            },
+        },
+    )
+    assert response.status_code == 200
+    errors = response.json()["errors"]
+    assert any("cycle" in item["message"] for item in errors)
+    assert all(
+        not re.search(r"[\u4e00-\u9fff]", item["message"])
+        for item in errors
+    )
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_draft_skill_is_never_left_enabled(db):
+    """Draft and enabled are mutually exclusive for prompt injection."""
+    client, csrf = await _logged_in_client()
+    code = f"draft-{uuid.uuid4().hex[:8]}"
+    response = await client.post(
+        "/admin/skills",
+        data={
+            "csrf_token": csrf,
+            "code": code,
+            "description": "Draft skill",
+            "allowed_tools": "",
+            "body": "Not active yet.",
+            "status": "draft",
+            "enabled": "1",
+        },
+    )
+    assert response.status_code == 303
+    row = await db.scalar(sa.select(Skill).where(Skill.code == code))
+    assert row is not None
+    assert row.status == "draft"
+    assert not row.enabled
+    await client.aclose()
+
+
+def test_workflow_read_only_users_can_open_the_graph():
+    """Read-only users still need an entry into the canvas viewer."""
+    from services.admin_web.accounts import AdminPrincipal
+    from services.admin_web.views.workflows import workflows_page
+
+    row = type(
+        "WorkflowRow",
+        (),
+        {
+            "code": "view-flow",
+            "name": "View Flow",
+            "enabled": 1,
+            "version": 1,
+        },
+    )()
+    markup = workflows_page(
+        principal=AdminPrincipal(
+            kind="platform_super_admin",
+            principal_id=1,
+            user_id=None,
+            tenant_id="default",
+            username="reader",
+            session_id=1,
+            is_owner=False,
+        ),
+        csrf="csrf",
+        pages=[],
+        rows=[row],
+        agents=[],
+        theme="fluent",
+        color_mode="system",
+        density="comfortable",
+        can_write=False,
+    ).to_html()
+    assert 'href="/admin/workflows/view-flow"' in markup
+    assert ">View graph</a>" in markup
 
 
 @pytest.mark.asyncio

@@ -20,8 +20,9 @@ from services.admin_web.common import (
     operation_authorized, origin_ok, require_csrf, safe_next, tenant_id_of,
     unauthorized, with_auth,
 )
-from services.admin_web.routes.workflows import _definition_errors
-
+from services.admin_web.routes.workflows import (
+    _agent_binding_errors, _definition_errors,
+)
 
 def register(app: Any) -> None:
     """把工作流的写操作路由挂到 app 上。"""
@@ -99,7 +100,8 @@ def register(app: Any) -> None:
                     {"ok": False, "errors": [{"message": "forbidden"}]},
                     status_code=403,
                 )
-            errors = _definition_errors(definition)
+            locale = "en" if body.get("locale") == "en" else "zh-CN"
+            errors = _definition_errors(definition, locale=locale)
             if not errors:
                 return JSONResponse({"ok": True})
             return JSONResponse({"ok": False, "errors": errors})
@@ -132,12 +134,10 @@ def register(app: Any) -> None:
             agent_code = str(form.get("agent_code") or "").strip()
             raw_definition = str(form.get("definition") or "").strip()
             if agent_code:
-                if (
-                    await agent_repo.get_by_code(
-                        db, agent_code, tenant_id=tenant_id_of(principal)
-                    )
-                    is None
-                ):
+                initial_agent = await agent_repo.get_by_code(
+                    db, agent_code, tenant_id=tenant_id_of(principal)
+                )
+                if initial_agent is None or not initial_agent.enabled:
                     # 初始 Agent 必须真实存在，否则建出来的编排一跑就找不到 Agent。
                     return business_redirect("/admin/workflows", error="invalid")
                 try:
@@ -162,14 +162,19 @@ def register(app: Any) -> None:
                     return business_redirect("/admin/workflows", error="invalid")
             elif raw_definition:
                 try:
+                    definition = json_object(raw_definition)
                     payload = WorkflowCreate(
                         code=str(form.get("code") or ""),
                         name=str(form.get("name") or ""),
                         description=str(form.get("description") or ""),
-                        definition=json_object(raw_definition),
+                        definition=definition,
                         enabled=as_bool(form.get("enabled"), True),
                     )
                 except (ValidationError, ValueError):
+                    return business_redirect("/admin/workflows", error="invalid")
+                if await _agent_binding_errors(
+                    db, definition, tenant_id_of(principal)
+                ):
                     return business_redirect("/admin/workflows", error="invalid")
             else:
                 return business_redirect("/admin/workflows", error="invalid")
@@ -236,6 +241,10 @@ def register(app: Any) -> None:
             fields["definition"] = payload.definition.model_dump(
                 by_alias=True, exclude_none=True
             )
+            if await _agent_binding_errors(
+                db, fields["definition"], tenant_id_of(principal)
+            ):
+                return business_redirect(f"/admin/workflows/{code}", error="invalid")
             fields["enabled"] = 1 if payload.enabled else 0
             await workflow_repo.update(db, code, fields)
             await audit_principal_action(

@@ -43,7 +43,7 @@
         },
         {
           "attrs": {
-            "src": "/admin/static/admin-ui.js?v=admin-ui-20261110-12"
+            "src": "/admin/static/admin-ui.js?v=admin-ui-20261110-13"
           },
           "children": [],
           "tag": "script"
@@ -1046,6 +1046,8 @@
                                             {
                                               "attrs": {
                                                 "class": "capability-suggestion is-not-granted",
+                                                "data-capability-suggestion-status": "not-granted",
+                                                "data-capability-suggestion-tool": "calc",
                                                 "title": "not granted to this agent"
                                               },
                                               "children": [
@@ -1058,6 +1060,8 @@
                                             {
                                               "attrs": {
                                                 "class": "capability-suggestion is-not-granted",
+                                                "data-capability-suggestion-status": "not-granted",
+                                                "data-capability-suggestion-tool": "mcp__snapshot-mcp__lookup",
                                                 "title": "not granted to this agent"
                                               },
                                               "children": [

@@ -139,6 +139,8 @@ def _suggestion_badges(
                     f"{name} · {detail}",
                     class_=f"capability-suggestion is-{status}",
                     title=detail,
+                    data_capability_suggestion_tool=name,
+                    data_capability_suggestion_status=status,
                 )
                 for name, status, detail in suggestions
             ]

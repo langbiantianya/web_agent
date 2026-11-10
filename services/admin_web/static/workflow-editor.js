@@ -19,6 +19,19 @@
   const MIN_SCALE = 0.5;
   const MAX_SCALE = 2;
 
+  /** Current admin locale; the editor stub defaults to Chinese. */
+  function activeLocale() {
+    const lang = document.documentElement
+      ? document.documentElement.lang
+      : "zh-CN";
+    return lang === "en" ? "en" : "zh-CN";
+  }
+
+  /** Pick the current locale's text without translating user content. */
+  function tr(zh, en) {
+    return activeLocale() === "en" ? en : zh;
+  }
+
   const state = {
     model: null,
     stack: null,
@@ -48,9 +61,9 @@
    * 这里只做文案映射，前端不再写第二份判断。
    */
   const REASON_TEXT = {
-    self_loop: "不能连到自己",
-    duplicate: "这条边已经存在",
-    unknown_node: "目标节点不存在",
+    self_loop: ["不能连到自己", "Cannot connect a node to itself"],
+    duplicate: ["这条边已经存在", "This connection already exists"],
+    unknown_node: ["目标节点不存在", "The target node does not exist"],
   };
 
   /**
@@ -391,7 +404,9 @@
         el(
           "text",
           { class: "badge", x: 18, y: 22 },
-          node.type === "approval" ? "审批" : "Agent",
+          node.type === "approval"
+            ? tr("审批", "Approval")
+            : tr("智能体", "Agent"),
         ),
       );
       group.appendChild(
@@ -419,7 +434,7 @@
               y: core.NODE_HEIGHT / 2 + 4,
               "text-anchor": "end",
             },
-            "入口",
+            tr("入口", "Entry"),
           ),
         );
       }
@@ -446,10 +461,14 @@
   /** 节点的副标题：审批节点显示说明首行，agent 节点显示绑定的 agent 名。 */
   function nodeSubtitle(node) {
     if (node.type === "approval") {
-      return node.prompt ? node.prompt.split("\n")[0] : "（未填写审批说明）";
+      return node.prompt
+        ? node.prompt.split("\n")[0]
+        : tr("（未填写审批说明）", "(No approval instructions)");
     }
     const agent = state.agents.find((item) => item.code === node.agentCode);
-    return agent ? agent.name : node.agentCode || "（未选择 Agent）";
+    return agent
+      ? agent.name
+      : node.agentCode || tr("（未选择 Agent）", "(No Agent selected)");
   }
 
   /**
@@ -865,12 +884,12 @@
     }
   }
 
-  /** reason → 中文提示文案。 */
+  /** reason → localized prompt text. */
   function reasonText(reason) {
     if (Object.prototype.hasOwnProperty.call(REASON_TEXT, reason)) {
-      return REASON_TEXT[reason];
+      return tr(REASON_TEXT[reason][0], REASON_TEXT[reason][1]);
     }
-    return "连边失败";
+    return tr("连边失败", "Could not create the connection");
   }
 
   /* ------------------------------------------------------------------
@@ -1199,7 +1218,7 @@
     }
     const newId = String(rawValue === undefined ? "" : rawValue).trim();
     if (!newId) {
-      showNotice("节点 id 不能为空");
+      showNotice(tr("节点 id 不能为空", "Node ID cannot be empty"));
       return false;
     }
     if (newId === oldId) {
@@ -1207,7 +1226,12 @@
     }
     const next = core.cloneModel(state.model);
     if (next.nodes.some((node) => node.id === newId)) {
-      showNotice(`节点 id ${newId} 已经存在`);
+      showNotice(
+        tr(
+          `节点 id ${newId} 已经存在`,
+          `Node ID ${newId} already exists`,
+        ),
+      );
       return false;
     }
     const node = next.nodes.find((item) => item.id === oldId);
@@ -1259,12 +1283,15 @@
     host.appendChild(
       field(
         "type",
-        "节点类型",
+        tr("节点类型", "Node type"),
         selectInput(
           node.type,
           [
             { value: "agent", label: "Agent" },
-            { value: "approval", label: "审批" },
+            {
+              value: "approval",
+              label: tr("审批", "Approval"),
+            },
           ],
           (value) => {
             if (!state.canWrite) {
@@ -1282,11 +1309,11 @@
         idInput.value = nodeId;
       }
     });
-    host.appendChild(field("id", "节点 ID", idInput));
+    host.appendChild(field("id", tr("节点 ID", "Node ID"), idInput));
     host.appendChild(
       field(
         "label",
-        "标题",
+        tr("标题", "Label"),
         textInput(node.label, (value) =>
           updateNodeField(nodeId, "label", value),
         ),
@@ -1296,7 +1323,7 @@
       host.appendChild(
         field(
           "prompt",
-          "审批说明",
+          tr("审批说明", "Approval instructions"),
           textArea(node.prompt, 4, (value) =>
             updateNodeField(nodeId, "prompt", value),
           ),
@@ -1305,7 +1332,7 @@
       host.appendChild(
         field(
           "requiredApprovals",
-          "会签人数",
+          tr("会签人数", "Required approvals"),
           numberInput(node.requiredApprovals, (value) =>
             updateNodeField(nodeId, "requiredApprovals", value),
           ),
@@ -1314,7 +1341,10 @@
       host.appendChild(
         field(
           "approvalTimeoutSec",
-          "超时秒数（0 表示不超时）",
+          tr(
+            "超时秒数（0 表示不超时）",
+            "Timeout seconds (0 = no timeout)",
+          ),
           numberInput(node.approvalTimeoutSec, (value) =>
             updateNodeField(nodeId, "approvalTimeoutSec", value),
           ),
@@ -1323,12 +1353,18 @@
       host.appendChild(
         field(
           "approvalTimeoutAction",
-          "超时动作",
+          tr("超时动作", "Timeout action"),
           selectInput(
             node.approvalTimeoutAction,
             [
-              { value: "reject", label: "驳回" },
-              { value: "approve", label: "通过" },
+              {
+                value: "reject",
+                label: tr("驳回", "Reject"),
+              },
+              {
+                value: "approve",
+                label: tr("通过", "Approve"),
+              },
             ],
             (value) =>
               updateNodeField(nodeId, "approvalTimeoutAction", value),
@@ -1336,7 +1372,12 @@
         ),
       );
     } else {
-      const agentOptions = [{ value: "", label: "（未选择）" }].concat(
+      const agentOptions = [
+        {
+          value: "",
+          label: tr("（未选择）", "(Not selected)"),
+        },
+      ].concat(
         state.agents.map((agent) => ({
           value: agent.code,
           label: `${agent.name}（${agent.code}）`,
@@ -1345,7 +1386,7 @@
       host.appendChild(
         field(
           "agentCode",
-          "Agent",
+          tr("智能体", "Agent"),
           selectInput(node.agentCode, agentOptions, (value) =>
             updateNodeField(nodeId, "agentCode", value),
           ),
@@ -1354,7 +1395,7 @@
       host.appendChild(
         field(
           "outputKey",
-          "输出键",
+          tr("输出键", "Output key"),
           textInput(node.outputKey, (value) =>
             updateNodeField(nodeId, "outputKey", value),
           ),
@@ -1362,13 +1403,17 @@
       );
     }
     host.appendChild(
-      actionButton("删除节点", "btn btn-danger btn-small", () => {
+      actionButton(
+        tr("删除节点", "Delete node"),
+        "btn btn-danger btn-small",
+        () => {
         if (!state.canWrite) {
           return;
         }
         commit(core.removeNode(state.model, nodeId));
         select(null, null);
-      }),
+        },
+      ),
     );
   }
 
@@ -1379,7 +1424,9 @@
     const whenInput = textArea(edge.when, 3, (value) =>
       updateEdgeWhen(from, to, value),
     );
-    host.appendChild(field("when", "条件（when）", whenInput));
+    host.appendChild(
+      field("when", tr("条件（when）", "Condition (when)"), whenInput),
+    );
     const variables = document.createElement("div");
     variables.className = "workflow-inspector-variables";
     availableVariables().forEach((name) => {
@@ -1400,23 +1447,32 @@
     });
     host.appendChild(variables);
     host.appendChild(
-      actionButton("删除边", "btn btn-danger btn-small", () => {
-        if (!state.canWrite) {
-          return;
-        }
-        const next = core.cloneModel(state.model);
-        next.edges = next.edges.filter(
-          (item) => !(item.from === from && item.to === to),
-        );
-        commit(next);
-        select(null, null);
-      }),
+      actionButton(
+        tr("删除边", "Delete connection"),
+        "btn btn-danger btn-small",
+        () => {
+          if (!state.canWrite) {
+            return;
+          }
+          const next = core.cloneModel(state.model);
+          next.edges = next.edges.filter(
+            (item) => !(item.from === from && item.to === to),
+          );
+          commit(next);
+          select(null, null);
+        },
+      ),
     );
   }
 
   /** 画布检查器：未选中任何对象时。 */
   function renderWorkflowInspector(host) {
-    const entryOptions = [{ value: "", label: "（未设置）" }].concat(
+    const entryOptions = [
+      {
+        value: "",
+        label: tr("（未设置）", "(Not set)"),
+      },
+    ].concat(
       state.model.nodes.map((node) => ({
         value: node.id,
         label: node.label ? `${node.label}（${node.id}）` : node.id,
@@ -1425,7 +1481,7 @@
     host.appendChild(
       field(
         "entry",
-        "入口节点",
+        tr("入口节点", "Entry node"),
         selectInput(state.model.entry, entryOptions, (value) => {
           if (!state.canWrite) {
             return;
@@ -1439,7 +1495,7 @@
     host.appendChild(
       field(
         "inputTemplate",
-        "输入模板",
+        tr("输入模板", "Input template"),
         textArea(state.model.inputTemplate, 6, (value) => {
           if (!state.canWrite) {
             return;
@@ -1454,10 +1510,18 @@
     hint.className = "workflow-inspector-hint";
     // upstream 是服务端认可的保留变量（WorkflowDefinition._template_vars
     // 的 known 集里就有它），默认 inputTemplate 也在用它，所以必须列出来。
-    hint.textContent =
+    hint.textContent = tr(
       "可用变量：" +
-      ["user_input", "upstream"].concat(availableVariables().slice(1)).join("、") +
-      "（模板里写 {{变量名}}，不写 upstream. 前缀）";
+        ["user_input", "upstream"]
+          .concat(availableVariables().slice(1))
+          .join("、") +
+        "（模板里写 {{变量名}}，不写 upstream. 前缀）",
+      "Available variables: " +
+        ["user_input", "upstream"]
+          .concat(availableVariables().slice(1))
+          .join(", ") +
+        " (use {{name}} in templates without the upstream. prefix)",
+    );
     host.appendChild(hint);
   }
 
@@ -1655,15 +1719,27 @@
     }
   }
 
-  /** 端点的机器码 → 中文文案。 */
+  /** 端点的机器码 → localized text. */
   function machineText(code) {
     const table = {
-      invalid_json: "请求格式不正确",
-      definition_required: "没有提交工作流定义",
-      definition_shape_invalid: "工作流定义结构不正确",
-      forbidden: "没有校验权限或登录已过期",
+      invalid_json: ["请求格式不正确", "Invalid request format"],
+      definition_required: [
+        "没有提交工作流定义",
+        "No workflow definition was submitted",
+      ],
+      definition_shape_invalid: [
+        "工作流定义结构不正确",
+        "The workflow definition has an invalid shape",
+      ],
+      forbidden: [
+        "没有校验权限或登录已过期",
+        "You do not have validation permission or your session expired",
+      ],
     };
-    return table[code] || "无法完成校验";
+    const text = table[code];
+    return text
+      ? tr(text[0], text[1])
+      : tr("无法完成校验", "Validation could not be completed");
   }
 
   /** 调校验端点，把结果显示到错误条。 */
@@ -1689,6 +1765,7 @@
         body: JSON.stringify({
           csrf_token: csrfInput ? csrfInput.value : "",
           definition,
+          locale: activeLocale(),
         }),
       });
       let payload = null;
@@ -1698,7 +1775,7 @@
         payload = null;
       }
       if (!response.ok) {
-        // 400 / 403：body 里是机器码，翻成中文再显示。
+        // 400 / 403: the body contains a stable machine code.
         const first =
           payload && payload.errors && payload.errors[0]
             ? payload.errors[0].message

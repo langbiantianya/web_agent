@@ -1707,12 +1707,27 @@ async def test_admin_workflow_editor_page_renders_canvas():
 
 async def test_admin_workflow_update_persists_layout_and_label():
     """保存后 layout 坐标与节点 label 必须原样落库。"""
+    from app.models.agent import Agent
     from app.models.workflow import Workflow
 
     client, _, _, csrf = await _create_seeded_logged_in_super_admin()
     tag = uuid.uuid4().hex[:8]
     code = f"wf-{tag}"
     async with AdminSessionLocal() as db:
+        db.add(
+            Agent(
+                tenant_id="default",
+                code="planner",
+                name="Planner",
+                model="test-model",
+                base_url="https://llm.example.com/v1",
+                api_key_cipher="",
+                system_prompt="p",
+                tools=[],
+                skills=[],
+                enabled=1,
+            )
+        )
         db.add(
             Workflow(
                 code=code,
@@ -1852,6 +1867,24 @@ async def test_admin_workflow_editor_shows_save_feedback():
     client, _, _, csrf = await _create_seeded_logged_in_super_admin()
     tag = uuid.uuid4().hex[:8]
     code = f"wf-{tag}"
+    from app.models.agent import Agent
+
+    async with AdminSessionLocal() as db:
+        db.add(
+            Agent(
+                tenant_id="default",
+                code="a",
+                name="Agent A",
+                model="test-model",
+                base_url="https://llm.example.com/v1",
+                api_key_cipher="",
+                system_prompt="p",
+                tools=[],
+                skills=[],
+                enabled=1,
+            )
+        )
+        await db.commit()
     try:
         created = await client.post(
             "/admin/workflows",
