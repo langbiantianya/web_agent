@@ -73,6 +73,7 @@ def llm_page(
     density: str,
     can_write: bool,
     flash: str | None = None,
+    flash_kind: str = "info",
     undo_id: int | None = None,
     create_errors: dict[str, str] | None = None,
     create_values: dict[str, str] | None = None,
@@ -264,6 +265,7 @@ def llm_page(
         ],
         rows=table_rows,
         flash=flash,
+        flash_kind=flash_kind,
         undo=(
             undo_panel(
                 csrf=csrf,

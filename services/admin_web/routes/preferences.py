@@ -9,7 +9,7 @@ from starlette.responses import RedirectResponse
 
 from services.admin_web.audit import audit_principal_action
 from services.admin_web.common import (
-    not_found, origin_ok, require_csrf, unauthorized, with_auth,
+    flash_from_query, not_found, origin_ok, require_csrf, unauthorized, with_auth,
 )
 from services.admin_web.registry import can_access_page, visible_pages
 from services.admin_web.views import preferences_page
@@ -37,6 +37,9 @@ def register(app: Any) -> None:
         try:
             if not await can_access_page(db, principal, "preferences"):
                 return not_found()
+            # 保存后要给出确认提示——重定向上的 ``notice=saved`` 必须落到页面上，
+            # 否则管理员点了「保存偏好设置」却完全看不到反馈（UX-35）。
+            flash, flash_kind = flash_from_query(request)
             return preferences_page(
                 principal=principal,
                 csrf=csrf,
@@ -44,6 +47,8 @@ def register(app: Any) -> None:
                 theme=pref.theme,
                 color_mode=pref.color_mode,
                 density=pref.density,
+                flash=flash,
+                flash_kind=flash_kind,
             )
         finally:
             await db.close()

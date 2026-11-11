@@ -1688,7 +1688,6 @@
                                                         "aria-label": "Disable Agent Snapshot Agent",
                                                         "class": "btn btn-secondary btn-small",
                                                         "disabled": "false",
-                                                        "title": "None",
                                                         "type": "submit"
                                                       },
                                                       "children": [
@@ -1726,7 +1725,6 @@
                                                         "data-confirm-title": "Delete Agent Snapshot Agent",
                                                         "data-confirm-trigger": "1",
                                                         "disabled": "false",
-                                                        "title": "None",
                                                         "type": "button"
                                                       },
                                                       "children": [

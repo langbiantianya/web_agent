@@ -91,6 +91,8 @@ _EXPECTED_TABLES = {
     "super_admin_account",
     "super_admin_session",
     "super_admin_password_reset",
+    # V4.8：管理端删除快照（撤销窗口）
+    "admin_deleted_resource",
 }
 
 

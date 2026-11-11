@@ -39,11 +39,22 @@ class LlmProbeError(Exception):
     ``status_code`` 是上游 HTTP 状态码（网络层失败时为 ``None``）。调用方据此
     区分「配置不对」（401/404）与「配置对但账号被限流」（402/429）——后者的
     地址与密钥其实已经验证过了。
+
+    ``code`` 是**稳定的机器可读分类**（``http_401`` / ``network`` /
+    ``invalid_response`` …）。管理端据此在中文界面里给出本地化提示，而不是
+    把这段英文原样贴到页面上（UX-37）。
     """
 
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        code: str = "unknown",
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -60,10 +71,14 @@ def _endpoint_url(base_url: str, path: str) -> str:
     base = (base_url or "").strip().rstrip("/")
     parsed = urlparse(base)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise LlmProbeError("base_url must be an http(s) URL")
+        raise LlmProbeError(
+            "base_url must be an http(s) URL", code="invalid_base_url"
+        )
     if parsed.username or parsed.password:
         # 凭据必须走独立的 api_key，不能混进地址——否则会进日志与审计。
-        raise LlmProbeError("base_url must not embed credentials")
+        raise LlmProbeError(
+            "base_url must not embed credentials", code="invalid_base_url"
+        )
     return f"{base}{path}"
 
 
@@ -77,13 +92,37 @@ def _auth_headers(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
 
+# 上游状态码 → 一句**稳定**的中性说明。
+#
+# 这里刻意**不回显上游正文**：上游的错误体可能带内部请求 ID、账号信息，
+# 甚至把密钥片段回显出来（有些网关会在报错里重复一次密钥的前后几位）。
+# 管理端需要的是「哪里错了」，不是上游的原始报文。
+_STATUS_HINTS: dict[int, str] = {
+    400: "The endpoint rejected the request. Check the model name.",
+    401: "The API key was rejected. Check the key and its account.",
+    403: "The endpoint refused the request. The key may lack a scope.",
+    404: "The path was not found. Check the base URL.",
+    408: "The endpoint timed out.",
+    402: "The account has no remaining credit for this endpoint.",
+    429: "The endpoint is rate limiting this key. Try again later.",
+    500: "The endpoint returned a server error.",
+    502: "The upstream gateway returned an invalid response.",
+    503: "The endpoint is temporarily unavailable.",
+    504: "The upstream gateway timed out.",
+}
+
+
 def _http_error(action: str, response: httpx.Response) -> LlmProbeError:
-    """把非 2xx 响应翻成一句可展示的错误。"""
-    detail = _short(response.text)
-    suffix = f" {detail}" if detail else ""
+    """把非 2xx 响应翻成一句可展示的错误。
+
+    只保留**状态码 + 归类说明**，不带上游正文（见 :data:`_STATUS_HINTS`）。
+    """
+    status = response.status_code
+    hint = _STATUS_HINTS.get(status, "The endpoint returned an unexpected response.")
     return LlmProbeError(
-        f"{action} failed: HTTP {response.status_code}{suffix}",
-        status_code=response.status_code,
+        f"{action} failed: HTTP {status}. {hint}",
+        status_code=status,
+        code=f"http_{status}",
     )
 
 
@@ -98,16 +137,22 @@ async def fetch_models(
         ) as client:
             response = await client.get(url, headers=_auth_headers(api_key))
     except httpx.HTTPError as exc:
-        raise LlmProbeError(f"GET /models failed: {type(exc).__name__}") from exc
+        raise LlmProbeError(
+            f"GET /models failed: {type(exc).__name__}", code="network"
+        ) from exc
     if response.status_code >= 400:
         raise _http_error("GET /models", response)
     try:
         payload = response.json()
     except ValueError as exc:
-        raise LlmProbeError("GET /models returned a non-JSON body") from exc
+        raise LlmProbeError(
+            "GET /models returned a non-JSON body", code="invalid_response"
+        ) from exc
     rows = payload.get("data") if isinstance(payload, dict) else payload
     if not isinstance(rows, list):
-        raise LlmProbeError("GET /models returned no data array")
+        raise LlmProbeError(
+            "GET /models returned no data array", code="invalid_response"
+        )
     models = sorted(
         {
             str(item.get("id")).strip()
@@ -116,7 +161,9 @@ async def fetch_models(
         }
     )
     if not models:
-        raise LlmProbeError("GET /models returned an empty model list")
+        raise LlmProbeError(
+            "GET /models returned an empty model list", code="no_models"
+        )
     return models
 
 
@@ -134,7 +181,7 @@ async def probe_chat(
     """
     selected = (model or "").strip()
     if not selected:
-        raise LlmProbeError("model is required")
+        raise LlmProbeError("model is required", code="model_required")
     url = _endpoint_url(base_url, "/chat/completions")
     payload = {
         "model": selected,
@@ -153,7 +200,8 @@ async def probe_chat(
             )
     except httpx.HTTPError as exc:
         raise LlmProbeError(
-            f"POST /chat/completions failed: {type(exc).__name__}"
+            f"POST /chat/completions failed: {type(exc).__name__}",
+            code="network",
         ) from exc
     latency_ms = int((time.perf_counter() - started) * 1000)
     if response.status_code >= 400:
@@ -162,11 +210,14 @@ async def probe_chat(
         body = response.json()
     except ValueError as exc:
         raise LlmProbeError(
-            "POST /chat/completions returned a non-JSON body"
+            "POST /chat/completions returned a non-JSON body",
+            code="invalid_response",
         ) from exc
     choices = body.get("choices") if isinstance(body, dict) else None
     if not isinstance(choices, list) or not choices:
-        raise LlmProbeError("POST /chat/completions returned no choices")
+        raise LlmProbeError(
+            "POST /chat/completions returned no choices", code="invalid_response"
+        )
     message = choices[0].get("message") if isinstance(choices[0], dict) else None
     content = ""
     if isinstance(message, dict):

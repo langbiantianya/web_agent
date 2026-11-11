@@ -1029,6 +1029,7 @@
                                                     "aria-label": "Archive Skill Snapshot Skill",
                                                     "class": "btn btn-danger btn-small",
                                                     "data-confirm-impacts": "Used by agents: snapshot-agent\nSkills keep their resources and revisions; restore is available from the API.",
+                                                    "data-confirm-submit-label": "Archive",
                                                     "data-confirm-summary": "Skill Snapshot Skill (snapshot-skill) will be archived and removed from active use.",
                                                     "data-confirm-title": "Archive Skill Snapshot Skill",
                                                     "data-confirm-trigger": "1",

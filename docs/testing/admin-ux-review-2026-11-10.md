@@ -118,3 +118,127 @@
   打开时是全屏遮罩、Esc 可关）；列表排序的「默认」选项不再把中文文案
   `sort=默认` 写进 URL；编辑面板标题与撤销按钮的可访问名称一并中文化。
 
+
+## P0 / P1 修复记录（2026-11-10 第三轮，内置浏览器实测）
+
+第二轮的修复在**内置浏览器**里逐个按钮实测时，又暴露出几条**纸面评审没看出来**
+的 P0/P1。本轮把它们补齐，并给每条都加了回归用例。
+
+### 新发现的问题
+
+| ID | 严重度 | 位置 | 问题 | 状态 |
+| --- | --- | --- | --- | --- |
+| UX-24 | **P0** | `deploy/docker-compose.stack.yml` | compose 的 `environment:` 用 `${ADMIN_DATABASE_URL:-}` 覆盖了 `env_file` 里的同名键。compose 的变量插值在**没有** `--env-file .env` 时取到空串，而空串**照样覆盖** `env_file`——于是 `ADMIN_DATABASE_URL` 被抹成空值，管理端静默退回客户端的 MySQL 主库（`ADMIN_PUBLIC_BASE_URL` 同样被改成 `http://127.0.0.1:8001`）。这直接违反 `deploy/README.md` 的「admin 与客户端配置独立数据库账号，限制客户端读取超级管理员密码摘要」。 | 已修复 |
+| UX-25 | **P1** | `/admin/platform-admins` | 平台超级管理员的删除按钮是 `type="submit"` + 一个 `data-confirm` 属性。`data-confirm` 只被 i18n 当成待翻译文本读过，**没有任何脚本监听它**——所以这是「单击立即提交」，UX-01 在这一页根本没生效。 | 已修复 |
+| UX-26 | **P1** | 工作流编排器 | 「保存工作流」是一次普通表单 POST：服务端校验不过就 303 跳回**列表页**，画布上还没保存的改动**全部丢失**，管理员只看到一句通用的「提交的值无效」。UX-03 的「保留输入 + 逐字段标错」没有覆盖到编排器。 | 已修复 |
+| UX-27 | **P1** | `/admin/undo/{id}` | 撤销路由把权限页面写死成 `agents` / `agent_editor`：撤销一个 LLM 端点也要求 Agent 编辑权，撤销一个平台管理员更是完全不通。 | 已修复 |
+| UX-28 | **P1** | `/admin/llm` 服务商预设 | 预设的自动填充用 `document.querySelector('form[action="/admin/llm"]')` 取表单。页面上有**两张** action 相同的表单——「搜索 / 排序」过滤表单（GET）和「创建端点」表单（POST）——`querySelector` 命中的是排在前面��过滤表单，于是预设把值写进了一个根本没有这些字段的表单。用户点预设**没有任何反应**。 | 已修复 |
+| UX-29 | **P1** | `/admin/llm` 「测试连接」 | 服务端先探 `GET {base_url}/models`，成功后才探对话端点。而不少 OpenAI 兼容网关**不开放** `/models`（403/404），对话却完全正常——这类可用配置被误判成「连接失败」。 | 已修复 |
+| UX-30 | **P1** | LLM 探测失败提示 | 探测失败把上游响应正文截断 200 字符后**原样回显**到页面：上游的 request_id、错误 JSON、甚至网关回显的密钥片段都会出现在管理端页面上。 | 已修复 |
+| UX-31 | P2 | 行内按钮 | `title=disabled_reason or None` 在 ludic 里会把 Python 的 `None` 渲染成字符串，于是每一行按钮的 HTML 里都有 `title="None"`（再被 i18n 翻成 `title="无"`）。 | 已修复 |
+| UX-32 | P2 | 中英词表 | 词表漏翻导致中文界面露出英文：确认对话框的 `Cancel`、撤销提示 `Resource restored.`、字段级校验文案、访问控制页的说明与注册表里的页面 / 组件描述、角色删除按钮、OAuth 提供方的启停按钮。 | 已修复 |
+
+### 落地方式
+
+- **UX-24**：删掉 `admin-web` 的 `environment:` 里对 `ADMIN_DATABASE_URL` /
+  `ADMIN_PUBLIC_BASE_URL` / `ADMIN_SESSION_COOKIE_SECURE` 的覆盖，改为由
+  `env_file: ../.env` 提供；部署命令固定为
+  `docker compose -f deploy/docker-compose.stack.yml --env-file .env up -d --build`。
+  部署后用 `docker exec webagent-admin env | grep ADMIN_DATABASE_URL` 复核。
+- **UX-25**：改用 `delete_trigger`（确认对话框 + 对象名 + 影响摘要），并把
+  平台管理员纳入快照撤销：`deletion.py` 新增 `super_admin_account` 快照类型
+  （主键是用户名，快照统一落在 `code` 位），删除前留快照，列表页给「撤销删除」。
+- **UX-26**：保存改成 `fetch`（`Accept: application/json`），服务端
+  `workflows_update` 对 JSON 客户端回 `{"ok": false, "errors": [...]}`；
+  校验逻辑抽到 `services/admin_web/workflow_save.py`。没有 JS 时仍然走原来的
+  303（跳回编排页而不是列表页，画布不丢）。
+- **UX-27**：撤销路由先读快照的资源类型，再按**那一类**的写权限判定。
+- **UX-28**：预设下拉改按「有没有 `code` 字段」认出创建表单。
+- **UX-29**：「测试连接」先探 `POST /chat/completions`，模型列表改成锦上添花；
+  402/429 时再用模型列表确认「地址与密钥是好的」，继续标 `limited`。
+- **UX-30**：上游错误只保留「状态码 + 归类说明」，不回显正文。
+- **UX-31**：没有禁用原因时**不写** `title` 属性。
+- **UX-32**：补齐词条与模式，并加 Node 用例守住词表结构与新增词条。
+
+### 本轮验收记录（2026-11-10 第三轮）
+
+- 管理端后端全量：`313 passed`（新增 `tests/test_admin_ux_fixes_round3.py`
+  8 条，逐条覆盖上表的 UX-24/25/26/27/29/30）。
+- 前端逻辑：`node --test tests/js/*.test.mjs` → `81 passed`
+  （新增 `tests/js/admin-ui-llm-preset.test.mjs` 2 条守住 UX-28；
+  `tests/js/admin-ui-i18n.test.mjs` 新增 1 条守住 UX-32 的词条）。
+- 部署：`192.168.5.19:/docker/web-agent-stack`
+  （备份 `web-agent-stack-before-round3-20261110.tar.gz`）；
+  `admin-web`、`web-client`、`studio` 均 healthy，`/admin/health` 返回 200。
+- 部署后复核 `ADMIN_DATABASE_URL` 已指向 PostgreSQL `webagent_admin`，
+  `ADMIN_PUBLIC_BASE_URL` 已是 `http://192.168.5.19:8001/admin`。
+- 内置浏览器：14 个管理页在 1516 px 与 454 px 两种视口下横向溢出均为 0，
+  控制台错误 / 警告为 0；逐个按钮用鼠标触发实测（详见
+  `admin-e2e-test-cases.md` 的「内置浏览器验收记录」）。
+
+
+## P0 / P1 修复记录（2026-11-11 第四轮，内置浏览器逐按钮实测）
+
+第三轮修完之后，把**每一个按钮**都用鼠标点了一遍（本轮全程用内置浏览器，
+所有交互都走真实鼠标事件，没有用 JS 直接改 DOM 或调接口）。逐按钮实测
+暴露出第四轮的问题——它们不是评审纸面能看出来的，全部要**操作一遍**
+才会撞见。
+
+### 新发现的问题
+
+| ID | 严重度 | 位置 | 问题 | 状态 |
+| --- | --- | --- | --- | --- |
+| UX-33 | **P1** | `/admin/mcp` | 注册 stdio 类型的 MCP 服务器连不上时，字段级错误落在 **`url`** 上——而 stdio 模式下 `url` 那一栏是**禁用并隐藏**的。结果是管理员提交失败后**看不到任何字段标红**，只看到一句「连接无法校验。」，根本不知道错在哪一栏。根因：`_mcp_field_errors()` 不区分传输方式，所有兜底文案一律挂到 `url`。 | 已修复 |
+| UX-34 | **P1** | `/admin/mcp` 「刷新工具」 | 目录刷新失败只有一句「无法完成操作。」，管理员分不清是**连不上服务器**还是**有工具仍被 Agent 占用**——这两种情况的处理方式完全相反（前者去改地址，后者去解绑 Agent）。 | 已修复 |
+| UX-35 | **P1** | `/admin/preferences`、`/admin/platform-admins` | 保存偏好设置后重定向到 `?notice=saved`，但页面**从来不读这个参数**——管理员点了「保存偏好设置」，屏幕上**什么反馈都没有**。平台管理员撤销删除后同样没有「已恢复」的提示。 | 已修复 |
+| UX-36 | **P1** | `/admin/audit` | 审计筛选条件**不回显**：URL 里带着 `?source=builtin&ok=true` 重新打开页面，两个下拉框却都停在「任意」。管理员看到的条件与实际生效的条件不一致，改一个条件再提交还会把另一个悄悄丢掉。 | 已修复 |
+| UX-37 | **P1** | `/admin/llm` 探测失败 | 探测失败的服务端说明是**整句英文**（`GET /models failed: HTTP 401. The API key was rejected. ...`），中文界面里直接露出英文；折叠的「排查指引」正文也没进词表。 | 已修复 |
+| UX-38 | P2 | 全局 flash | 七个列表页（Agent / LLM / MCP / Skill / 工作流 / OAuth 提供方 / 审计）把 `flash_from_query` 的**第二个返回值丢掉了**，于是错误提示与成功提示**样式完全一样**（都走 `flash info`），管理员分不出这是「成功了」还是「失败了」。 | 已修复 |
+| UX-39 | P2 | `app/models/__init__.py` | `admin_deleted_resource`（撤销快照表）**没有**从 `app.models` 导出，于是 `Base.metadata` 里的表集合**取决于 import 顺序**：`test_postgres_compat` 单独跑通过、全量跑失败。三种方言的表一致性守卫因此变成了一颗定时炸弹。 | 已修复 |
+| UX-40 | **P0** | `/admin/llm`、`/admin/agents`、`/admin/workflows` | 三处**漏 import**：`routes/llm_write.py` 用了 `LlmEndpointUpdate` 却没 import（「保存端点」一按就 500）；`routes/agents_write.py` 与 `routes/workflows_write.py` 用了 `as_bool` 却没 import（智能体与工作流的「禁用 / 启用」一按就 500）。这三条路径**没有任何测试覆盖**，单靠端到端用例抓不到。 | 已修复 |
+
+### 落地方式
+
+- **UX-33**：`_mcp_field_errors(exc, transport)` 增加传输方式参数——stdio 的
+  兜底文案挂到 `command`，http 挂到 `url`；创建路由传 `submitted["transport"]`，
+  更新路由传 `existing.transport`。顺带修了 `timeout_sec` 的整数解析错误
+  （原来也会落到 `url` 上）。
+- **UX-34**：`McpCatalogError` 增加 `reason` 分类（`unreachable` /
+  `tools_in_use`），路由据此重定向到 `error=mcp_unreachable` /
+  `error=mcp_tools_in_use`，词表补两条中文说明。
+- **UX-35**：`preferences_get` 与 `platform_admins_get` 改成调用
+  `flash_from_query(request)` 并把 `flash` / `flash_kind` 传给视图；
+  词表补 `Preferences saved.`。
+- **UX-36**：`audit_page` 接收 `run_id` / `tool_name` / `source` / `ok`
+  四个当前值并回显到控件上；`audit_get` 把它们传下去。
+- **UX-37**：`LlmProbeError` 增加稳定的 `code`（`http_401` / `network` /
+  `invalid_response` …），探测接口在 JSON 里回 `error_code`；前端按分类用
+  `PROBE_ERRORS` 词表本地化，英文界面保留服务端原文。折叠区里的排查指引
+  正文补进 `ZH`。
+- **UX-38**：七个路由把 `flash, _ =` 改成 `flash, flash_kind =`，视图签名
+  补 `flash_kind` 并透传给 `shell()`。
+- **UX-39**：`app/models/__init__.py` 导出 `AdminDeletedResource`，
+  `test_postgres_compat.py` 的 `_EXPECTED_TABLES` 补上
+  `admin_deleted_resource`。
+- **UX-40**：补上三处漏掉的 import，并新增
+  `tests/test_admin_route_static_checks.py`——用 `symtable` **静态**检查
+  `services/admin_web` 整棵树上「引用了却没定义的全局名」。管理端的处理器
+  都嵌在 `register()` 里面，所以检查必须**递归所有作用域**（只看一层会漏掉
+  真正的漏 import）。这类漏 import 在运行到那行之前完全无害，只有真的按了
+  那个按钮才会炸；现在它在提交之前就被挡下来了。
+
+### 本轮验收记录（2026-11-11 第四轮）
+
+- 后端全量：`pytest tests/ --ignore=tests/test_mcp_e2e.py` → **1114 passed**、
+  30 skipped。仅 `test_studio_service.py::test_request_id_dedup_skips_second_run`
+  失败，而它在**改动前的基线上同样失败**（本机 studio 执行的临时文件路径问题，
+  与管理端无关）。`test_mcp_e2e.py` 在本机因为 venv 里 `pywin32` 的
+  `_win32sysloader.dll` 缺失而无法导入 `mcp.server.stdio`，同样属**环境问题**。
+- 管理端静态守卫：`pytest tests/test_admin_route_static_checks.py` → 77 passed。
+- 前端逻辑：`node --test tests/js/*.test.mjs` → `83 passed`。
+- 部署：`192.168.5.19:/docker/web-agent-stack`（docker compose，
+  `--env-file .env`）；`admin-web` / `web-client` / `studio` 均 healthy，
+  `/admin/health` 返回 200，`ADMIN_DATABASE_URL` 指向 PostgreSQL
+  `webagent_admin`。
+- 内置浏览器：14 个管理页逐页打开，**每一个按钮都用鼠标点过**（详见
+  `admin-e2e-test-cases.md` 的「内置浏览器验收记录（第四轮）」）。

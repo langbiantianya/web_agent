@@ -1500,7 +1500,6 @@
                                                         "aria-label": "Disable OAuth provider Snapshot IDP",
                                                         "class": "btn btn-secondary btn-small",
                                                         "disabled": "false",
-                                                        "title": "None",
                                                         "type": "submit"
                                                       },
                                                       "children": [
@@ -1537,7 +1536,6 @@
                                                         "data-confirm-title": "Delete OAuth provider Snapshot IDP",
                                                         "data-confirm-trigger": "1",
                                                         "disabled": "false",
-                                                        "title": "None",
                                                         "type": "button"
                                                       },
                                                       "children": [

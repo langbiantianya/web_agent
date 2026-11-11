@@ -31,6 +31,7 @@ from ludic.html import (
 from app.models.admin_control import AdminPageDefinition, SuperAdminAccount
 from services.admin_web.accounts import AdminPrincipal
 from services.admin_web.listing import ListParams
+from services.admin_web.views.confirm import delete_trigger, undo_panel
 from services.admin_web.views.list_controls import list_controls
 from services.admin_web.views.shell import shell
 
@@ -45,8 +46,10 @@ def platform_admins_page(
     color_mode: str,
     density: str,
     flash: str | None = None,
+    flash_kind: str = "info",
     list_params: ListParams | None = None,
     list_total: int = 0,
+    undo_id: int | None = None,
 ) -> Any:
     """渲染 owner 专属平台超级管理员管理页。"""
     rows = []
@@ -54,21 +57,20 @@ def platform_admins_page(
         actions = (
             span("owner", class_="status-badge")
             if account.owner_slot == "superAdmin"
-            else form(
-                input_(type="hidden", name="csrf_token", value=csrf),
-                button(
-                    "Delete",
-                    type="submit",
-                    class_="btn btn-danger btn-small",
-                    aria_label=f"Delete platform admin {account.username}",
-                    data_confirm=(
-                        f"Delete platform admin {account.username}? "
-                        "This action cannot be undone."
-                    ),
-                ),
+            else delete_trigger(
+                csrf=csrf,
                 action=f"/admin/platform-admins/{account.id}/delete",
-                method="post",
-                class_="inline-form",
+                label=f"platform admin {account.username}",
+                title=f"Delete platform admin {account.username}",
+                summary=(
+                    f"Platform admin {account.username} will be removed and "
+                    "its sessions revoked."
+                ),
+                impacts=(
+                    "The account loses access to the console immediately.",
+                    "The account can be restored from the undo entry.",
+                ),
+                accessible_label=f"Delete platform admin {account.username}",
             )
         )
         rows.append(
@@ -90,7 +92,22 @@ def platform_admins_page(
         density=density,
         pages=pages,
         flash=flash,
+        flash_kind=flash_kind,
         content=div(
+            *(
+                [
+                    section(
+                        undo_panel(
+                            csrf=csrf,
+                            undo_id=undo_id,
+                            resource_label="Platform admin",
+                        ),
+                        class_="surface undo-surface",
+                    )
+                ]
+                if undo_id is not None
+                else []
+            ),
             section(
                 h1("Platform super admins"),
                 p(

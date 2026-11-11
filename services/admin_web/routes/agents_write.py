@@ -24,7 +24,7 @@ from services.admin_web.agent_forms import (
 )
 from services.admin_web.audit import audit_principal_action
 from services.admin_web.common import (
-    business_redirect, not_found, operation_authorized, tenant_id_of,
+    as_bool, business_redirect, not_found, operation_authorized, tenant_id_of,
     unauthorized, with_auth,
 )
 from services.admin_web.deletion import record_deletion

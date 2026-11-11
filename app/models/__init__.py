@@ -16,6 +16,7 @@ from app.models.admin_control import (
     SuperAdminPasswordReset,
     SuperAdminSession,
 )
+from app.models.admin_deleted_resource import AdminDeletedResource
 from app.models.admin_user import AdminUser
 from app.models.base import Base
 from app.models.conversation import Conversation
@@ -45,6 +46,7 @@ __all__ = [
     "AdminAuditEvent",
     "AdminComponentDefinition",
     "AdminComponentPermission",
+    "AdminDeletedResource",
     "AdminPageDefinition",
     "AdminPagePermission",
     "AdminSession",

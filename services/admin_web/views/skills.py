@@ -69,6 +69,7 @@ def skills_page(
     density: str,
     can_write: bool,
     flash: str | None = None,
+    flash_kind: str = "info",
     create_errors: dict[str, str] | None = None,
     create_values: dict[str, str] | None = None,
     list_params: ListParams | None = None,
@@ -165,6 +166,7 @@ def skills_page(
                 ),
                 disabled_reason=in_use_reason,
                 button_label="Archive",
+                confirm_label="Archive",
                 accessible_label=f"Archive Skill {row.name}",
             )
             if can_write and row.status != "archived"
@@ -245,4 +247,5 @@ def skills_page(
         ],
         rows=table_rows,
         flash=flash,
+        flash_kind=flash_kind,
     )

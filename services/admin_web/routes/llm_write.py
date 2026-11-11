@@ -16,6 +16,7 @@ from starlette.responses import RedirectResponse
 from app.core.crypto import decrypt, encrypt
 from app.repo.agent_repo import agent_repo
 from app.repo.llm_endpoint_repo import llm_endpoint_repo
+from app.schemas.llm_endpoint import LlmEndpointUpdate
 from services.admin_web.audit import audit_principal_action
 from services.admin_web.common import (
     as_bool, business_redirect, flash_from_query, json_response_no_store,
@@ -149,12 +150,35 @@ def register(app: Any) -> None:
             target_id = (code or base_url)[:128]
             models: list[str] = []
             try:
-                models = await fetch_models(base_url, api_key)
-                result = (
-                    await probe_chat(base_url, api_key, model)
-                    if mode == "test"
-                    else None
-                )
+                if mode == "test":
+                    # 「测试连接」问的是「这个地址+密钥+模型能不能对话」，
+                    # 所以**先**探对话端点。顺序反过来会误判：不少
+                    # OpenAI 兼容网关没有开放 ``GET /models``（403/404），
+                    # 但 ``POST /chat/completions`` 一切正常；先拉列表会把
+                    # 这种可用配置判成「连接失败」。
+                    try:
+                        result = await probe_chat(base_url, api_key, model)
+                    except LlmProbeError as exc:
+                        # 402/429 是「额度/限流」，不是「配置写错」。要分清
+                        # 这两者，得知道地址与密钥**本身**是好的——用模型
+                        # 列表再验一次：拿到了就说明连接没问题，只是对话
+                        # 这一环被额度挡住了。
+                        if exc.status_code in {402, 429}:
+                            try:
+                                models = await fetch_models(
+                                    base_url, api_key
+                                )
+                            except LlmProbeError:
+                                models = []
+                        raise
+                    # 模型列表是锦上添花：拿不到不影响「连接可用」的结论。
+                    try:
+                        models = await fetch_models(base_url, api_key)
+                    except LlmProbeError:
+                        models = []
+                else:
+                    models = await fetch_models(base_url, api_key)
+                    result = None
             except LlmProbeError as exc:
                 await audit_principal_action(
                     db,
@@ -167,7 +191,13 @@ def register(app: Any) -> None:
                     detail={"mode": mode, "ok": False, "reason": str(exc)[:120]},
                 )
                 await db.commit()
-                payload = {"ok": False, "error": str(exc), "models": models}
+                payload = {
+                    "ok": False,
+                    "error": str(exc),
+                    # 稳定的错误分类：中文界面据此本地化，不直接贴英文（UX-37）。
+                    "error_code": exc.code,
+                    "models": models,
+                }
                 # 402/429：模型列表已经拿到（地址与密钥可用），只是账号额度/
                 # 限流把对话这一环拦下了。单独标出来，免得把「额度不够」
                 # 误报成「配置写错」。

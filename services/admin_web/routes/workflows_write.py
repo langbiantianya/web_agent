@@ -6,23 +6,22 @@ import json
 from typing import Any
 
 from ludic.web import Request
-from pydantic import ValidationError
 from starlette.responses import JSONResponse, RedirectResponse
 
-from app.core.workflow_def import WorkflowDefinition, WorkflowNode
-from app.repo.agent_repo import agent_repo
 from app.repo.workflow_repo import workflow_repo
-from app.schemas.workflow import WorkflowCreate, WorkflowUpdate
 from services.admin_web.audit import audit_principal_action
 from services.admin_web.deletion import record_deletion
 from services.admin_web.common import (
-    as_bool, business_redirect, can_edit_resource, json_object, not_found,
-    operation_authorized, origin_ok, require_csrf, safe_next, tenant_id_of,
-    unauthorized, with_auth,
+    as_bool, business_redirect, can_edit_resource, json_response_no_store,
+    not_found, operation_authorized, origin_ok, require_csrf, safe_next,
+    tenant_id_of, unauthorized, with_auth,
 )
-from services.admin_web.routes.workflows import (
-    _agent_binding_errors, _definition_errors,
+from services.admin_web.workflow_save import (
+    prepare_workflow_create,
+    prepare_workflow_update,
 )
+from services.admin_web.workflow_validation import _definition_errors
+
 
 def register(app: Any) -> None:
     """把工作流的写操作路由挂到 app 上。"""
@@ -131,53 +130,11 @@ def register(app: Any) -> None:
                 form=form,
             ):
                 return not_found()
-            agent_code = str(form.get("agent_code") or "").strip()
-            raw_definition = str(form.get("definition") or "").strip()
-            if agent_code:
-                initial_agent = await agent_repo.get_by_code(
-                    db, agent_code, tenant_id=tenant_id_of(principal)
-                )
-                if initial_agent is None or not initial_agent.enabled:
-                    # 初始 Agent 必须真实存在，否则建出来的编排一跑就找不到 Agent。
-                    return business_redirect("/admin/workflows", error="invalid")
-                try:
-                    payload = WorkflowCreate(
-                        code=str(form.get("code") or ""),
-                        name=str(form.get("name") or ""),
-                        description=str(form.get("description") or ""),
-                        definition=WorkflowDefinition(
-                            entry="step1",
-                            nodes=[
-                                WorkflowNode(
-                                    id="step1",
-                                    type="agent",
-                                    agentCode=agent_code,
-                                )
-                            ],
-                            edges=[],
-                        ),
-                        enabled=as_bool(form.get("enabled"), True),
-                    )
-                except (ValidationError, ValueError):
-                    return business_redirect("/admin/workflows", error="invalid")
-            elif raw_definition:
-                try:
-                    definition = json_object(raw_definition)
-                    payload = WorkflowCreate(
-                        code=str(form.get("code") or ""),
-                        name=str(form.get("name") or ""),
-                        description=str(form.get("description") or ""),
-                        definition=definition,
-                        enabled=as_bool(form.get("enabled"), True),
-                    )
-                except (ValidationError, ValueError):
-                    return business_redirect("/admin/workflows", error="invalid")
-                if await _agent_binding_errors(
-                    db, definition, tenant_id_of(principal)
-                ):
-                    return business_redirect("/admin/workflows", error="invalid")
-            else:
-                return business_redirect("/admin/workflows", error="invalid")
+            payload, error = await prepare_workflow_create(
+                db, form, tenant_id=tenant_id_of(principal)
+            )
+            if payload is None:
+                return business_redirect("/admin/workflows", error=error)
             if await workflow_repo.get_by_code(db, payload.code):
                 return business_redirect("/admin/workflows", error="duplicate")
             row = await workflow_repo.create(
@@ -228,23 +185,31 @@ def register(app: Any) -> None:
                 return not_found()
             if await workflow_repo.get_by_code(db, code) is None:
                 return business_redirect("/admin/workflows", error="missing")
-            try:
-                payload = WorkflowUpdate(
-                    name=str(form.get("name") or ""),
-                    description=str(form.get("description") or ""),
-                    definition=json_object(form.get("definition")),
-                    enabled=as_bool(form.get("enabled"), True),
+            locale = "en" if str(form.get("locale") or "") == "en" else "zh-CN"
+            # 画布上的提交是 fetch 发出的（Accept: application/json）：
+            # 校验不过时**留在画布上**并把逐条错误回给前端，而不是 303 跳回
+            # 列表页——跳回去等于把管理员还没保存的图直接丢掉（UX-03）。
+            wants_json = "application/json" in (
+                request.headers.get("accept") or ""
+            )
+            payload, errors = await prepare_workflow_update(
+                db,
+                form,
+                tenant_id=tenant_id_of(principal),
+                locale=locale,
+            )
+            if payload is None:
+                if wants_json:
+                    return json_response_no_store(
+                        {"ok": False, "errors": errors}, 400
+                    )
+                return business_redirect(
+                    f"/admin/workflows/{code}", error="invalid"
                 )
-            except (ValidationError, ValueError):
-                return business_redirect("/admin/workflows", error="invalid")
             fields = payload.model_dump(exclude_unset=True)
             fields["definition"] = payload.definition.model_dump(
                 by_alias=True, exclude_none=True
             )
-            if await _agent_binding_errors(
-                db, fields["definition"], tenant_id_of(principal)
-            ):
-                return business_redirect(f"/admin/workflows/{code}", error="invalid")
             fields["enabled"] = 1 if payload.enabled else 0
             await workflow_repo.update(db, code, fields)
             await audit_principal_action(
@@ -256,6 +221,8 @@ def register(app: Any) -> None:
                 tenant_id=principal.tenant_id,
             )
             await db.commit()
+            if wants_json:
+                return json_response_no_store({"ok": True, "code": code})
             next_url = safe_next(str(form.get("next") or "/admin/workflows"))
             # 编排页与列表页都要能看到「已保存」的反馈。
             separator = "&" if "?" in next_url else "?"

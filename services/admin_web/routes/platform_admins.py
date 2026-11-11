@@ -10,16 +10,23 @@ from ludic.web import Request
 from starlette.responses import RedirectResponse
 
 from app.core.user_profile import normalize_email, normalize_phone
-from app.models.admin_control import SuperAdminAccount
+from app.models.admin_control import (
+    SuperAdminAccount,
+    SuperAdminPasswordReset,
+    SuperAdminSession,
+)
 from services.admin_web.accounts import (
     LoginError, create_super_admin_account, reset_super_admin_password,
     revoke_super_admin_sessions,
 )
 from services.admin_web.audit import audit_principal_action, record_admin_audit
 from services.admin_web.common import (
-    login_redirect, not_found, origin_ok, require_csrf, unauthorized, with_auth,
+    flash_from_query, login_redirect, not_found, origin_ok, require_csrf,
+    unauthorized, with_auth,
 )
 from services.admin_web.db import AdminSessionLocal
+from services.admin_web.deletion import record_deletion
+from services.admin_web.common import undo_id_from_query
 from services.admin_web.listing import parse_list_params
 from services.admin_web.registry import visible_pages
 from services.admin_web.security import (
@@ -72,6 +79,9 @@ def register(app: Any) -> None:
             total = len(accounts)
             start = list_params.offset
             accounts = accounts[start:start + list_params.size]
+            # 撤销后要给出确认提示——没有 flash 的话管理员点了「撤销删除」
+            # 却看不到任何反馈（UX-35）。
+            flash, flash_kind = flash_from_query(request)
             return platform_admins_page(
                 principal=principal,
                 csrf=csrf,
@@ -82,6 +92,9 @@ def register(app: Any) -> None:
                 density=pref.density,
                 list_params=list_params,
                 list_total=total,
+                undo_id=undo_id_from_query(request),
+                flash=flash,
+                flash_kind=flash_kind,
             )
         finally:
             await db.close()
@@ -179,6 +192,15 @@ def register(app: Any) -> None:
                 return RedirectResponse(
                     "/admin/platform-admins?error=owner_protected", status_code=303
                 )
+            # 删除前留快照：平台超级管理员是**硬删除**（没有软删除位），
+            # 误删之后只能靠这条快照原样恢复（UX-01）。
+            entry = await record_deletion(
+                db,
+                resource_type="super_admin_account",
+                row=account,
+                actor_id=principal.principal_id,
+                actor_username=principal.username,
+            )
             await audit_principal_action(
                 db,
                 principal,
@@ -188,10 +210,34 @@ def register(app: Any) -> None:
                 detail={"target_username": account.username},
             )
             await revoke_super_admin_sessions(db, account.id)
-            await db.delete(account)
-            await db.commit()
+            # 账号没了，它的会话与「重置密码」记录留着就没有意义——而且
+            # 它们上面有指向 super_admin_account 的外键，不清掉的话
+            # **删除动作会直接 500**（PostgreSQL 上是
+            # ``ForeignKeyViolation``）。MySQL 默认不强制外键，所以这个问题
+            # 只在正确的部署（管理端独立库）上暴露。
+            await db.execute(
+                sa.delete(SuperAdminSession).where(
+                    SuperAdminSession.account_id == account.id
+                )
+            )
+            await db.execute(
+                sa.delete(SuperAdminPasswordReset).where(
+                    SuperAdminPasswordReset.account_id == account.id
+                )
+            )
+            try:
+                await db.delete(account)
+                await db.commit()
+            except sa.exc.IntegrityError:
+                # 还有别的表在引用这个账号（未来新增的引用关系）：回滚并给出
+                # 一句可读的提示，而不是让管理员撞到一个 500。
+                await db.rollback()
+                return RedirectResponse(
+                    "/admin/platform-admins?error=in_use", status_code=303
+                )
             return RedirectResponse(
-                "/admin/platform-admins?notice=deleted", status_code=303
+                f"/admin/platform-admins?notice=deleted&undo={entry.id}",
+                status_code=303,
             )
         finally:
             await db.close()

@@ -1014,7 +1014,6 @@
                                                     "data-confirm-title": "Delete mapping platform-admins",
                                                     "data-confirm-trigger": "1",
                                                     "disabled": "false",
-                                                    "title": "None",
                                                     "type": "button"
                                                   },
                                                   "children": [

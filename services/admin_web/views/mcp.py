@@ -75,6 +75,7 @@ def mcp_page(
     can_write: bool,
     can_refresh: bool,
     flash: str | None = None,
+    flash_kind: str = "info",
     undo_id: int | None = None,
     create_errors: dict[str, str] | None = None,
     create_values: dict[str, str] | None = None,
@@ -272,6 +273,7 @@ def mcp_page(
         ],
         rows=table_rows,
         flash=flash,
+        flash_kind=flash_kind,
         undo=(
             undo_panel(
                 csrf=csrf,

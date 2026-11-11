@@ -575,7 +575,10 @@ async def test_invalid_audit_filters_are_ignored_without_500():
         )
         assert response.status_code == 200
         assert "Traceback" not in response.text
-        assert response.text.count('<option value="">Any</option>') == 2
+        # 脏值被归一成「任意」：两个下拉框都停在「任意」上（UX-36）。
+        assert response.text.count('<option selected="selected" value="">') == 2
+        assert 'value="unknown" selected' not in response.text
+        assert 'value="maybe" selected' not in response.text
     finally:
         await client.aclose()
 

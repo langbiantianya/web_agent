@@ -97,6 +97,31 @@ SNAPSHOT_FIELDS: dict[str, tuple[str, ...]] = {
         "definition",
         "enabled",
     ),
+    # 平台超级管理员没有 ``code`` 列，它的主键是用户名。快照里仍然把它
+    # 放在 ``code`` 位上（见 :data:`SNAPSHOT_KEYS`），这样撤销逻辑可以
+    # 对所有资源类型用同一套「按 code 查重」的判断。
+    "super_admin_account": (
+        "username",
+        "password_hash",
+        "email",
+        "phone",
+        "status",
+        "owner_slot",
+        "password_rotated_at",
+        "password_expires_at",
+        "password_version",
+        "failed_login_count",
+        "locked_until",
+        "created_by_id",
+        "version",
+    ),
+}
+
+# 资源类型 → 主键字段名。绝大多数资源用 ``code``；平台超级管理员用
+# ``username``。快照统一把主键写进 ``code`` 位，重建逻辑因此只需要
+# 一种「按 code 查重」的写法。
+SNAPSHOT_KEYS: dict[str, str] = {
+    "super_admin_account": "username",
 }
 
 
@@ -126,6 +151,20 @@ def json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _as_datetime(value: Any) -> datetime | None:
+    """把快照里的 ISO 字符串还原成 ``datetime``。
+
+    快照走 JSON 列，时间列自然只能存字符串；重建时必须还原成
+    ``datetime``，否则驱动会把字符串直接塞进 DATETIME 列而报错。
+    """
+    if value is None or isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
 def snapshot_values(
     resource_type: str,
     row: Any,
@@ -134,10 +173,14 @@ def snapshot_values(
     fields = SNAPSHOT_FIELDS.get(resource_type)
     if fields is None:
         raise UndoNotAvailable(f"unsupported resource type: {resource_type}")
-    return {
+    values = {
         name: json_safe(getattr(row, name, None))
         for name in fields
     }
+    # 主键统一落在 ``code`` 位上，重建时按它查重。
+    key_field = SNAPSHOT_KEYS.get(resource_type, "code")
+    values["code"] = values.get(key_field)
+    return values
 
 
 async def record_deletion(
@@ -149,9 +192,10 @@ async def record_deletion(
     actor_username: str,
 ) -> AdminDeletedResource:
     """在删除前登记一条快照，返回可供撤销的记录。"""
+    key_field = SNAPSHOT_KEYS.get(resource_type, "code")
     entry = AdminDeletedResource(
         resource_type=resource_type,
-        resource_code=str(getattr(row, "code", "") or ""),
+        resource_code=str(getattr(row, key_field, "") or ""),
         actor_id=actor_id,
         actor_username=actor_username[:64],
         payload=snapshot_values(resource_type, row),
@@ -210,6 +254,8 @@ async def _rebuild(
         await _rebuild_mcp_server(db, payload)
     elif resource_type == "workflow":
         await _rebuild_workflow(db, payload)
+    elif resource_type == "super_admin_account":
+        await _rebuild_super_admin_account(db, payload)
     else:  # pragma: no cover - SNAPSHOT_FIELDS 已经限制了取值
         raise UndoNotAvailable(f"unsupported resource type: {resource_type}")
 
@@ -264,6 +310,44 @@ async def _rebuild_mcp_server(
     db.add(McpServer(**payload))
 
 
+async def _rebuild_super_admin_account(
+    db: AsyncSession, payload: dict[str, Any]
+) -> None:
+    """重建平台超级管理员账号。
+
+    密码只存 Argon2id 摘要，快照里带的就是那串摘要——恢复后管理员仍用
+    原口令登录，不需要重置。
+    """
+    from app.models.admin_control import SuperAdminAccount
+
+    username = str(payload.get("code") or payload.get("username") or "")
+    if not username:
+        raise UndoNotAvailable("snapshot_invalid")
+    if await db.scalar(
+        sa.select(SuperAdminAccount.id)
+        .where(SuperAdminAccount.username == username)
+        .limit(1)
+    ) is not None:
+        raise UndoNotAvailable("code_taken")
+    db.add(
+        SuperAdminAccount(
+            username=username,
+            password_hash=str(payload.get("password_hash") or ""),
+            email=payload.get("email"),
+            phone=payload.get("phone"),
+            status=str(payload.get("status") or "active"),
+            owner_slot=payload.get("owner_slot"),
+            password_rotated_at=_as_datetime(payload.get("password_rotated_at")),
+            password_expires_at=_as_datetime(payload.get("password_expires_at")),
+            password_version=int(payload.get("password_version") or 1),
+            failed_login_count=int(payload.get("failed_login_count") or 0),
+            locked_until=_as_datetime(payload.get("locked_until")),
+            created_by_id=payload.get("created_by_id"),
+            version=int(payload.get("version") or 1),
+        )
+    )
+
+
 async def _rebuild_workflow(
     db: AsyncSession, payload: dict[str, Any]
 ) -> None:
@@ -295,6 +379,7 @@ async def purge_expired(
 
 __all__ = [
     "SNAPSHOT_FIELDS",
+    "SNAPSHOT_KEYS",
     "json_safe",
     "UNDO_WINDOW_SECONDS",
     "UndoNotAvailable",

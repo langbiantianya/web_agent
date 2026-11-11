@@ -37,6 +37,7 @@ def preferences_page(
     color_mode: str,
     density: str,
     flash: str | None = None,
+    flash_kind: str = "info",
 ) -> Any:
     """渲染主题、色温和密度设置。"""
     theme_options = [
@@ -93,6 +94,7 @@ def preferences_page(
         density=density,
         pages=pages,
         flash=flash,
+        flash_kind=flash_kind,
         content=section(
             h1("Appearance"),
             p(

@@ -1935,6 +1935,79 @@
     bindFitCanvas();
     bindJsonToggle();
     bindValidation();
+    bindSaveForm();
+  }
+
+  /* ------------------------------------------------------------------
+     保存
+
+     保存表单原本是一次普通的表单 POST：服务端校验不过就 303 跳回列表页，
+     画布上还没保存的改动**全部丢失**，管理员只看到一句通用的「提交的值无效」。
+     这里把提交拦下来改成 fetch：
+
+     - 校验不过：留在画布上，把服务端返回的逐条错误显示到错误条里；
+     - 校验通过：跳回列表页。
+
+     服务端对 ``Accept: application/json`` 的提交返回 JSON（见
+     ``routes/workflows_write.py``），没有 JS 时表单仍然走原来的 303，
+     行为不变。
+     ------------------------------------------------------------------ */
+
+  function bindSaveForm() {
+    const form = document.querySelector(".workflow-editor-save-form");
+    if (!form || form.tagName !== "FORM") return;
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void submitWorkflow(form);
+    });
+  }
+
+  async function submitWorkflow(form) {
+    const button = form.querySelector('button[type="submit"]');
+    if (button) button.disabled = true;
+    try {
+      const body = new FormData(form);
+      // 服务端按 locale 回中文或英文的**可读**文案。
+      body.set("locale", activeLocale());
+      const response = await globalThis.fetch(form.getAttribute("action"), {
+        method: "POST",
+        body,
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      });
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch (err) {
+        payload = null;
+      }
+      if (!response.ok || !payload || payload.ok !== true) {
+        const errors =
+          payload && Array.isArray(payload.errors) ? payload.errors : [];
+        const messages = errors
+          .map((issue) => {
+            if (!issue || !issue.message) return "";
+            const text = String(issue.message);
+            // 服务端给的是可读文案；只有机器码才走 machineText 兜底。
+            return /^[a-z0-9_]+$/.test(text) ? machineText(text) : text;
+          })
+          .filter((text) => text !== "");
+        showIssues(messages.length ? messages : [tr("保存失败", "Save failed")]);
+        state.issues = errors;
+        render();
+        return;
+      }
+      // 保存成功：回到 ``next`` 指向的落点，并带上「已保存」的提示——
+      // 与服务端 303 的行为一致（服务端也是 redirect 到 next?notice=updated）。
+      const next = form.querySelector('input[name="next"]');
+      const target = (next && next.value) || "/admin/workflows";
+      const separator = target.includes("?") ? "&" : "?";
+      globalThis.location.href = `${target}${separator}notice=updated`;
+    } catch (err) {
+      showIssues([tr("保存失败", "Save failed")]);
+    } finally {
+      if (button) button.disabled = false;
+    }
   }
 
   const api = {

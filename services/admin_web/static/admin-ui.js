@@ -25,6 +25,59 @@
   ]);
 
   const ZH = {
+    // —— 2026-11-10 第三轮：把仍然漏翻的界面文案补齐 ——
+    // 这些句子来自服务端渲染（Flash、字段级校验、注册表里的页面/组件
+    // 描述），词表里没有对应条目时中文界面就会露出英文。
+    "Resource restored.": "资源已恢复。",
+    Cancel: "取消",
+    "The connection could not be validated.": "连接无法校验。",
+    "Priority must be a whole number.": "优先级必须是整数。",
+    "Enter the HTTP URL for this server.": "请填写这台服务器的 HTTP 地址。",
+    "Enter the stdio command for this server.":
+      "请填写这台服务器的 stdio 命令。",
+    "Timeout must be a whole number.": "超时时间必须是整数。",
+    "The stdio command could not be started.": "stdio 命令无法启动。",
+    "The HTTP URL could not be validated.": "HTTP 地址无法校验。",
+    "The MCP server could not be reached, or its tool catalog could not be read. Check the URL or command and try again.":
+      "连不上这台 MCP 服务器，或读不到它的工具目录。请检查地址或命令后重试。",
+    "Some MCP tools are still used by Agents and cannot be removed from the catalog. Release them first, then refresh again.":
+      "部分 MCP 工具仍被智能体使用，不能从目录中移除。请先解除占用，再刷新。",
+    "Access mode: all": "访问模式：全部匹配",
+    "Access mode: any": "访问模式：任一匹配",
+    "Built-in role required by authentication defaults.":
+      "内置角色，认证默认配置依赖它。",
+    "Define which RBAC permissions make each registered page visible. Tenant overrides replace the global default.":
+      "定义哪些 RBAC 权限让已注册的页面可见。租户覆盖会替换全局默认。",
+    "Control tables, editors, actions and forms separately from page navigation. Hidden components never replace API authorization.":
+      "分别控制表格、编辑器、操作与表单的可见性。隐藏组件不等于接口鉴权。",
+    "Administration overview and appearance": "管理概览与外观",
+    "Admin navigation and UI policy bindings": "管理导航与界面策略绑定",
+    "OAuth administrator identities": "OAuth 管理员身份",
+    "Agent configuration and connections": "智能体配置与连接",
+    "Tool-call audit records": "工具调用审计记录",
+    "Roles, policy rules and OAuth mappings": "角色、策略规则与 OAuth 映射",
+    "Cross-tenant administration": "跨租户管理",
+    "LLM endpoints and write-only credentials": "LLM 端点与只写凭据",
+    "MCP servers, tools and catalog refresh": "MCP 服务器、工具与目录刷新",
+    "OIDC provider configuration": "OIDC 身份提供方配置",
+    "Platform super-administrator ownership": "平台超级管理员归属",
+    "Skill drafts, publishing and archives": "技能草稿、发布与归档",
+    "Workflow definitions and execution settings": "工作流定义与执行设置",
+    "Component permission matrix": "组件权限矩阵",
+    "Page permission matrix": "页面权限矩阵",
+    "Role policy matrix": "角色策略矩阵",
+    "Agent list": "智能体列表",
+    "Agent editor": "智能体编辑器",
+    "Tool audit list": "工具审计列表",
+    "Platform metrics": "平台指标",
+    "Platform admin accounts": "平台管理员账号",
+    "Theme and appearance": "主题与外观",
+    "Skill list": "技能列表",
+    "Workflow list": "工作流列表",
+    "MCP server list": "MCP 服务器列表",
+    "LLM endpoint list": "LLM 端点列表",
+    "OAuth provider list": "身份提供方列表",
+    "Quick actions": "快捷操作",
     // —— 本轮新增的界面文案（独立编辑面板、能力工具条、列表控件）——
     "ACCESS CONTROL": "访问控制",
     "IDENTITY MAPPING": "身份映射",
@@ -94,12 +147,17 @@
     "No tool suggestions": "没有工具建议",
     "Skill tool suggestions": "技能工具建议",
     Troubleshooting: "排查指引",
+    "Check the base URL, the API key and whether the service accepts the OpenAI-compatible protocol (POST /v1/chat/completions).":
+      "请检查基础 URL、API 密钥，以及该服务是否接受 OpenAI 兼容协议（POST /v1/chat/completions）。",
+    "A 401 means the key is wrong, a 404 means the base URL is wrong, and a timeout means the host is unreachable.":
+      "401 说明密钥不对，404 说明基础 URL 不对，超时说明连不上主机。",
     Apply: "应用",
     "Undo delete": "撤销删除",
     "Agent was deleted.": "智能体已删除。",
     "LLM endpoint was deleted.": "LLM 端点已删除。",
     "MCP server was deleted.": "MCP 服务器已删除。",
     "Workflow was deleted.": "工作流已删除。",
+    "Platform admin was deleted.": "平台管理员已删除。",
     Search: "搜索",
     "Search rules": "搜索规则",
     "Search accounts": "搜索账户",
@@ -364,6 +422,7 @@
     "Resource state updated.": "资源状态已更新。",
     "Changes saved.": "更改已保存。",
     "MCP tool catalog refreshed.": "MCP 工具目录已刷新。",
+    "Preferences saved.": "偏好设置已保存。",
     "The submitted values are invalid.": "提交的值无效。",
     "A resource with that code already exists.": "该代码对应的资源已存在。",
     "The requested resource no longer exists.": "请求的资源已不存在。",
@@ -465,6 +524,14 @@
   };
 
   const ZH_PATTERNS = [
+    // pydantic 的原始报错前缀：中文界面里露出 "Value error," 很突兀。
+    // 注意：模式是**第一条命中就生效**，所以带具体译法的那条必须排在
+    // 通用剥离规则前面。
+    [
+      /^Value error, base_url 必须是 http\(s\) 地址$/,
+      "基础 URL 必须是 http(s) 地址",
+    ],
+    [/^Value error, (.+)$/, "$1"],
     [/^(.+) · Workflow editor$/, "$1 · 工作流编辑器"],
     [/^(\d+) item\(s\) · page (\d+) of (\d+)$/, "共 $1 项 · 第 $2 / $3 页"],
     [/^(\d+) members$/, "$1 个成员"],
@@ -518,6 +585,9 @@
     [/^Delete MCP server (.+)$/, "删除 MCP 服务器 $1"],
     [/^Delete Agent (.+)$/, "删除智能体 $1"],
     [/^Delete Workflow (.+)$/, "删除工作流 $1"],
+    [/^Delete role (.+)$/, "删除角色 $1"],
+    [/^Delete platform admin (.+)$/, "删除平台管理员 $1"],
+    [/^Delete OAuth provider (.+)$/, "删除 OAuth 身份提供方 $1"],
     [/^Archive Skill (.+)$/, "归档技能 $1"],
     // —— 编辑面板标题与撤销按钮的可访问名称 ——
     [/^Edit endpoint (.+)$/, "编辑端点 $1"],
@@ -565,12 +635,23 @@
     [/^Used by agents: (.+)$/, "被智能体使用：$1"],
     [/^Referenced by workflows: (.+)$/, "被工作流引用：$1"],
     [/^(\d+) discovered tool\(s\) will be removed\.$/, "将删除 $1 个已发现的工具。"],
+    // —— 平台超级管理员的删除确认与撤销提示 ——
+    [
+      /^Platform admin (.+) will be removed and its sessions revoked\.$/,
+      "平台管理员 $1 将被删除，其会话立即失效。",
+    ],
+    [
+      /^The account loses access to the console immediately\.$/,
+      "该账号将立即失去后台访问权限。",
+    ],
+    [
+      /^The account can be restored from the undo entry\.$/,
+      "该账号可以从撤销入口恢复。",
+    ],
     [/^Delete LLM endpoint (.+)$/, "删除 LLM 端点 $1"],
     [/^Delete MCP server (.+)$/, "删除 MCP 服务器 $1"],
     [/^Delete Agent (.+)$/, "删除智能体 $1"],
     [/^Delete Workflow (.+)$/, "删除工作流 $1"],
-    [/^Delete platform admin (.+)$/, "删除平台管理员 $1"],
-    [/^Delete OAuth provider (.+)$/, "删除 OAuth 身份提供方 $1"],
     [
       /^Archive Skill (.+)\? The skill will be removed from active use\.$/,
       "归档技能 $1？该技能将不再参与新的绑定。",
@@ -583,6 +664,9 @@
     [/^Enable Agent (.+)$/, "启用智能体 $1"],
     [/^Disable Workflow (.+)$/, "禁用工作流 $1"],
     [/^Enable Workflow (.+)$/, "启用工作流 $1"],
+    [/^Disable OAuth provider (.+)$/, "禁用 OAuth 身份提供方 $1"],
+    [/^Enable OAuth provider (.+)$/, "启用 OAuth 身份提供方 $1"],
+
     [/^Archive Skill (.+)$/, "归档技能 $1"],
     [/^Used by agents: (.+)$/, "被智能体使用：$1"],
     [/^Used by workflows: (.+)$/, "被工作流使用：$1"],
@@ -855,11 +939,20 @@
    * 下拉框在标题区、表单在下面的「Create resource」卡片里，所以这里按
    * action 找表单而不是用 select.form（那个值是 null）。只填非敏感字段：
    * API Key 永远由使用者自己粘贴，预设里没有、也不应该有密钥。
+   *
+   * **为什么不能只按 action 找**：列表上方的「搜索 / 排序」过滤表单和
+   * 创建表单的 action 都是 ``/admin/llm``（前者是 GET，后者是 POST）。
+   * ``querySelector`` 只会命中排在文档里的第一个——过滤表单排在前面，
+   * 于是预设把值写进了过滤表单的 ``q``/``sort`` 之外的名字上，一个字段
+   * 也填不到，用户看到的就是「选了预设没反应」。所以这里按**有没有
+   * ``code`` 字段**认出创建表单：只有创建表单才有「代码」这一栏。
    */
   function bindLlmPresetPicker() {
     const selects = document.querySelectorAll("select[data-llm-preset]");
     if (!selects.length) return;
-    const form = document.querySelector('form[action="/admin/llm"]');
+    const form = [...document.querySelectorAll('form[action="/admin/llm"]')].find(
+      (candidate) => candidate.elements.namedItem("code"),
+    );
     if (!form) return;
     for (const select of selects) {
       select.addEventListener("change", () => {
@@ -951,6 +1044,51 @@
    * ``/models``，后者再发一次最小对话。表单里留空的 API Key 表示沿用库里
    * 已存的密钥——这一点由按钮上的 ``data-llm-endpoint`` 告诉服务端。
    */
+  // 探测失败的**本地化说明**：键与服务端返回的 ``error_code`` 对应。
+  //
+  // 服务端只给稳定分类 + 英文原文；中文界面按分类显示中文，原文只留在
+  // 英文界面与审计里（UX-37）。
+  const PROBE_ERRORS = {
+    "zh-CN": {
+      http_400: "端点拒绝了这次请求，请检查模型名。",
+      http_401: "API 密钥被拒绝，请检查密钥及其所属账号。",
+      http_402: "该端点的账号没有剩余额度。",
+      http_403: "端点拒绝了这次请求，密钥可能缺少所需权限。",
+      http_404: "路径不存在，请检查基础 URL。",
+      http_408: "端点超时。",
+      http_429: "端点正在限流这个密钥，请稍后再试。",
+      http_500: "端点返回了服务端错误。",
+      http_502: "上游网关返回了无效响应。",
+      http_503: "端点暂时不可用。",
+      http_504: "上游网关超时。",
+      network: "连不上端点，请检查基础 URL 与网络。",
+      invalid_response: "端点返回了无法解析的响应。",
+      no_models: "端点没有返回任何模型。",
+      model_required: "请先填写模型名。",
+      invalid_base_url: "基础 URL 不是合法的 http(s) 地址。",
+      unknown: "探测失败。",
+    },
+    en: {
+      http_400: "The endpoint rejected the request. Check the model name.",
+      http_401: "The API key was rejected. Check the key and its account.",
+      http_402: "The account has no remaining credit for this endpoint.",
+      http_403: "The endpoint refused the request. The key may lack a scope.",
+      http_404: "The path was not found. Check the base URL.",
+      http_408: "The endpoint timed out.",
+      http_429: "The endpoint is rate limiting this key. Try again later.",
+      http_500: "The endpoint returned a server error.",
+      http_502: "The upstream gateway returned an invalid response.",
+      http_503: "The endpoint is temporarily unavailable.",
+      http_504: "The upstream gateway timed out.",
+      network: "Could not reach the endpoint. Check the base URL and network.",
+      invalid_response: "The endpoint returned an unparsable response.",
+      no_models: "The endpoint returned no models.",
+      model_required: "Fill in a model name first.",
+      invalid_base_url: "The base URL is not a valid http(s) URL.",
+      unknown: "The probe failed.",
+    },
+  };
+
   const PROBE_MESSAGES = {
     en: {
       fetching: "Fetching models…",
@@ -976,6 +1114,17 @@
     return document.documentElement.lang === "zh-CN"
       ? PROBE_MESSAGES["zh-CN"]
       : PROBE_MESSAGES.en;
+  }
+
+  // 把服务端的错误分类翻成本地化说明。
+  //
+  // 英文界面保留服务端原文（那是给英文管理员看的细节）；中文界面按稳定
+  // 分类给出中文说明，避免在中文页面里贴一整句英文（UX-37）。
+  function probeErrorMessage(code, fallback) {
+    const table =
+      document.documentElement.lang === "zh-CN" ? PROBE_ERRORS["zh-CN"] : PROBE_ERRORS.en;
+    if (code && Object.hasOwn(table, code)) return table[code];
+    return fallback || table.unknown;
   }
 
   function fillModelOptions(list, models) {
@@ -1034,9 +1183,13 @@
               Array.isArray(payload.models) ? payload.models : [],
             );
             if (status) {
+              const detail = probeErrorMessage(
+                payload.error_code,
+                payload.error || `HTTP ${response.status}`,
+              );
               status.textContent = payload.limited
-                ? text.limited(payload.error || "")
-                : text.failed(payload.error || `HTTP ${response.status}`);
+                ? text.limited(detail)
+                : text.failed(detail);
               // 失败时才给出排查指引（UX-07）。
               if (help) help.hidden = false;
             }
@@ -1115,6 +1268,11 @@
         }
         if (summaryNode) {
           summaryNode.textContent = tr(button.dataset.confirmSummary || "");
+        }
+        // 提交按钮的文案：触发器可以指定（「归档」不要写成「删除」）。
+        if (submitButton) {
+          const label = button.dataset.confirmSubmitLabel || "Delete";
+          submitButton.textContent = tr(label);
         }
         if (impactsNode) {
           impactsNode.replaceChildren(

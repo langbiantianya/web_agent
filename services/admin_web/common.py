@@ -228,6 +228,7 @@ def flash_from_query(request: Request) -> tuple[str | None, str]:
         "restored": "Resource restored.",
         "toggled": "Resource state updated.",
         "refreshed": "MCP tool catalog refreshed.",
+        "saved": "Preferences saved.",
     }
     errors = {
         "invalid": "The submitted values are invalid.",
@@ -241,6 +242,16 @@ def flash_from_query(request: Request) -> tuple[str | None, str]:
         "undo_failed": (
             "The deleted resource could not be restored. "
             "The undo window may have expired."
+        ),
+        # MCP 目录刷新失败要能区分原因：连不上与「工具仍被 Agent 占用」
+        # 的处理方式完全不同（UX-34）。
+        "mcp_unreachable": (
+            "The MCP server could not be reached, or its tool catalog "
+            "could not be read. Check the URL or command and try again."
+        ),
+        "mcp_tools_in_use": (
+            "Some MCP tools are still used by Agents and cannot be removed "
+            "from the catalog. Release them first, then refresh again."
         ),
     }
     notice = request.query_params.get("notice", "")

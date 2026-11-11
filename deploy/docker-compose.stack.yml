@@ -63,6 +63,13 @@ services:
       # 容器网络内的服务名；写 IP 反而会被 NAT 绕回宿主机。
       STUDIO_EXEC_ADDR: studio:9000
       STUDIO_EXEC_REQUIRED: "true"
+      # 下面这些**不**在这里覆盖：`environment` 里的同名键会覆盖
+      # `env_file`，而 compose 的变量插值在没有 `--env-file .env` 时
+      # 会取到空串——空串照样是覆盖，于是 `ADMIN_DATABASE_URL` 被抹成空值，
+      # 管理端就退回跟客户端共用同一个 MySQL 库（管理端与客户端必须分库、
+      # 分账号，见 deploy/README.md 的「安全要求」）。`env_file` 已经在下面
+      # 把 `.env` 的值送进来了，这里再写一遍只会把「启动命令要带
+      # --env-file .env」变成硬依赖。
     depends_on:
       studio:
         condition: service_healthy
@@ -89,11 +96,14 @@ services:
     env_file:
       - ../.env
     environment:
-      ADMIN_DATABASE_URL: ${ADMIN_DATABASE_URL:-}
-      ADMIN_PUBLIC_BASE_URL: ${ADMIN_PUBLIC_BASE_URL:-http://127.0.0.1:8001}
-      # http 直连时**必须** false：true 时浏览器不会回传会话 Cookie，
-      # 表现是「登录成功但立刻掉回登录页」，且不报错。
-      ADMIN_SESSION_COOKIE_SECURE: ${ADMIN_SESSION_COOKIE_SECURE:-false}
+      # 只放**不在 .env 里**的键。ADMIN_DATABASE_URL /
+      # ADMIN_PUBLIC_BASE_URL / ADMIN_SESSION_COOKIE_SECURE 都由
+      # `env_file: ../.env` 提供：这里再用 ${VAR:-} 写一遍，等于让
+      # 「compose 启动时必须带 --env-file .env」变成硬依赖——不带的时候
+      # 插值成空串，而空串**照样覆盖** env_file，ADMIN_DATABASE_URL 因此
+      # 变空，管理端会静默地跟客户端共用同一个 MySQL 库。
+      # http 直连时 .env 里必须把 ADMIN_SESSION_COOKIE_SECURE 设为 false：
+      # true 时浏览器不会回传会话 Cookie，表现是「登录成功但立刻掉回登录页」。
       ADMIN_WEB_PORT: "8001"
     read_only: true
     tmpfs:

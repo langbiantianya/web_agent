@@ -44,8 +44,18 @@ def audit_page(
     color_mode: str,
     density: str,
     flash: str | None = None,
+    flash_kind: str = "info",
+    run_id: str = "",
+    tool_name: str = "",
+    source: str = "",
+    ok: str = "",
 ) -> Any:
-    """渲染工具审计摘要和筛选器。"""
+    """渲染工具审计摘要和筛选器。
+
+    筛选器的当前值要**回显**：URL 里带着 ``?source=builtin`` 重新打开页面时，
+    下拉框必须停在「内置」上，否则管理员看到的筛选条件与实际生效的条件
+    不一致（UX-36）。
+    """
     table_rows = [
         tr(
             td(str(row.id)),
@@ -59,24 +69,27 @@ def audit_page(
         for row in rows
     ]
     filters = form(
-        label(span("Run ID"), input_(name="run_id", type="number", min="1")),
-        label(span("Tool name"), input_(name="tool_name")),
+        label(
+            span("Run ID"),
+            input_(name="run_id", type="number", min="1", value=run_id),
+        ),
+        label(span("Tool name"), input_(name="tool_name", value=tool_name)),
         label(
             span("Source"),
             select(
-                _Option("Any", value=""),
-                option("Builtin", value="builtin"),
-                option("Skill", value="skill"),
-                option("MCP", value="mcp"),
+                _Option("Any", value="", selected=not source),
+                option("Builtin", value="builtin", selected=source == "builtin"),
+                option("Skill", value="skill", selected=source == "skill"),
+                option("MCP", value="mcp", selected=source == "mcp"),
                 name="source",
             ),
         ),
         label(
             span("Outcome"),
             select(
-                _Option("Any", value=""),
-                option("Success", value="true"),
-                option("Failed", value="false"),
+                _Option("Any", value="", selected=not ok),
+                option("Success", value="true", selected=ok == "true"),
+                option("Failed", value="false", selected=ok == "false"),
                 name="ok",
             ),
         ),
@@ -94,6 +107,7 @@ def audit_page(
         density=density,
         pages=pages,
         flash=flash,
+        flash_kind=flash_kind,
         content=div(
             section(
                 h1("Tool audit"),
