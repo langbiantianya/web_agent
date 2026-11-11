@@ -37,11 +37,14 @@
   --radius-surface: 8px;
   --density-row-height: 44px;
   --sidebar-width: 252px;
+  /* 顶栏的实际高度：侧边栏要吸附在它下面（不跟着页面一起滚走）。 */
+  --topbar-height: 64px;
   --content-gradient: none;
 }
 
 html[data-theme="cloudscape"] {
   --font-ui: "Amazon Ember", "Segoe UI", Arial, sans-serif;
+  --topbar-height: 48px;
   --color-bg-canvas: #f2f3f3;
   --color-bg-surface: #ffffff;
   --color-bg-subtle: #e9ebed;
@@ -78,6 +81,7 @@ html[data-theme="cloudscape"] {
 
 html[data-theme="material"] {
   --font-ui: "Google Sans", Roboto, "Segoe UI", Arial, sans-serif;
+  --topbar-height: 64px;
   --color-bg-canvas: #f8fafd;
   --color-bg-surface: #ffffff;
   --color-bg-subtle: #eef3fc;
@@ -464,11 +468,20 @@ summary:focus-visible {
 
 .admin-layout {
   display: grid;
-  min-height: calc(100vh - 64px);
+  min-height: calc(100vh - var(--topbar-height));
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 }
 
 .sidebar {
+  /* 左侧导航**不跟着页面一起滚**：吸附在顶栏下沿，导航太长时自己内部滚动。
+     ``align-self: start`` 不能省——网格项默认会被拉成整行高度，拉满了就
+     没法吸附了。 */
+  position: sticky;
+  top: var(--topbar-height);
+  align-self: start;
+  max-height: calc(100vh - var(--topbar-height));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 20px 14px;
   border-right: var(--border-width) solid var(--color-border);
   background: var(--color-sidebar);
@@ -736,7 +749,7 @@ h2 {
   align-self: end;
 }
 
-input,
+input:not([type="checkbox"]):not([type="radio"]),
 select,
 textarea {
   width: 100%;
@@ -755,6 +768,29 @@ textarea {
   resize: vertical;
   font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   line-height: 1.5;
+}
+
+/* 勾选框 / 单选框。
+
+   上面那套表单控件规则（``width: 100%`` + ``min-height: 42px`` + 大圆角）
+   本来是给文本框、下拉框准备的；一旦套到勾选框上，浏览器就会把它拉成
+   「细长条」——勾选标记跟着一起被拉变形，看上去就是个奇怪的锥形。
+   现在这两类控件从表单控件规则里排除，单独给固定尺寸 + 主题色。 */
+input[type="checkbox"],
+input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  flex: none;
+  accent-color: var(--color-accent);
+  cursor: pointer;
 }
 
 .row-actions {
@@ -1154,6 +1190,10 @@ details[open] > summary {
   padding: 6px 12px;
 }
 
+html[data-theme="fluent"] {
+  --topbar-height: 56px;
+}
+
 html[data-theme="fluent"] .topbar {
   min-height: 56px;
   padding: 8px 20px;
@@ -1335,7 +1375,7 @@ html[data-theme="fluent"] .data-table th {
   text-transform: none;
 }
 
-html[data-theme="fluent"] input,
+html[data-theme="fluent"] input:not([type="checkbox"]):not([type="radio"]),
 html[data-theme="fluent"] select,
 html[data-theme="fluent"] textarea {
   min-height: 32px;
@@ -1622,7 +1662,7 @@ html[data-theme="cloudscape"] .data-table th {
   text-transform: uppercase;
 }
 
-html[data-theme="cloudscape"] input,
+html[data-theme="cloudscape"] input:not([type="checkbox"]):not([type="radio"]),
 html[data-theme="cloudscape"] select,
 html[data-theme="cloudscape"] textarea {
   min-height: 36px;
@@ -1849,7 +1889,7 @@ html[data-theme="material"] .metric-value {
   line-height: 42px;
 }
 
-html[data-theme="material"] input,
+html[data-theme="material"] input:not([type="checkbox"]):not([type="radio"]),
 html[data-theme="material"] select,
 html[data-theme="material"] textarea {
   min-height: 44px;
@@ -2391,6 +2431,9 @@ html[data-theme="material"] .error-shell {
   }
 
   .sidebar {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
     padding: 12px 16px;
     border-right: 0;
     border-bottom: 1px solid var(--color-border);

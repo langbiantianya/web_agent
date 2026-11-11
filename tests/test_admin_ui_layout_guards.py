@@ -259,3 +259,93 @@ def test_entry_mark_does_not_sit_on_the_input_port() -> None:
     assert mark_x <= -7, (
         f"入口标记的右沿（{mark_x}）不能压到端口圆圈的外沿（-7）"
     )
+
+# ---------------------------------------------------------------- LAY-08
+
+
+def test_sidebar_sticks_below_the_topbar() -> None:
+    """左侧导航必须吸附在顶栏下沿，不跟着页面一起滚走。"""
+
+    css = _css()
+    match = re.search(r"(?m)^\.sidebar \{([^}]*)\}", css)
+    assert match, "找不到 .sidebar 规则"
+    body = match.group(1)
+    assert "position: sticky" in body, ".sidebar 必须 position: sticky"
+    assert "top: var(--topbar-height)" in body, (
+        ".sidebar 必须吸附在 var(--topbar-height) 处（顶栏下沿）"
+    )
+    assert "align-self: start" in body, (
+        ".sidebar 必须 align-self: start，否则网格项会被拉满整行、没法吸附"
+    )
+    assert "overflow-y: auto" in body, (
+        "导航比一屏还长时要能自己内部滚动"
+    )
+
+
+def test_every_theme_declares_its_topbar_height() -> None:
+    """三个主题都要给出顶栏高度，侧边栏才知道吸附到哪儿。"""
+
+    css = _css()
+    base = _variables(css, ":root")
+    assert "--topbar-height" in base, "缺少默认的 --topbar-height"
+    for theme in ("fluent", "cloudscape", "material"):
+        variables = _variables(css, f'html[data-theme="{theme}"]')
+        assert "--topbar-height" in variables, (
+            f"{theme} 主题缺少 --topbar-height"
+        )
+        assert variables["--topbar-height"].endswith("px")
+
+
+def test_mobile_sidebar_does_not_stick() -> None:
+    """手机端侧边栏变成顶部导航，不能还吸附着。"""
+
+    css = _css()
+    mobile = css.split("@media (max-width: 767px)")[1]
+    match = re.search(r"(?m)^  \.sidebar \{([^}]*)\}", mobile)
+    assert match, "手机端断点里找不到 .sidebar 规则"
+    assert "position: static" in match.group(1), (
+        "手机端的 .sidebar 必须回到 position: static"
+    )
+
+
+# ---------------------------------------------------------------- LAY-09
+
+
+def test_form_control_rules_skip_checkboxes_and_radios() -> None:
+    """表单控件那套尺寸规则不能套到勾选框 / 单选框上。
+
+    ``width: 100%`` + ``min-height: 42px`` 会把勾选框拉成细长条，勾选
+    标记被一起拉变形，看上去就是个奇怪的锥形。
+    """
+
+    css = _css()
+    generic = re.search(
+        r"(?m)^input:not\(\[type=\"checkbox\"\]\):not\(\[type=\"radio\"\]\),\n"
+        r"select,\ntextarea \{",
+        css,
+    )
+    assert generic, "通用表单控件规则必须排除 checkbox / radio"
+    for theme in ("fluent", "cloudscape", "material"):
+        assert (
+            f'html[data-theme="{theme}"] input:not([type="checkbox"]):not([type="radio"]),'
+            in css
+        ), f"{theme} 的表单控件规则必须排除 checkbox / radio"
+
+
+def test_checkbox_and_radio_have_a_fixed_size() -> None:
+    """勾选框 / 单选框必须有固定尺寸，不能被容器拉长。"""
+
+    css = _css()
+    match = re.search(
+        r"(?m)^input\[type=\"checkbox\"\],\ninput\[type=\"radio\"\] \{([^}]*)\}",
+        css,
+    )
+    assert match, "找不到勾选框 / 单选框的样式"
+    body = match.group(1)
+    assert "width: 16px" in body and "height: 16px" in body, (
+        "勾选框 / 单选框必须是固定尺寸"
+    )
+    assert "min-height: 0" in body, "min-height 必须清掉，否则会被拉到 42px 高"
+    assert "accent-color: var(--color-accent)" in body, (
+        "勾选框要跟着主题走颜色"
+    )

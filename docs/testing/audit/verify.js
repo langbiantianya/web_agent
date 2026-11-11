@@ -150,5 +150,38 @@
     }
   }
 
+  // 7) 勾选框 / 单选框不许被拉成长条（LAY-09）
+  for (const el of all) {
+    if (el.tagName !== "INPUT") continue;
+    const t = (el.getAttribute("type") || "").toLowerCase();
+    if (t !== "checkbox" && t !== "radio") continue;
+    const cs = visible(el); if (!cs) continue;
+    // 视觉隐藏的（主题卡片里的单选框）不算。
+    if (cs.position === "absolute" && cs.clip !== "auto") continue;
+    const r = el.getBoundingClientRect();
+    if (r.width > 20 || r.height > 20) {
+      push("cbsize:"+(el.name||t), {kind:"checkbox-stretched", tag:"input[type="+t+"]", detail:"w="+Math.round(r.width)+" h="+Math.round(r.height)});
+    }
+  }
+
+  // 8) 左侧导航必须吸附住（LAY-08）
+  const sidebar = document.querySelector(".sidebar");
+  const topbar = document.querySelector(".topbar");
+  if (sidebar && topbar && vw > 767) {
+    const scs = getComputedStyle(sidebar);
+    if (scs.position !== "sticky") {
+      push("sbpos", {kind:"sidebar-not-sticky", tag:"aside.sidebar", detail:"position="+scs.position});
+    }
+    const sb = sidebar.getBoundingClientRect();
+    const tb = topbar.getBoundingClientRect();
+    const gap = Math.round(sb.top - tb.bottom);
+    if (Math.abs(gap) > 2) {
+      push("sbgap", {kind:"sidebar-gap", tag:"aside.sidebar", detail:"gap="+gap});
+    }
+    if (sb.bottom > vh + 2) {
+      push("sbbottom", {kind:"sidebar-overflow", tag:"aside.sidebar", detail:"bottom="+Math.round(sb.bottom)+" vh="+vh});
+    }
+  }
+
   return {theme: de.dataset.theme, mode: de.dataset.colorMode, density: de.dataset.density, vw, vh, tables: tables.length, issues};
 })()

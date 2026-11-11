@@ -278,3 +278,29 @@
   12px 以上。
 - 部署：`192.168.5.19:/docker/web-agent-stack`（docker compose，
   `--env-file .env`），`admin-web` 重建后 healthy，`/admin/health` 返回 200。
+
+---
+
+## 第七轮：左侧导航固定与勾选框形状（2026-11-11）
+
+| ID | 严重度 | 状态 | 落地方式 |
+| --- | --- | --- | --- |
+| UX-48 | P2 | 已修复 | 页面滚动时左侧导航跟着一起滚走，长页面下滑到一半就找不到导航。新增 `--topbar-height` 变量（按主题给出顶栏实际高度：Fluent 56px / Cloudscape 48px / Material 64px），`.sidebar` 改为 `position: sticky; top: var(--topbar-height)` + `align-self: start`（网格项默认会被拉满整行高度，拉满就没法吸附），导航比一屏长时自己内部滚动；手机端回到 `position: static`。见 `services/admin_web/static/admin.css`。 |
+| UX-49 | P2 | 已修复 | 勾选框被拉成细长竖条、勾号被拉变形，外层还套着圆角胶囊，观感像个奇怪的锥形。根因是给文本框 / 下拉框准备的表单控件规则（`width: 100%` + `min-height: 42px`）把勾选框也套上了；实测被拉成 13×44 / 24×44 / 44×44 / 97×44。现在这两类控件从表单控件规则里排除，单独给 16×16 的固定尺寸 + `accent-color: var(--color-accent)`。外观页的主题单选框原本是 1×44px 的「细针」，一并回到标准 1×1 视觉隐藏写法。见 `services/admin_web/static/admin.css`。 |
+
+### 本轮验收记录（2026-11-11 第七轮）
+
+- 内置浏览器：**288 条**复测记录（6 种主题组合 × 14 个管理页 × 3 个视口，
+  外加 3 个子视图 × 6 种主题 × 2 个视口），全部按钮鼠标点。校验脚本新增
+  「勾选框尺寸」与「侧边栏吸附」两项检查。
+- 结果：告警 **87 条**，与第六轮**完全一致**，**新增种类 0 种**；勾选框尺寸
+  异常 0 处，侧边栏未吸附 / 与顶栏错位 / 超出视口 0 处。
+- 侧边栏吸附实测：滚动 700px 后，Fluent / Cloudscape / Material 三个主题
+  （深浅各测）的侧边栏上沿与顶栏下沿间距均为 **0px**，侧边栏下沿正好落在
+  视口底部。
+- 勾选框实测：14 个管理页 + 子视图共 **700 个**勾选框 / 单选框，全部
+  **16×16px**、颜色取主题 accent。
+- 守卫：`pytest tests/test_admin_ui_layout_guards.py` → **29 passed**
+  （本轮新增 5 条）。
+- 部署：`192.168.5.19:/docker/web-agent-stack`（docker compose，
+  `--env-file .env`），`admin-web` 重建后 healthy。

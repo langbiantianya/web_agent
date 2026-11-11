@@ -40,7 +40,7 @@ from app.models.admin_control import AdminPageDefinition
 from services.admin_web.accounts import AdminPrincipal
 from services.admin_web.views.confirm import confirm_dialog
 
-ADMIN_STYLESHEET = "/admin/static/admin.css?v=admin-responsive-20261111-1"
+ADMIN_STYLESHEET = "/admin/static/admin.css?v=admin-responsive-20261111-2"
 # 改 admin-ui.js 时必须换这个版本号：静态资源虽然带 ETag，但服务端不发明
 # Cache-Control 时浏览器会按启发式新鲜度直接用缓存，页面于是继续跑旧脚本
 # （表现就是「下拉框不填、按钮点了没反应」）。服务端另有 /admin/static 的

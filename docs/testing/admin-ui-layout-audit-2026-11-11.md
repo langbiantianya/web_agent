@@ -305,3 +305,98 @@ Fluent / Material 本来就是用这个变量，所以三主题表现一致了�
   圆心 12px 以上。
 - `tests/js/workflow-editor.test.mjs` 用例 53——渲染后量入口标记与端口圆圈
   的位置关系。
+
+---
+
+# 第七轮：左侧导航固定 + 勾选框形状（2026-11-11）
+
+这一轮是用户直接指出的两个问题，都不是上一轮清单里的条目。
+
+## LAY-08 · P2 · 页面滚动时左侧导航跟着一起滚走
+
+- **位置**：管理端所有页面（`aside.sidebar`）。
+- **现象**：内容区往下滑，左侧导航栏会跟着一起往上跑；长页面（比如
+  「页面权限」的权限矩阵）下滑到一半就看不到导航了，想换页面得先滚回顶部。
+- **根因**：`.admin-layout` 只是一个普通的两列网格，侧边栏是普通的网格项，
+  页面滚动时它就跟着文档一起动。
+- **改法**：
+  - 新增 `--topbar-height` 变量（按主题给出实际高度：Fluent 56px、
+    Cloudscape 48px、Material 64px），侧边栏吸附在顶栏下沿；
+  - `.sidebar` 改成 `position: sticky; top: var(--topbar-height)`，
+    并加 `align-self: start`——**这一条不能省**：网格项默认会被拉成整行
+    高度，拉满了就吸附不动了；
+  - `max-height: calc(100vh - var(--topbar-height))` + `overflow-y: auto`：
+    导航本身比一屏还长时，它自己内部滚动，不再把整页撑长；
+  - 手机端（≤767px）侧边栏是顶部的移动导航，改回 `position: static`。
+- **实测**（滚动 700px 后）：
+
+  | 主题 | 顶栏下沿 | 侧边栏上沿 | 间距 | 侧边栏下沿 |
+  | --- | --- | --- | --- | --- |
+  | Fluent | 56 | 56 | 0 | 676（= 视口高） |
+  | Cloudscape | 48 | 48 | 0 | 676 |
+  | Material | 64 | 64 | 0 | 676 |
+
+  深浅两种模式各测一遍，6 种组合全部吻合。
+
+## LAY-09 · P2 · 勾选框被拉成奇怪的锥形
+
+- **位置**：所有带勾选框的地方——权限矩阵（页面权限 / 组件权限 /
+  角色与权限，共 700 个）、智能体的能力选择器。
+- **现象**：勾选框被拉成一个**细长的竖条**，勾选标记跟着一起被拉变形，
+  看上去像个奇怪的锥形；外面还套着一层圆角胶囊（`.permission-choice`
+  的 `border-radius: 999px`），观感更怪。
+- **根因**：`admin.css` 里给**文本框、下拉框**准备的那套表单控件规则
+  （`input, select, textarea { width: 100%; min-height: 42px; ... }`）
+  把勾选框也一起套上了。`width: 100%` 在弹性容器里被压成各种宽度
+  （实测 13px / 24px / 44px / 97px 不等），`min-height` 又把它拉到
+  42–44px 高——浏览器就按这个尺寸去画原生勾选框，勾号自然被拉变形。
+- **改法**：
+  - 把这两类控件从表单控件规则里**排除**：
+    `input:not([type="checkbox"]):not([type="radio"]), select, textarea`，
+    三个主题各自的 `input` 规则同样排除；
+  - 单独给勾选框 / 单选框一套固定尺寸：
+    `width/height: 16px; min-height: 0; margin/padding: 0; border: 0;
+    border-radius: 0; background: transparent; box-shadow: none;
+    flex: none; accent-color: var(--color-accent);`。
+- **顺带修好的**：外观页的主题单选框原本是 `width: 1px` + 通用规则的
+  `min-height: 42px` → 实际变成 **1×44px 的细针**（还带 `border-radius: 50%`），
+  正好也是「锥形」。现在它回到标准的 1×1 视觉隐藏写法。
+- **实测**：14 个管理页 + 子视图共 **700 个**勾选框 / 单选框，全部
+  **16×16px**，颜色取主题 accent；修复前同样的检查会报出 13×44、
+  24×44、44×44、97×44 这一堆被拉变形的尺寸。
+
+## 复测结果
+
+在第六轮那套校验脚本上再加两项检查（勾选框尺寸、侧边栏吸附），
+重跑了全部 6 种主题组合：
+
+| 项 | 结果 |
+| --- | --- |
+| 复测记录数 | **288 条**（6 组合 × 14 页 × 3 视口 + 3 子视图 × 6 组合 × 2 视口） |
+| 告警总数 | **87 条**，与第六轮**完全一致** |
+| 新增告警种类 | **0 种**（没有 `checkbox-stretched`、没有 `sidebar-*`） |
+| 勾选框尺寸异常 | **0 处** |
+| 侧边栏未吸附 / 与顶栏错位 / 超出视口 | **0 处** |
+
+87 条告警仍然全部落在已决定不管的 LAY-06（Cloudscape 浅色 accent
+4.03:1，50 条）与 LAY-07（深色告警文字回落 `#b45309`，37 条）上。
+
+## 产物
+
+| 文件 | 内容 |
+| --- | --- |
+| `audit/results-round7.jsonl` | 288 条复测记录 |
+| `audit/verify.js` | 校验脚本（新增第 7、8 两项检查） |
+| `audit/fix_sticky_sidebar_1531.png` | 页面滚动 900px 后，左侧导航仍停在原位 |
+| `audit/fix_checkbox_shapes_1531.png` | 权限矩阵里规规矩矩的 16×16 勾选框 |
+
+## 回归守卫
+
+`tests/test_admin_ui_layout_guards.py` 新增 5 条（29 条总计）：
+
+- `test_sidebar_sticks_below_the_topbar`——侧边栏必须 sticky + 对齐顶栏高度；
+- `test_every_theme_declares_its_topbar_height`——三个主题都要给出顶栏高度；
+- `test_mobile_sidebar_does_not_stick`——手机端必须回到 `position: static`；
+- `test_form_control_rules_skip_checkboxes_and_radios`——表单控件规则不许
+  套到勾选框 / 单选框；
+- `test_checkbox_and_radio_have_a_fixed_size`——固定尺寸 + 主题色。
