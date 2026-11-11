@@ -1580,3 +1580,41 @@ test("用例 51：成环时环上的每个节点与每条边都标红", async ()
     editor.cancelValidation();
   }
 });
+
+test("用例 53：入口标记不再和左侧入端口圆圈挤在一起", () => {
+  const { dom } = boot({
+    definition: baseDefinition,
+    agents: [{ code: "planner", name: "规划器" }],
+  });
+
+  const step1 = findNodeGroup(dom, "step1");
+  const mark = findInGroup(step1, "entry-mark");
+  const port = findInGroup(step1, "port-in");
+  assert.ok(mark, "入口节点要有入口标记");
+  assert.ok(port, "节点要有入端口圆圈");
+
+  const markX = Number(mark.getAttribute("x"));
+  const markY = Number(mark.getAttribute("y"));
+  const portX = Number(port.getAttribute("cx"));
+  const portY = Number(port.getAttribute("cy"));
+
+  // 圆圈半径 6、描边 2，所以外沿在 cx ± 7。
+  assert.ok(
+    Math.abs(markY - portY) >= 12,
+    `入口标记的基线（${markY}）必须和端口圆心（${portY}）拉开 12px 以上`,
+  );
+  assert.ok(
+    markX <= portX - 7,
+    `入口标记的右沿（${markX}）不能压到端口圆圈的外沿（${portX - 7}）`,
+  );
+
+  // 标记画在节点左侧，最左的节点（x=40）也要留得下两个字 + 间隙，
+  // 否则会被画布裁掉。
+  const nodeX = Number(
+    step1.getAttribute("transform").match(/translate\(([-\d.]+)/)[1],
+  );
+  assert.ok(
+    nodeX + markX - 22 >= 0,
+    `入口标记的左沿（${nodeX + markX - 22}）不能被画布裁掉`,
+  );
+});

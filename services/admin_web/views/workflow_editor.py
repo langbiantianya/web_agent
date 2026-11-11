@@ -252,6 +252,6 @@ def workflow_editor_page(
         extra_styles=["/admin/static/workflow-editor.css?v=workflow-i18n-20261110-1"],
         extra_scripts=[
             "/admin/static/workflow-editor-core.js",
-            "/admin/static/workflow-editor.js?v=workflow-i18n-20261110-1",
+            "/admin/static/workflow-editor.js?v=workflow-entry-20261111-1",
         ],
     )

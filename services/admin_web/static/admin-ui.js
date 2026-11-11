@@ -1519,6 +1519,38 @@
     }
   }
 
+  /**
+   * 给数据表的每个单元格打上列名（``data-label``）。
+   *
+   * 平板宽度（768–1199px）下侧边栏仍占 220px，内容区被挤窄，表格列会被压
+   * 到表头逐字竖排。CSS 那一段会把数据表改成「卡片」布局（每行一张卡片，
+   * 每格前面显示列名），靠的就是这里打上去的标签——没有它，窄屏下就只剩
+   * 一列值，看不出是哪个字段。
+   */
+  function bindTableLabels() {
+    for (const table of document.querySelectorAll("table.data-table")) {
+      const head = table.querySelector("thead");
+      const body = table.querySelector("tbody");
+      if (!head || !body) continue;
+      const labels = Array.from(
+        head.querySelectorAll("tr:first-child > th"),
+      ).map((cell) => (cell.textContent || "").trim());
+      if (!labels.length) continue;
+      for (const row of body.querySelectorAll("tr")) {
+        const cells = Array.from(row.children).filter(
+          (cell) => cell.tagName === "TD",
+        );
+        // 空状态那一行只有一格，列名对不上，就不打标签。
+        if (cells.length !== labels.length) continue;
+        cells.forEach((cell, index) => {
+          if (!cell.dataset.label) {
+            cell.dataset.label = labels[index];
+          }
+        });
+      }
+    }
+  }
+
   const locale = currentLocale();
   const appearance = readAppearance();
   applyAppearance(appearance);
@@ -1536,5 +1568,6 @@
     bindConfirmDialog();
     bindCapabilitySelector();
     bindEditPanels();
+    bindTableLabels();
   });
 })();

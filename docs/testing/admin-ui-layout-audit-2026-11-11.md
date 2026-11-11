@@ -165,7 +165,7 @@
 | `audit/zoom_mappings_save.jpg` | LAY-04 证据 |
 | `audit/zoom_entry_live.jpg` | LAY-05 证据 |
 
-## 待确认
+## 待确认（已被第六轮的决定取代，保留原文）
 
 1. **LAY-01 / LAY-02 是否修**——两条都是深色主题的对比度硬伤，
    修起来只动 CSS 变量，改动面小、收益明确。
@@ -174,3 +174,134 @@
 3. **LAY-06 / LAY-07 是否算缺陷**——两条都只差 0.4–1.6，属于
    WCAG AA 边缘，不修也能用。
 4. 是否需要把这一轮也补进 `admin-e2e-test-cases.md` 的用例表。
+
+---
+
+# 第六轮：修复与复测（2026-11-11）
+
+## 决定
+
+| 项 | 决定 | 落地 |
+| --- | --- | --- |
+| LAY-01 | **修改** | 新增 `--color-danger-text`，`.btn-danger` 文字色跟随主题翻转 |
+| LAY-02 | **修改** | Cloudscape `.nav-group-title` 改用 `var(--color-sidebar-muted)` |
+| LAY-03 | **做卡片** | 768–1199px 走卡片式行布局（不是只加 `min-width`） |
+| LAY-06 | **不管** | Cloudscape 浅色 accent 在 subtle 底上的 4.03:1，保持原样 |
+| LAY-07 | **不管** | 深色告警文字回落到 `#b45309`，保持原样 |
+| LAY-04 | 修改（顺带） | 「保存」按钮折行是明确的缺陷，一并修掉 |
+| LAY-05 | 修改（顺带） | 「入口」标记压住端口圆圈是明确的缺陷，一并修掉 |
+
+## 改了什么
+
+### LAY-01 · 深色模式危险按钮对比度
+
+`admin.css` 新增一个跟随主题的文字色变量：
+
+- `:root` → `--color-danger-text: #ffffff;`
+- `html[data-color-mode="dark"]` → `--color-danger-text: #2b0a00;`
+- `@media (prefers-color-scheme: dark) html[data-color-mode="system"]`
+  → 同上
+
+`.btn-danger` 的文字色从写死的 `#ffffff` 改成 `var(--color-danger-text)`。
+
+| 模式 | 底色 | 文字色 | 对比度 |
+| --- | --- | --- | --- |
+| 浅色 | `#d13438` | `#ffffff` | 4.93 : 1 |
+| 深色 | `#ff8b80` | `#2b0a00` | **8.08 : 1**（修复前 2.27 : 1） |
+
+三个主题的深色分支都**没有**单独覆盖 `--color-danger`，所以通用深色规则
+对三者同时生效，不需要逐主题改。
+
+### LAY-02 · Cloudscape 深色侧边栏分组标题
+
+`html[data-theme="cloudscape"] .nav-group-title` 的 `color: #687078`
+改成 `var(--color-sidebar-muted)`。Cloudscape 深色下该变量取通用深色块的
+`#aab4c0`，在侧边栏底色 `#0f1823` 上是 **8.51 : 1**（修复前 3.55 : 1）。
+Fluent / Material 本来就是用这个变量，所以三主题表现一致了。
+
+### LAY-03 · 平板宽度的卡片式表格
+
+按决定做的是**卡片**，不是简单加 `min-width`：
+
+- `admin-ui.js` 新增 `bindTableLabels()`：按 `thead` 的列名给每个 `<td>`
+  打上 `data-label`（列数对不上的空状态行跳过）。
+- `admin.css` 新增 `@media (min-width: 768px) and (max-width: 1199px)`：
+  隐藏 `thead`，每行变成一张卡片（边框 + 圆角 + 阴影），每格用
+  `td::before { content: attr(data-label) }` 显示列名，值列占满剩余宽度。
+- ≤767px 的手机端**保持原样**（`min-width: 720px` + 首列吸附 + 横向滚动），
+  上一轮已经确认那是设计预期。
+
+另外补了一条与卡片无关、但同样属于 LAY-03 的根因修复：
+`.data-table th { white-space: nowrap }`。手机宽度下表头虽然不再被压成
+「一个汉字一行」，但「被工作流使用」这类表头仍会折成 2–3 行；不折行之后
+列宽由表头撑开，手机端照旧在 `.table-scroll` 里横向滚动。
+
+### LAY-04 · 「保存」按钮折行
+
+- `.btn` 增加 `white-space: nowrap`——按钮文字一律不折行。
+- `.mapping-actions` 增加 `flex-wrap: wrap`，按钮 `flex: 0 0 auto`：
+  放不下就换行，不再把按钮压扁。
+- `.mapping-actions input[name="role_code"]` 给出 `flex: 0 1 220px`：
+  输入框默认 `width: 100%`，会把整行占满、把「保存」挤到下一行。
+
+实测：按钮 50×28px、单行，与输入框同一行。
+
+### LAY-05 · 「入口」标记与端口圆圈
+
+**先更正上一轮的一处测量错误**：文档里写的「重叠 22px」不对，实际是
+标记右沿 x=565、圆圈左沿 x=567，**只差 2px**——没有重叠，但视觉上贴在一起。
+
+改法：把标记从节点**左边中点**（`y: NODE_HEIGHT/2 + 4`）挪到**左上角**
+（`x: -10, y: 18`），也就是徽标那一行的高度。圆圈在左边中点（cy=36），
+标记基线在 18，竖直方向彻底分开。
+
+| 组合（3 主题 × 深浅 × 1531/768） | 与圆圈的竖直间距 | 与圆圈的横向间距 |
+| --- | --- | --- |
+| 修复后（12 个组合全部一致） | **10px** | 4px |
+
+## 复测结果
+
+用内置浏览器重新跑了一遍，**所有按钮都是鼠标点的**（主题切换、菜单导航、
+展开手风琴、点开删除确认对话框），脚本只用来**读**页面状态。
+
+- 覆盖：3 主题 × 深/浅 = 6 种组合 × 14 个管理页 × 3 个视口
+  （1531 / 768 / 390），外加 3 个子视图（工作流编辑器、删除确认对话框、
+  角色权限手风琴）在 6 种主题下各 2 个视口。
+- 合计 **288 条记录**（`audit/results-round6.jsonl`）。
+
+| 校验项 | 结果 |
+| --- | --- |
+| 深色危险按钮对比度 | **0 处**低于 4.5:1（修复前 102 处） |
+| 侧边栏分组标题对比度 | **0 处**低于 4.5:1（修复前 912 处） |
+| 表头被压成竖排 | **0 处** |
+| 按钮文字折行 | **0 处** |
+| 真实横向溢出（排除 `.table-scroll` 内的滚动） | **0 处** |
+| 卡片布局是否生效（768–1199px） | 全部命中：表头隐藏、每行成卡、列名齐全 |
+| 入口标记与端口圆圈的间距 | 12 个组合均为 10px |
+
+剩下 **87 条**告警全部落在两条**已决定不管**的问题上：
+
+- LAY-06 家族（50 条）：Cloudscape 浅色下 accent `#0972d3` 在 subtle 底
+  `#e9ebed` 上的 4.03:1。
+- LAY-07 家族（37 条）：深色下告警文字回落 `#b45309`（2.90–3.46:1）。
+
+## 产物
+
+| 文件 | 内容 |
+| --- | --- |
+| `audit/results-round6.jsonl` | 288 条复测记录 |
+| `audit/verify.js` | 复测脚本（对比度 / 溢出 / 按钮折行 / 表头竖排 / 卡片布局） |
+| `audit/fix_fluent_dark_cards_768.png` | 768px 卡片式表格 |
+| `audit/fix_fluent_dark_agents_1531.png` | 深色危险按钮 |
+| `audit/fix_cloudscape_dark_mcp_1531.png` | Cloudscape 深色侧边栏分组标题 |
+| `audit/fix_mappings_save_1531.png` | 「保存」按钮不再折行 |
+| `audit/fix_workflow_entry_mark.png` | 「入口」标记与端口圆圈分开 |
+
+## 回归守卫
+
+- `tests/test_admin_ui_layout_guards.py`（24 条）——把这次的 5 条修复钉住：
+  深色对比度（三个主题 × 深/浅逐个算 WCAG 比值）、分组标题不许写死颜色、
+  卡片布局断点必须在、按钮必须 `white-space: nowrap`、入口标记必须离端口
+  圆心 12px 以上。
+- `tests/js/workflow-editor.test.mjs` 用例 53——渲染后量入口标记与端口圆圈
+  的位置关系。

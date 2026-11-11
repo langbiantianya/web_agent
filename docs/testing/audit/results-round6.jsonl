@@ -1,0 +1,288 @@
+{"tag":"fluent_light","code":"概览","theme":"fluent","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"概览","theme":"fluent","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"概览","theme":"fluent","mode":"light","vw":390,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"页面权限","theme":"fluent","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"页面权限","theme":"fluent","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"页面权限","theme":"fluent","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"组件权限","theme":"fluent","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"组件权限","theme":"fluent","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"组件权限","theme":"fluent","mode":"light","vw":390,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"角色与权限","theme":"fluent","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"角色与权限","theme":"fluent","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"角色与权限","theme":"fluent","mode":"light","vw":390,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"OAuth 角色映射","theme":"fluent","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"OAuth 角色映射","theme":"fluent","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"OAuth 角色映射","theme":"fluent","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"工作流","theme":"fluent","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"工作流","theme":"fluent","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"工作流","theme":"fluent","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"智能体","theme":"fluent","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"智能体","theme":"fluent","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"智能体","theme":"fluent","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"技能","theme":"fluent","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"技能","theme":"fluent","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"技能","theme":"fluent","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"MCP 服务器","theme":"fluent","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"MCP 服务器","theme":"fluent","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"MCP 服务器","theme":"fluent","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"LLM 端点","theme":"fluent","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"LLM 端点","theme":"fluent","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"LLM 端点","theme":"fluent","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"OAuth 身份提供方","theme":"fluent","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"OAuth 身份提供方","theme":"fluent","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"OAuth 身份提供方","theme":"fluent","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"平台超级管理员","theme":"fluent","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"平台超级管理员","theme":"fluent","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"平台超级管理员","theme":"fluent","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"外观","theme":"fluent","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"外观","theme":"fluent","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"外观","theme":"fluent","mode":"light","vw":390,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"工具审计","theme":"fluent","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"工具审计","theme":"fluent","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"工具审计","theme":"fluent","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"概览","theme":"fluent","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"概览","theme":"fluent","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"概览","theme":"fluent","mode":"dark","vw":390,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"页面权限","theme":"fluent","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"页面权限","theme":"fluent","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"页面权限","theme":"fluent","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"组件权限","theme":"fluent","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"组件权限","theme":"fluent","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"组件权限","theme":"fluent","mode":"dark","vw":390,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"角色与权限","theme":"fluent","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"角色与权限","theme":"fluent","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"角色与权限","theme":"fluent","mode":"dark","vw":390,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"OAuth 角色映射","theme":"fluent","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"OAuth 角色映射","theme":"fluent","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"OAuth 角色映射","theme":"fluent","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"工作流","theme":"fluent","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"工作流","theme":"fluent","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"工作流","theme":"fluent","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"智能体","theme":"fluent","mode":"dark","vw":1531,"tables":1,"issues":[{"bg":"rgb(51,51,51)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.52,"tag":"span.capability-suggestion.is-missing","text":"ghost_tool · 工具不存在"},{"bg":"rgb(41,41,41)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.9,"tag":"small.warning-text","text":"被工作流引用：e2e-20261110-wf1"}]}
+{"tag":"fluent_dark","code":"智能体","theme":"fluent","mode":"dark","vw":768,"tables":1,"issues":[{"bg":"rgb(51,51,51)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.52,"tag":"span.capability-suggestion.is-missing","text":"ghost_tool · 工具不存在"},{"bg":"rgb(41,41,41)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.9,"tag":"small.warning-text","text":"被工作流引用：e2e-20261110-wf1"}]}
+{"tag":"fluent_dark","code":"智能体","theme":"fluent","mode":"dark","vw":390,"tables":1,"issues":[{"bg":"rgb(51,51,51)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.52,"tag":"span.capability-suggestion.is-missing","text":"ghost_tool · 工具不存在"},{"bg":"rgb(41,41,41)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.9,"tag":"small.warning-text","text":"被工作流引用：e2e-20261110-wf1"}]}
+{"tag":"fluent_dark","code":"技能","theme":"fluent","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"技能","theme":"fluent","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"技能","theme":"fluent","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"MCP 服务器","theme":"fluent","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"MCP 服务器","theme":"fluent","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"MCP 服务器","theme":"fluent","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"LLM 端点","theme":"fluent","mode":"dark","vw":1531,"tables":1,"issues":[{"bg":"rgb(41,41,41)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.9,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"fluent_dark","code":"LLM 端点","theme":"fluent","mode":"dark","vw":768,"tables":1,"issues":[{"bg":"rgb(41,41,41)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.9,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"fluent_dark","code":"LLM 端点","theme":"fluent","mode":"dark","vw":390,"tables":1,"issues":[{"bg":"rgb(41,41,41)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.9,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"fluent_dark","code":"OAuth 身份提供方","theme":"fluent","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"OAuth 身份提供方","theme":"fluent","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"OAuth 身份提供方","theme":"fluent","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"平台超级管理员","theme":"fluent","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"平台超级管理员","theme":"fluent","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"平台超级管理员","theme":"fluent","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"外观","theme":"fluent","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"外观","theme":"fluent","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"外观","theme":"fluent","mode":"dark","vw":390,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"工具审计","theme":"fluent","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"工具审计","theme":"fluent","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"fluent_dark","code":"工具审计","theme":"fluent","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"概览","theme":"cloudscape","mode":"light","vw":1531,"tables":0,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.card-link","text":"编辑页面权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.card-link","text":"编辑组件权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.card-link","text":"查看 Casbin 角色"}]}
+{"tag":"cloudscape_light","code":"概览","theme":"cloudscape","mode":"light","vw":768,"tables":0,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.card-link","text":"编辑页面权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.card-link","text":"编辑组件权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.card-link","text":"查看 Casbin 角色"}]}
+{"tag":"cloudscape_light","code":"概览","theme":"cloudscape","mode":"light","vw":390,"tables":0,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.card-link","text":"编辑页面权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.card-link","text":"编辑组件权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.card-link","text":"查看 Casbin 角色"}]}
+{"tag":"cloudscape_light","code":"页面权限","theme":"cloudscape","mode":"light","vw":1531,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.scope-label","text":"全局默认"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.status-badge","text":"1 项权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.","text":"新增租户覆盖"}]}
+{"tag":"cloudscape_light","code":"页面权限","theme":"cloudscape","mode":"light","vw":768,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.scope-label","text":"全局默认"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.status-badge","text":"1 项权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.","text":"新增租户覆盖"}]}
+{"tag":"cloudscape_light","code":"页面权限","theme":"cloudscape","mode":"light","vw":390,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.scope-label","text":"全局默认"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.status-badge","text":"1 项权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.","text":"新增租户覆盖"}]}
+{"tag":"cloudscape_light","code":"组件权限","theme":"cloudscape","mode":"light","vw":1531,"tables":0,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.eyebrow","text":"推荐权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.scope-label","text":"全局默认"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.status-badge","text":"1 项权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.","text":"新增租户覆盖"}]}
+{"tag":"cloudscape_light","code":"组件权限","theme":"cloudscape","mode":"light","vw":768,"tables":0,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.eyebrow","text":"推荐权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.scope-label","text":"全局默认"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.status-badge","text":"1 项权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.","text":"新增租户覆盖"}]}
+{"tag":"cloudscape_light","code":"组件权限","theme":"cloudscape","mode":"light","vw":390,"tables":0,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.eyebrow","text":"推荐权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.scope-label","text":"全局默认"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"span.status-badge","text":"1 项权限"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.","text":"新增租户覆盖"}]}
+{"tag":"cloudscape_light","code":"角色与权限","theme":"cloudscape","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"cloudscape_light","code":"角色与权限","theme":"cloudscape","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"cloudscape_light","code":"角色与权限","theme":"cloudscape","mode":"light","vw":390,"tables":0,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"}]}
+{"tag":"cloudscape_light","code":"OAuth 角色映射","theme":"cloudscape","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"OAuth 角色映射","theme":"cloudscape","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"OAuth 角色映射","theme":"cloudscape","mode":"light","vw":390,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"}]}
+{"tag":"cloudscape_light","code":"工作流","theme":"cloudscape","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"工作流","theme":"cloudscape","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"工作流","theme":"cloudscape","mode":"light","vw":390,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"}]}
+{"tag":"cloudscape_light","code":"智能体","theme":"cloudscape","mode":"light","vw":1531,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.","text":"技能"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.","text":"MCP 服务器"},{"bg":"rgb(233,235,237)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":4.2,"tag":"span.capability-suggestion.is-missing","text":"ghost_tool · 工具不存在"}]}
+{"tag":"cloudscape_light","code":"智能体","theme":"cloudscape","mode":"light","vw":768,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.","text":"技能"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.","text":"MCP 服务器"},{"bg":"rgb(233,235,237)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":4.2,"tag":"span.capability-suggestion.is-missing","text":"ghost_tool · 工具不存在"}]}
+{"tag":"cloudscape_light","code":"智能体","theme":"cloudscape","mode":"light","vw":390,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.","text":"技能"},{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"a.","text":"MCP 服务器"},{"bg":"rgb(233,235,237)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":4.2,"tag":"span.capability-suggestion.is-missing","text":"ghost_tool · 工具不存在"}]}
+{"tag":"cloudscape_light","code":"技能","theme":"cloudscape","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"技能","theme":"cloudscape","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"技能","theme":"cloudscape","mode":"light","vw":390,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"}]}
+{"tag":"cloudscape_light","code":"MCP 服务器","theme":"cloudscape","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"MCP 服务器","theme":"cloudscape","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"MCP 服务器","theme":"cloudscape","mode":"light","vw":390,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"}]}
+{"tag":"cloudscape_light","code":"LLM 端点","theme":"cloudscape","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"LLM 端点","theme":"cloudscape","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"LLM 端点","theme":"cloudscape","mode":"light","vw":390,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"}]}
+{"tag":"cloudscape_light","code":"OAuth 身份提供方","theme":"cloudscape","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"OAuth 身份提供方","theme":"cloudscape","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"OAuth 身份提供方","theme":"cloudscape","mode":"light","vw":390,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"}]}
+{"tag":"cloudscape_light","code":"平台超级管理员","theme":"cloudscape","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"平台超级管理员","theme":"cloudscape","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"平台超级管理员","theme":"cloudscape","mode":"light","vw":390,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"}]}
+{"tag":"cloudscape_light","code":"外观","theme":"cloudscape","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"cloudscape_light","code":"外观","theme":"cloudscape","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"cloudscape_light","code":"外观","theme":"cloudscape","mode":"light","vw":390,"tables":0,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"}]}
+{"tag":"cloudscape_light","code":"工具审计","theme":"cloudscape","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"工具审计","theme":"cloudscape","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"工具审计","theme":"cloudscape","mode":"light","vw":390,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"}]}
+{"tag":"cloudscape_dark","code":"概览","theme":"cloudscape","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"概览","theme":"cloudscape","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"概览","theme":"cloudscape","mode":"dark","vw":390,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"页面权限","theme":"cloudscape","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"页面权限","theme":"cloudscape","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"页面权限","theme":"cloudscape","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"组件权限","theme":"cloudscape","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"组件权限","theme":"cloudscape","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"组件权限","theme":"cloudscape","mode":"dark","vw":390,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"角色与权限","theme":"cloudscape","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"角色与权限","theme":"cloudscape","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"角色与权限","theme":"cloudscape","mode":"dark","vw":390,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"OAuth 角色映射","theme":"cloudscape","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"OAuth 角色映射","theme":"cloudscape","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"OAuth 角色映射","theme":"cloudscape","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"工作流","theme":"cloudscape","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"工作流","theme":"cloudscape","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"工作流","theme":"cloudscape","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"智能体","theme":"cloudscape","mode":"dark","vw":1531,"tables":1,"issues":[{"bg":"rgb(27,40,53)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.98,"tag":"span.capability-suggestion.is-missing","text":"ghost_tool · 工具不存在"},{"bg":"rgb(18,27,36)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.46,"tag":"small.warning-text","text":"被工作流引用：e2e-20261110-wf1"}]}
+{"tag":"cloudscape_dark","code":"智能体","theme":"cloudscape","mode":"dark","vw":768,"tables":1,"issues":[{"bg":"rgb(27,40,53)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.98,"tag":"span.capability-suggestion.is-missing","text":"ghost_tool · 工具不存在"},{"bg":"rgb(18,27,36)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.46,"tag":"small.warning-text","text":"被工作流引用：e2e-20261110-wf1"}]}
+{"tag":"cloudscape_dark","code":"智能体","theme":"cloudscape","mode":"dark","vw":390,"tables":1,"issues":[{"bg":"rgb(27,40,53)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.98,"tag":"span.capability-suggestion.is-missing","text":"ghost_tool · 工具不存在"},{"bg":"rgb(18,27,36)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.46,"tag":"small.warning-text","text":"被工作流引用：e2e-20261110-wf1"}]}
+{"tag":"cloudscape_dark","code":"技能","theme":"cloudscape","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"技能","theme":"cloudscape","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"技能","theme":"cloudscape","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"MCP 服务器","theme":"cloudscape","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"MCP 服务器","theme":"cloudscape","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"MCP 服务器","theme":"cloudscape","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"LLM 端点","theme":"cloudscape","mode":"dark","vw":1531,"tables":1,"issues":[{"bg":"rgb(18,27,36)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.46,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"cloudscape_dark","code":"LLM 端点","theme":"cloudscape","mode":"dark","vw":768,"tables":1,"issues":[{"bg":"rgb(18,27,36)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.46,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"cloudscape_dark","code":"LLM 端点","theme":"cloudscape","mode":"dark","vw":390,"tables":1,"issues":[{"bg":"rgb(18,27,36)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.46,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"cloudscape_dark","code":"OAuth 身份提供方","theme":"cloudscape","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"OAuth 身份提供方","theme":"cloudscape","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"OAuth 身份提供方","theme":"cloudscape","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"平台超级管理员","theme":"cloudscape","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"平台超级管理员","theme":"cloudscape","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"平台超级管理员","theme":"cloudscape","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"外观","theme":"cloudscape","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"外观","theme":"cloudscape","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"外观","theme":"cloudscape","mode":"dark","vw":390,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"工具审计","theme":"cloudscape","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"工具审计","theme":"cloudscape","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"cloudscape_dark","code":"工具审计","theme":"cloudscape","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"material_light","code":"概览","theme":"material","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"material_light","code":"概览","theme":"material","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"material_light","code":"概览","theme":"material","mode":"light","vw":390,"tables":0,"issues":[]}
+{"tag":"material_light","code":"页面权限","theme":"material","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_light","code":"页面权限","theme":"material","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"material_light","code":"页面权限","theme":"material","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"material_light","code":"组件权限","theme":"material","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"material_light","code":"组件权限","theme":"material","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"material_light","code":"组件权限","theme":"material","mode":"light","vw":390,"tables":0,"issues":[]}
+{"tag":"material_light","code":"角色与权限","theme":"material","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"material_light","code":"角色与权限","theme":"material","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"material_light","code":"角色与权限","theme":"material","mode":"light","vw":390,"tables":0,"issues":[]}
+{"tag":"material_light","code":"OAuth 角色映射","theme":"material","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_light","code":"OAuth 角色映射","theme":"material","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"material_light","code":"OAuth 角色映射","theme":"material","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"material_light","code":"工作流","theme":"material","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_light","code":"工作流","theme":"material","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"material_light","code":"工作流","theme":"material","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"material_light","code":"智能体","theme":"material","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_light","code":"智能体","theme":"material","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"material_light","code":"智能体","theme":"material","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"material_light","code":"技能","theme":"material","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_light","code":"技能","theme":"material","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"material_light","code":"技能","theme":"material","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"material_light","code":"MCP 服务器","theme":"material","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_light","code":"MCP 服务器","theme":"material","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"material_light","code":"MCP 服务器","theme":"material","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"material_light","code":"LLM 端点","theme":"material","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_light","code":"LLM 端点","theme":"material","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"material_light","code":"LLM 端点","theme":"material","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"material_light","code":"OAuth 身份提供方","theme":"material","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_light","code":"OAuth 身份提供方","theme":"material","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"material_light","code":"OAuth 身份提供方","theme":"material","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"material_light","code":"平台超级管理员","theme":"material","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_light","code":"平台超级管理员","theme":"material","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"material_light","code":"平台超级管理员","theme":"material","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"material_light","code":"外观","theme":"material","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"material_light","code":"外观","theme":"material","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"material_light","code":"外观","theme":"material","mode":"light","vw":390,"tables":0,"issues":[]}
+{"tag":"material_light","code":"工具审计","theme":"material","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_light","code":"工具审计","theme":"material","mode":"light","vw":768,"tables":1,"issues":[]}
+{"tag":"material_light","code":"工具审计","theme":"material","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"概览","theme":"material","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"概览","theme":"material","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"概览","theme":"material","mode":"dark","vw":390,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"页面权限","theme":"material","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"页面权限","theme":"material","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"页面权限","theme":"material","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"组件权限","theme":"material","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"组件权限","theme":"material","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"组件权限","theme":"material","mode":"dark","vw":390,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"角色与权限","theme":"material","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"角色与权限","theme":"material","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"角色与权限","theme":"material","mode":"dark","vw":390,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"OAuth 角色映射","theme":"material","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"OAuth 角色映射","theme":"material","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"OAuth 角色映射","theme":"material","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"工作流","theme":"material","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"工作流","theme":"material","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"工作流","theme":"material","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"智能体","theme":"material","mode":"dark","vw":1531,"tables":1,"issues":[{"bg":"rgb(37,37,42)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.04,"tag":"span.capability-suggestion.is-missing","text":"ghost_tool · 工具不存在"},{"bg":"rgb(27,27,31)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.42,"tag":"small.warning-text","text":"被工作流引用：e2e-20261110-wf1"}]}
+{"tag":"material_dark","code":"智能体","theme":"material","mode":"dark","vw":768,"tables":1,"issues":[{"bg":"rgb(37,37,42)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.04,"tag":"span.capability-suggestion.is-missing","text":"ghost_tool · 工具不存在"},{"bg":"rgb(27,27,31)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.42,"tag":"small.warning-text","text":"被工作流引用：e2e-20261110-wf1"}]}
+{"tag":"material_dark","code":"智能体","theme":"material","mode":"dark","vw":390,"tables":1,"issues":[{"bg":"rgb(37,37,42)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.04,"tag":"span.capability-suggestion.is-missing","text":"ghost_tool · 工具不存在"},{"bg":"rgb(27,27,31)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.42,"tag":"small.warning-text","text":"被工作流引用：e2e-20261110-wf1"}]}
+{"tag":"material_dark","code":"技能","theme":"material","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"技能","theme":"material","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"技能","theme":"material","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"MCP 服务器","theme":"material","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"MCP 服务器","theme":"material","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"MCP 服务器","theme":"material","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"LLM 端点","theme":"material","mode":"dark","vw":1531,"tables":1,"issues":[{"bg":"rgb(27,27,31)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.42,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"material_dark","code":"LLM 端点","theme":"material","mode":"dark","vw":768,"tables":1,"issues":[{"bg":"rgb(27,27,31)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.42,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"material_dark","code":"LLM 端点","theme":"material","mode":"dark","vw":390,"tables":1,"issues":[{"bg":"rgb(27,27,31)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.42,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"material_dark","code":"OAuth 身份提供方","theme":"material","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"OAuth 身份提供方","theme":"material","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"OAuth 身份提供方","theme":"material","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"平台超级管理员","theme":"material","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"平台超级管理员","theme":"material","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"平台超级管理员","theme":"material","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"外观","theme":"material","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"外观","theme":"material","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"外观","theme":"material","mode":"dark","vw":390,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"工具审计","theme":"material","mode":"dark","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"工具审计","theme":"material","mode":"dark","vw":768,"tables":1,"issues":[]}
+{"tag":"material_dark","code":"工具审计","theme":"material","mode":"dark","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"工作流编辑器","theme":"fluent","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"工作流编辑器","theme":"fluent","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"删除确认对话框","theme":"fluent","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"删除确认对话框","theme":"fluent","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"fluent_light","code":"角色权限手风琴","theme":"fluent","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"fluent_light","code":"角色权限手风琴","theme":"fluent","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"工作流编辑器","theme":"fluent","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"工作流编辑器","theme":"fluent","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"删除确认对话框","theme":"fluent","mode":"dark","vw":1531,"tables":1,"issues":[{"bg":"rgb(41,41,41)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.9,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"fluent_dark","code":"删除确认对话框","theme":"fluent","mode":"dark","vw":390,"tables":1,"issues":[{"bg":"rgb(41,41,41)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":2.9,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"fluent_dark","code":"角色权限手风琴","theme":"fluent","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"fluent_dark","code":"角色权限手风琴","theme":"fluent","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"cloudscape_light","code":"工作流编辑器","theme":"cloudscape","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"cloudscape_light","code":"工作流编辑器","theme":"cloudscape","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"cloudscape_light","code":"删除确认对话框","theme":"cloudscape","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"cloudscape_light","code":"删除确认对话框","theme":"cloudscape","mode":"light","vw":390,"tables":1,"issues":[{"bg":"rgb(233,235,237)","fg":"rgb(9, 114, 211)","kind":"low-contrast","need":4.5,"ratio":4.03,"tag":"summary.mobile-menu-summary","text":"菜单"}]}
+{"tag":"cloudscape_light","code":"角色权限手风琴","theme":"cloudscape","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"cloudscape_light","code":"角色权限手风琴","theme":"cloudscape","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"工作流编辑器","theme":"cloudscape","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"工作流编辑器","theme":"cloudscape","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"删除确认对话框","theme":"cloudscape","mode":"dark","vw":1531,"tables":1,"issues":[{"bg":"rgb(18,27,36)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.46,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"cloudscape_dark","code":"删除确认对话框","theme":"cloudscape","mode":"dark","vw":390,"tables":1,"issues":[{"bg":"rgb(18,27,36)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.46,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"cloudscape_dark","code":"角色权限手风琴","theme":"cloudscape","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"cloudscape_dark","code":"角色权限手风琴","theme":"cloudscape","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"material_light","code":"工作流编辑器","theme":"material","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"material_light","code":"工作流编辑器","theme":"material","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"material_light","code":"删除确认对话框","theme":"material","mode":"light","vw":1531,"tables":1,"issues":[]}
+{"tag":"material_light","code":"删除确认对话框","theme":"material","mode":"light","vw":390,"tables":1,"issues":[]}
+{"tag":"material_light","code":"角色权限手风琴","theme":"material","mode":"light","vw":1531,"tables":0,"issues":[]}
+{"tag":"material_light","code":"角色权限手风琴","theme":"material","mode":"light","vw":768,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"工作流编辑器","theme":"material","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"工作流编辑器","theme":"material","mode":"dark","vw":768,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"删除确认对话框","theme":"material","mode":"dark","vw":1531,"tables":1,"issues":[{"bg":"rgb(27,27,31)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.42,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"material_dark","code":"删除确认对话框","theme":"material","mode":"dark","vw":390,"tables":1,"issues":[{"bg":"rgb(27,27,31)","fg":"rgb(180, 83, 9)","kind":"low-contrast","need":4.5,"ratio":3.42,"tag":"small.warning-text","text":"被智能体使用：e2e-20261110-agent1"}]}
+{"tag":"material_dark","code":"角色权限手风琴","theme":"material","mode":"dark","vw":1531,"tables":0,"issues":[]}
+{"tag":"material_dark","code":"角色权限手风琴","theme":"material","mode":"dark","vw":768,"tables":0,"issues":[]}

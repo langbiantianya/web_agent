@@ -34,7 +34,7 @@
         },
         {
           "attrs": {
-            "href": "/admin/static/admin.css?v=admin-responsive-20261110-8",
+            "href": "/admin/static/admin.css?v=admin-responsive-20261111-1",
             "rel": "stylesheet"
           },
           "children": [],
@@ -42,7 +42,7 @@
         },
         {
           "attrs": {
-            "src": "/admin/static/admin-ui.js?v=admin-ui-20261110-13"
+            "src": "/admin/static/admin-ui.js?v=admin-ui-20261111-1"
           },
           "children": [],
           "tag": "script"

@@ -425,13 +425,18 @@
       );
       if (state.model.entry === node.id) {
         // 入口节点在左侧挂一个标记（设计文档 :207）。
+        //
+        // 标记要**避开左侧的入端口圆圈**：圆圈在节点左边中点（cx=0,
+        // cy=NODE_HEIGHT/2），文字再往右挪一点就会和圆圈贴在一起（实测
+        // 只剩 2px 间隔）。所以把标记抬到节点的左上角、徽标那一行的高度，
+        // 与端口在竖直方向上彻底分开。
         group.appendChild(
           el(
             "text",
             {
               class: "entry-mark",
-              x: -8,
-              y: core.NODE_HEIGHT / 2 + 4,
+              x: -10,
+              y: 18,
               "text-anchor": "end",
             },
             tr("入口", "Entry"),

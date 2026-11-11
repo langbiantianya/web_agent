@@ -16,6 +16,7 @@
   --color-success: #0e700e;
   --color-warning: #bc4b09;
   --color-danger: #d13438;
+  --color-danger-text: #ffffff;
   --color-focus-ring: #4f52b2;
   --color-topbar: #ffffff;
   --color-topbar-text: #242424;
@@ -129,6 +130,7 @@ html[data-color-mode="dark"] {
   --color-success: #63d391;
   --color-warning: #f0bd62;
   --color-danger: #ff8b80;
+  --color-danger-text: #2b0a00;
   --color-focus-ring: #86c3ff;
   --color-topbar: rgb(17 20 24 / 90%);
   --color-topbar-text: #f1f4f8;
@@ -157,6 +159,7 @@ html[data-color-mode="dark"] {
     --color-success: #63d391;
     --color-warning: #f0bd62;
     --color-danger: #ff8b80;
+    --color-danger-text: #2b0a00;
     --color-focus-ring: #86c3ff;
     --color-topbar: rgb(17 20 24 / 90%);
     --color-topbar-text: #f1f4f8;
@@ -630,6 +633,9 @@ h2 {
   background: var(--color-table-head);
   color: var(--color-text-secondary);
   font-size: 13px;
+  /* 表头不许折行：「被工作流使用」被压成六行竖排既难读又撑高表头行。
+     不折行之后列宽由表头撑开，手机端照旧在 .table-scroll 里横向滚动。 */
+  white-space: nowrap;
   text-transform: uppercase;
 }
 
@@ -959,11 +965,20 @@ details[open] > summary {
 .mapping-actions {
   display: flex;
   min-width: 250px;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
+.mapping-actions .btn {
+  flex: 0 0 auto;
+}
+
 .mapping-actions input[name="role_code"] {
+  /* 输入框默认是 ``width: 100%``，放进行内编辑区会把整行占满、把「保存」
+     挤到下一行。给它一个固定的弹性基准，行内编辑区就还是一行。 */
+  flex: 0 1 220px;
+  width: auto;
   min-width: 120px;
 }
 
@@ -1082,6 +1097,7 @@ details[open] > summary {
 
 .btn {
   min-height: 42px;
+  white-space: nowrap;
   padding: 9px 16px;
   border: var(--border-width) solid transparent;
   border-radius: var(--radius-button);
@@ -1120,7 +1136,7 @@ details[open] > summary {
 
 .btn-danger {
   background: var(--color-danger);
-  color: #ffffff;
+  color: var(--color-danger-text);
 }
 
 .btn-link {
@@ -1508,7 +1524,7 @@ html[data-theme="cloudscape"] .nav-group {
 html[data-theme="cloudscape"] .nav-group-title {
   display: block;
   padding: 15px 20px 5px;
-  color: #687078;
+  color: var(--color-sidebar-muted);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.025em;
@@ -2279,6 +2295,68 @@ html[data-theme="material"] .error-shell {
 
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+
+/* 平板宽度（768–1199px）：侧边栏仍占 220px，内容区被挤窄，表格列会被压到
+   表头逐字竖排（「被智能体使用」变成 6 行）。这一段把数据表改成「卡片」
+   布局——每行一张卡片，每格前面显示列名（列名来自 admin-ui.js 打的
+   ``data-label``），保证窄屏下依然读得懂、点得准。 */
+@media (min-width: 768px) and (max-width: 1199px) {
+  .table-scroll {
+    overflow-x: visible;
+  }
+
+  .data-table,
+  .data-table tbody,
+  .data-table tr,
+  .data-table td {
+    display: block;
+  }
+
+  .data-table thead {
+    display: none;
+  }
+
+  .data-table tr {
+    margin-bottom: 12px;
+    padding: 14px 16px;
+    border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-surface);
+    background: var(--color-bg-surface);
+    box-shadow: var(--shadow-surface);
+  }
+
+  .data-table tr:last-child {
+    margin-bottom: 0;
+  }
+
+  .data-table td {
+    display: grid;
+    grid-template-columns: minmax(84px, 34%) minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+    min-height: 0;
+    padding: 6px 0;
+    border-bottom: none;
+  }
+
+  .data-table td::before {
+    content: attr(data-label);
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.6;
+    text-transform: uppercase;
+  }
+
+  .permission-table td:last-child {
+    min-width: 0;
+  }
+
+  .mapping-actions {
+    min-width: 0;
   }
 }
 
