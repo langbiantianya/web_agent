@@ -16,6 +16,7 @@ from starlette.responses import RedirectResponse
 from app.core.crypto import decrypt, encrypt
 from app.repo.agent_repo import agent_repo
 from app.repo.llm_endpoint_repo import llm_endpoint_repo
+from app.schemas.llm_endpoint import LlmEndpointUpdate
 from services.admin_web.audit import audit_principal_action
 from services.admin_web.common import (
     as_bool, business_redirect, flash_from_query, json_response_no_store,
@@ -190,7 +191,13 @@ def register(app: Any) -> None:
                     detail={"mode": mode, "ok": False, "reason": str(exc)[:120]},
                 )
                 await db.commit()
-                payload = {"ok": False, "error": str(exc), "models": models}
+                payload = {
+                    "ok": False,
+                    "error": str(exc),
+                    # 稳定的错误分类：中文界面据此本地化，不直接贴英文（UX-37）。
+                    "error_code": exc.code,
+                    "models": models,
+                }
                 # 402/429：模型列表已经拿到（地址与密钥可用），只是账号额度/
                 # 限流把对话这一环拦下了。单独标出来，免得把「额度不够」
                 # 误报成「配置写错」。

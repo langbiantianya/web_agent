@@ -41,7 +41,7 @@ def register(app: Any) -> None:
         try:
             if not await can_access_page(db, principal, "llm"):
                 return not_found()
-            flash, _ = flash_from_query(request)
+            flash, flash_kind = flash_from_query(request)
             undo_id = undo_id_from_query(request)
             # 深链接到编辑面板（UX-09）。
             resource = (request.query_params.get("resource") or "").strip()
@@ -93,6 +93,7 @@ def register(app: Any) -> None:
                     component_code="llm_editor",
                 ),
                 flash=flash,
+                flash_kind=flash_kind,
                 undo_id=undo_id,
                 create_errors=create_errors,
                 create_values=create_values,

@@ -136,6 +136,7 @@ def oauth_providers_page(
     density: str,
     can_manage: bool,
     flash: str | None = None,
+    flash_kind: str = "info",
     create_errors: dict[str, str] | None = None,
     create_values: dict[str, str] | None = None,
     edit_errors: dict[str, dict[str, str]] | None = None,
@@ -250,4 +251,5 @@ def oauth_providers_page(
         headers=["Provider", "Issuer", "Login scopes", "Role sync", "State", "Actions"],
         rows=rows,
         flash=flash,
+        flash_kind=flash_kind,
     )

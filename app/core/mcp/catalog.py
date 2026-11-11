@@ -20,7 +20,16 @@ logger = logging.getLogger(__name__)
 
 
 class McpCatalogError(Exception):
-    """发现失败——连不上或工具目录不可读。"""
+    """发现失败——连不上或工具目录不可读。
+
+    Attributes:
+        reason: 失败类别（``unreachable`` / ``tools_in_use``）。管理端据此
+            给出**可区分**的提示，而不是一句「操作未能完成」。
+    """
+
+    def __init__(self, message: str, *, reason: str = "unreachable") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class CatalogResult:
@@ -58,7 +67,8 @@ async def refresh_catalog(db: AsyncSession, server) -> CatalogResult:
         tools = await mcp_manager.list_tools(server)
     except Exception as exc:  # noqa: BLE001 - 外部边界
         raise McpCatalogError(
-            f"连不上 MCP 服务器「{server.code}」或读不到工具目录：{exc}"
+            f"连不上 MCP 服务器「{server.code}」或读不到工具目录：{exc}",
+            reason="unreachable",
         ) from exc
 
     allow = set(server.allow_tools or [])
@@ -107,7 +117,8 @@ async def refresh_catalog(db: AsyncSession, server) -> CatalogResult:
     if removed_bound:
         raise McpCatalogError(
             "以下 MCP 工具仍被 Agent 使用，不能从目录中移除："
-            + "、".join(sorted(removed_bound))
+            + "、".join(sorted(removed_bound)),
+            reason="tools_in_use",
         )
 
     await mcp_tool_repo.replace_for_server(db, server.id, rows)

@@ -47,7 +47,7 @@ def register(app: Any) -> None:
         try:
             if not await can_access_page(db, principal, "workflows"):
                 return not_found()
-            flash, _kind = flash_from_query(request)
+            flash, flash_kind = flash_from_query(request)
             undo_id = undo_id_from_query(request)
             list_params = parse_list_params(
                 request,
@@ -82,6 +82,7 @@ def register(app: Any) -> None:
                     component_code="workflow_editor",
                 ),
                 flash=flash,
+                flash_kind=flash_kind,
                 undo_id=undo_id,
                 list_params=list_params,
                 list_total=total,
@@ -112,7 +113,7 @@ def register(app: Any) -> None:
                 limit=500,
                 tenant_id=tenant_id_of(principal),
             )
-            flash, _kind = flash_from_query(request)
+            flash, flash_kind = flash_from_query(request)
             return workflow_editor_page(
                 principal=principal,
                 csrf=csrf,
@@ -129,6 +130,7 @@ def register(app: Any) -> None:
                     component_code="workflow_editor",
                 ),
                 flash=flash,
+                flash_kind=flash_kind,
             )
         finally:
             await db.close()

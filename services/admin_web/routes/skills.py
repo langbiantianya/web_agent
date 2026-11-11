@@ -40,7 +40,7 @@ def register(app: Any) -> None:
         try:
             if not await can_access_page(db, principal, "skills"):
                 return not_found()
-            flash, _ = flash_from_query(request)
+            flash, flash_kind = flash_from_query(request)
             tenant_id = tenant_id_of(principal)
             # 深链接到编辑面板（UX-09）：``?resource=<code>`` 决定打开
             # 哪个对象的编辑面板。
@@ -94,6 +94,7 @@ def register(app: Any) -> None:
                     component_code="skill_editor",
                 ),
                 flash=flash,
+                flash_kind=flash_kind,
                 create_errors=create_errors,
                 create_values=create_values,
                 list_params=list_params,

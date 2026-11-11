@@ -37,16 +37,17 @@ def register(app: Any) -> None:
                 run_id = int(raw_run_id) if raw_run_id else None
             except ValueError:
                 run_id = None
+            tool_name = request.query_params.get("tool_name", "").strip()
             rows, total = await tool_audit_repo.list(
                 db,
                 tenant_id=tenant_id_of(principal),
                 run_id=run_id,
-                tool_name=request.query_params.get("tool_name", "").strip() or None,
+                tool_name=tool_name or None,
                 source=source,
                 ok=ok,
                 limit=100,
             )
-            flash, _ = flash_from_query(request)
+            flash, flash_kind = flash_from_query(request)
             return audit_page(
                 principal=principal,
                 csrf=csrf,
@@ -57,6 +58,15 @@ def register(app: Any) -> None:
                 color_mode=pref.color_mode,
                 density=pref.density,
                 flash=flash,
+                flash_kind=flash_kind,
+                # 回显当前筛选条件：URL 里的条件必须与页面上的控件一致
+                # （UX-36）。
+                run_id=raw_run_id,
+                tool_name=tool_name,
+                source=source or "",
+                # 用**归一后**的值：``ok=maybe`` 这种脏值必须回显成「任意」，
+                # 而不是把脏值塞回下拉框。
+                ok="" if ok is None else ("true" if ok else "false"),
             )
         finally:
             await db.close()

@@ -39,7 +39,7 @@ def register(app: Any) -> None:
         try:
             if not await can_access_page(db, principal, "oauth_providers"):
                 return not_found()
-            flash, _ = flash_from_query(request)
+            flash, flash_kind = flash_from_query(request)
             # 深链接到编辑面板（UX-09）。
             resource = (request.query_params.get("resource") or "").strip()
             invalid_nonce = request.query_params.get("invalid")
@@ -67,6 +67,7 @@ def register(app: Any) -> None:
                     component_code="provider_editor",
                 ),
                 flash=flash,
+                flash_kind=flash_kind,
                 create_errors=create_errors,
                 create_values=create_values,
                 edit_errors=(

@@ -768,11 +768,12 @@ async def test_llm_probe_lists_models_and_runs_minimal_chat(monkeypatch):
             data={"csrf_token": csrf, "mode": "models", "code": code},
         )
         assert failed.status_code == 400
-        assert failed.json() == {
-            "ok": False,
-            "error": "GET /models failed: HTTP 401",
-            "models": [],
-        }
+        failed_body = failed.json()
+        assert failed_body["ok"] is False
+        assert failed_body["error"] == "GET /models failed: HTTP 401"
+        assert failed_body["models"] == []
+        # 稳定的错误分类：中文界面据此本地化（UX-37）。
+        assert failed_body["error_code"] == "unknown"
 
         # 4) 402/429 只说明额度/限流不够：地址与密钥已通过列表验证，
         #    结果单独标 limited，并把已拿到的模型列表带回去。

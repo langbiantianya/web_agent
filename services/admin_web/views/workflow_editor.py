@@ -48,6 +48,7 @@ def workflow_editor_page(
     density: str,
     can_write: bool,
     flash: str | None = None,
+    flash_kind: str = "info",
 ) -> Any:
     """渲染 Workflow 画布编排页。"""
     import json as _json
@@ -233,6 +234,7 @@ def workflow_editor_page(
         density=density,
         pages=pages,
         flash=flash,
+        flash_kind=flash_kind,
         content=div(
             section(toolbar, class_="surface"),
             div(

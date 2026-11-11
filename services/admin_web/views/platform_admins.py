@@ -46,6 +46,7 @@ def platform_admins_page(
     color_mode: str,
     density: str,
     flash: str | None = None,
+    flash_kind: str = "info",
     list_params: ListParams | None = None,
     list_total: int = 0,
     undo_id: int | None = None,
@@ -91,6 +92,7 @@ def platform_admins_page(
         density=density,
         pages=pages,
         flash=flash,
+        flash_kind=flash_kind,
         content=div(
             *(
                 [

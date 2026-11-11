@@ -54,6 +54,7 @@ def workflows_page(
     density: str,
     can_write: bool,
     flash: str | None = None,
+    flash_kind: str = "info",
     undo_id: int | None = None,
     list_params: ListParams | None = None,
     list_total: int = 0,
@@ -142,6 +143,7 @@ def workflows_page(
         headers=["Workflow", "State", "Version", "Actions"],
         rows=table_rows,
         flash=flash,
+        flash_kind=flash_kind,
         undo=(
             undo_panel(
                 csrf=csrf,

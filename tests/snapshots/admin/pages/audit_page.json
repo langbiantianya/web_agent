@@ -377,7 +377,9 @@
                                   },
                                   "children": [
                                     {
-                                      "attrs": {},
+                                      "attrs": {
+                                        "selected": "true"
+                                      },
                                       "children": [
                                         {
                                           "text": "Any"
@@ -387,6 +389,7 @@
                                     },
                                     {
                                       "attrs": {
+                                        "selected": "false",
                                         "value": "builtin"
                                       },
                                       "children": [
@@ -398,6 +401,7 @@
                                     },
                                     {
                                       "attrs": {
+                                        "selected": "false",
                                         "value": "skill"
                                       },
                                       "children": [
@@ -409,6 +413,7 @@
                                     },
                                     {
                                       "attrs": {
+                                        "selected": "false",
                                         "value": "mcp"
                                       },
                                       "children": [
@@ -442,7 +447,9 @@
                                   },
                                   "children": [
                                     {
-                                      "attrs": {},
+                                      "attrs": {
+                                        "selected": "true"
+                                      },
                                       "children": [
                                         {
                                           "text": "Any"
@@ -452,6 +459,7 @@
                                     },
                                     {
                                       "attrs": {
+                                        "selected": "false",
                                         "value": "true"
                                       },
                                       "children": [
@@ -463,6 +471,7 @@
                                     },
                                     {
                                       "attrs": {
+                                        "selected": "false",
                                         "value": "false"
                                       },
                                       "children": [

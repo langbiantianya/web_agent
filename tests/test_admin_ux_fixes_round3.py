@@ -27,6 +27,8 @@ import sqlalchemy as sa
 
 from app.models.admin_control import SuperAdminAccount
 from app.models.admin_deleted_resource import AdminDeletedResource
+from app.core.mcp.catalog import McpCatalogError
+from app.core.mcp.transport import McpTransportError
 from app.repo.llm_endpoint_repo import llm_endpoint_repo
 from services.admin_web.llm_probe import LlmProbeError, ProbeResult
 
@@ -187,6 +189,77 @@ async def test_platform_admin_delete_can_be_undone(db):
         await client.aclose()
 
 
+@pytest.mark.asyncio
+async def test_platform_admin_delete_clears_dependent_rows(db):
+    """删除平台管理员时，会话与重置记录要一起清掉。
+
+    ``super_admin_session`` 与 ``super_admin_password_reset`` 上有指向
+    ``super_admin_account`` 的外键。不清就删账号，PostgreSQL 上直接
+    ``ForeignKeyViolation``——删除动作 500。MySQL 默认不强制外键，所以这个
+    问题只在管理端用**独立库**（也就是正确部署）时暴露。
+    """
+    from app.models.admin_control import (
+        SuperAdminPasswordReset,
+        SuperAdminSession,
+    )
+    from app.models.base import utcnow
+
+    client, _account_id, csrf = await _owner_client()
+    try:
+        username = f"fk_admin_{uuid.uuid4().hex[:8]}"
+        account = await _seed_platform_admin(db, username)
+        account_id = account.id
+        now = utcnow()
+        db.add(
+            SuperAdminSession(
+                token_hash=uuid.uuid4().hex,
+                csrf_hash=uuid.uuid4().hex,
+                account_id=account_id,
+                auth_at=now,
+                idle_expires_at=now,
+                absolute_expires_at=now,
+                password_version=1,
+            )
+        )
+        db.add(
+            SuperAdminPasswordReset(
+                account_id=account_id,
+                pending_password_hash="hash",
+                reason="manual_reset",
+                status="pending",
+                requested_at=now,
+                expires_at=now,
+            )
+        )
+        await db.commit()
+
+        deleted = await client.post(
+            f"/admin/platform-admins/{account_id}/delete",
+            data={"csrf_token": csrf},
+            follow_redirects=False,
+        )
+        assert deleted.status_code == 303, deleted.text
+        db.expire_all()
+        assert (
+            await db.scalar(
+                sa.select(SuperAdminSession.id).where(
+                    SuperAdminSession.account_id == account_id
+                )
+            )
+            is None
+        ), "会话没有一起清掉"
+        assert (
+            await db.scalar(
+                sa.select(SuperAdminPasswordReset.id).where(
+                    SuperAdminPasswordReset.account_id == account_id
+                )
+            )
+            is None
+        ), "重置记录没有一起清掉"
+    finally:
+        await client.aclose()
+
+
 # ---------------------------------------------------------------- UX-05
 
 
@@ -217,6 +290,35 @@ async def test_undo_permission_follows_the_restored_resource_type(db):
         assert undone.status_code == 303, undone.text
         assert "notice=restored" in undone.headers["location"]
         assert await llm_endpoint_repo.get_by_code(db, code) is not None
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_archive_confirm_button_says_archive_not_delete(db):
+    """归档是软删除：确认对话框的按钮不该写「删除」。"""
+    from app.repo.skill_repo import skill_repo
+
+    tag = uuid.uuid4().hex[:8]
+    code = f"ux3-archive-{tag}"
+    await skill_repo.create(
+        db,
+        code=code,
+        name=code,
+        description="Archive skill.",
+        allowed_tools="",
+        body="Body",
+        status="published",
+        enabled=1,
+        content_hash="hash",
+    )
+    client, _ = await _logged_in_client()
+    try:
+        page = await client.get("/admin/skills")
+        assert page.status_code == 200, page.text
+        assert 'data-confirm-submit-label="Archive"' in page.text
+        # 删除类动作不指定文案，用默认的 Delete。
+        assert 'data-confirm-title="Delete LLM endpoint' not in page.text
     finally:
         await client.aclose()
 
@@ -392,3 +494,363 @@ def test_llm_probe_http_error_is_categorised_not_raw():
     assert "sk-1234" not in str(error)
     assert "401" in str(error)
     assert error.status_code == 401
+
+
+
+# ---------------------------------------------------------------- UX-33
+
+
+@pytest.mark.asyncio
+async def test_stdio_mcp_failure_marks_command_field(db, monkeypatch):
+    """UX-33：stdio 注册失败要把错误标在 ``command`` 上。
+
+    stdio 模式下 ``url`` 这一栏是禁用且隐藏的——错误落在 ``url`` 上，
+    用户在页面上根本看不到任何提示，只看到「注册失败」。
+    """
+    import services.admin_web.routes.mcp as mcp_routes
+
+    async def refuse(*args, **kwargs):
+        raise McpTransportError("command refused by policy")
+
+    monkeypatch.setattr(mcp_routes, "validate_mcp_connection", refuse)
+    client, csrf = await _logged_in_client()
+    try:
+        code = f"stdio-{uuid.uuid4().hex[:8]}"
+        response = await client.post(
+            "/admin/mcp",
+            data={
+                "csrf_token": csrf,
+                "code": code,
+                "name": "Local server",
+                "transport": "stdio",
+                "url": "",
+                "command": "/usr/local/bin/mcp-server",
+                "timeout_sec": "30",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303, response.text
+        assert "invalid=" in response.headers["location"]
+        # 错误挂在 command 上，而不是被隐藏的 url 上。
+        page = await client.get(response.headers["location"])
+        assert page.status_code == 200, page.text
+        assert "err-mcp-create-command" in page.text
+        assert "err-mcp-create-url" not in page.text
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_http_mcp_failure_marks_url_field(db, monkeypatch):
+    """UX-33：http 注册失败仍然标在 ``url`` 上。"""
+    import services.admin_web.routes.mcp as mcp_routes
+
+    async def refuse(*args, **kwargs):
+        raise McpTransportError("url refused by policy")
+
+    monkeypatch.setattr(mcp_routes, "validate_mcp_connection", refuse)
+    client, csrf = await _logged_in_client()
+    try:
+        code = f"http-{uuid.uuid4().hex[:8]}"
+        response = await client.post(
+            "/admin/mcp",
+            data={
+                "csrf_token": csrf,
+                "code": code,
+                "name": "Remote server",
+                "transport": "http",
+                "url": "https://mcp.example.com/mcp",
+                "command": "",
+                "timeout_sec": "30",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303, response.text
+        page = await client.get(response.headers["location"])
+        assert page.status_code == 200, page.text
+        assert "err-mcp-create-url" in page.text
+        assert "err-mcp-create-command" not in page.text
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_mcp_refresh_failure_tells_the_reason(db, monkeypatch):
+    """UX-34：目录刷新失败要能区分「连不上」与「工具仍被占用」。"""
+    import services.admin_web.routes.mcp_write as mcp_write_routes
+    from app.repo.mcp_repo import mcp_server_repo
+
+    code = f"refresh-{uuid.uuid4().hex[:8]}"
+    await mcp_server_repo.create(
+        db,
+        code=code,
+        tenant_id="default",
+        name=code,
+        transport="http",
+        url="https://refresh.example/mcp",
+        enabled=1,
+        auth_type="none",
+    )
+    client, csrf = await _logged_in_client()
+    try:
+        async def refuse(*args, **kwargs):
+            raise McpCatalogError("boom", reason="unreachable")
+
+        monkeypatch.setattr(mcp_write_routes, "refresh_catalog", refuse)
+        response = await client.post(
+            f"/admin/mcp/{code}/refresh",
+            data={"csrf_token": csrf},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303, response.text
+        assert "error=mcp_unreachable" in response.headers["location"]
+
+        async def in_use(*args, **kwargs):
+            raise McpCatalogError("boom", reason="tools_in_use")
+
+        monkeypatch.setattr(mcp_write_routes, "refresh_catalog", in_use)
+        response = await client.post(
+            f"/admin/mcp/{code}/refresh",
+            data={"csrf_token": csrf},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303, response.text
+        assert "error=mcp_tools_in_use" in response.headers["location"]
+    finally:
+        await client.aclose()
+
+
+def test_mcp_refresh_messages_are_categorised():
+    """UX-34：两种失败原因对应两条**不同**的提示文案。"""
+    from services.admin_web.common import flash_from_query
+
+    class _Request:
+        def __init__(self, error: str) -> None:
+            self.query_params = {"error": error}
+
+    unreachable, _ = flash_from_query(_Request("mcp_unreachable"))
+    in_use, _ = flash_from_query(_Request("mcp_tools_in_use"))
+    assert unreachable != in_use
+    assert "could not be reached" in unreachable
+    assert "still used by Agents" in in_use
+
+
+@pytest.mark.asyncio
+async def test_preferences_save_shows_a_confirmation(db):
+    """UX-35：保存偏好设置后要给出确认提示。
+
+    之前重定向到了 ``?notice=saved``，但页面**从不读这个参数**——管理员
+    点了保存，什么反馈都没有，只能靠自己刷新页面确认。
+    """
+    client, csrf = await _logged_in_client()
+    try:
+        response = await client.post(
+            "/admin/preferences",
+            data={
+                "csrf_token": csrf,
+                "theme": "cloudscape",
+                "color_mode": "light",
+                "density": "compact",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303, response.text
+        assert "notice=saved" in response.headers["location"]
+
+        page = await client.get(response.headers["location"])
+        assert page.status_code == 200, page.text
+        assert "Preferences saved." in page.text
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_audit_filters_are_echoed_back(db):
+    """UX-36：审计筛选条件要回显到控件上。
+
+    之前 URL 里带着 ``?source=builtin`` 重新打开页面，下拉框却停在
+    「任意」——管理员看到的条件与实际生效的条件不一致。
+    """
+    client, csrf = await _logged_in_client()
+    try:
+        page = await client.get(
+            "/admin/audit?run_id=7&tool_name=calc&source=builtin&ok=true"
+        )
+        assert page.status_code == 200, page.text
+        assert 'value="builtin" selected' in page.text
+        assert 'value="true" selected' in page.text
+        assert 'value="7"' in page.text
+        assert 'value="calc"' in page.text
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_llm_probe_returns_a_stable_error_code(db, monkeypatch):
+    """UX-37：探测失败要带稳定的错误分类，中文界面才能本地化。
+
+    之前只回一整句英文，中文界面里「失败 · GET /models failed: HTTP 401.
+    The API key was rejected. ...」直接露出英文。
+    """
+    import httpx
+
+    import services.admin_web.routes.llm_write as llm_routes
+
+    code = f"probe-code-{uuid.uuid4().hex[:8]}"
+    await _seed_endpoint(db, code, "Code LLM")
+    client, csrf = await _logged_in_client()
+    try:
+        async def unauthorized_models(base_url: str, api_key: str):
+            response = httpx.Response(
+                401,
+                text='{"error":{"message":"key sk-1234 invalid"}}',
+                request=httpx.Request("GET", f"{base_url}/models"),
+            )
+            raise llm_routes.LlmProbeError(
+                "GET /models failed: HTTP 401. The API key was rejected.",
+                status_code=401,
+                code="http_401",
+            )
+
+        monkeypatch.setattr(llm_routes, "fetch_models", unauthorized_models)
+        response = await client.post(
+            "/admin/llm/probe",
+            data={"csrf_token": csrf, "mode": "models", "code": code},
+        )
+        assert response.status_code == 400
+        payload = response.json()
+        assert payload["error_code"] == "http_401"
+        # 上游正文与密钥片段仍然不能出现在响应里（UX-30）。
+        assert "sk-1234" not in payload["error"]
+    finally:
+        await client.aclose()
+
+
+def test_llm_probe_errors_carry_a_stable_code():
+    """UX-37：每类探测失败都要带机器可读的分类。"""
+    from services.admin_web.llm_probe import LlmProbeError, _http_error
+
+    import httpx
+
+    response = httpx.Response(
+        429,
+        text="{}",
+        request=httpx.Request("GET", "https://example.com/v1/models"),
+    )
+    error = _http_error("GET /models", response)
+    assert error.code == "http_429"
+    assert error.status_code == 429
+    # 没有分类的异常也要有一个默认值，不能是空串。
+    assert LlmProbeError("boom").code == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_toggle_and_edit_buttons_do_not_500(db):
+    """UX-40：三个写操作按钮不能 500。
+
+    内置浏览器逐按钮实测时抓到三处**漏 import**：
+
+    - ``routes/llm_write.py`` 用了 ``LlmEndpointUpdate`` 却没 import ——
+      「保存端点」一按就是 500；
+    - ``routes/agents_write.py`` 用了 ``as_bool`` 却没 import ——
+      智能体的「禁用 / 启用」一按就是 500；
+    - ``routes/workflows_write.py`` 同样漏了 ``as_bool`` ——
+      工作流的「禁用 / 启用」一按就是 500。
+
+    这三处静态都能查出来（见 ``tests/test_admin_route_static_checks.py``），
+    这里再补一条**行为**断言：这些路由必须真的返回 303 而不是 500。
+    """
+    from app.repo.agent_repo import agent_repo
+    from app.repo.llm_endpoint_repo import llm_endpoint_repo
+
+    client, csrf = await _logged_in_client()
+    try:
+        # LLM 端点「保存端点」
+        code = f"ux40-llm-{uuid.uuid4().hex[:8]}"
+        await llm_endpoint_repo.create(
+            db,
+            code=code,
+            name="UX40 LLM",
+            base_url="https://ux40.example/v1",
+            model="ux40-model",
+            api_key_cipher="cipher",
+            priority=10,
+            enabled=1,
+        )
+        updated = await client.post(
+            f"/admin/llm/{code}/update",
+            data={
+                "csrf_token": csrf,
+                "name": "UX40 LLM Renamed",
+                "base_url": "https://ux40.example/v1",
+                "model": "ux40-model",
+                "priority": "10",
+                "api_key": "",
+            },
+            follow_redirects=False,
+        )
+        assert updated.status_code == 303, updated.text
+        assert "notice=updated" in updated.headers["location"]
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_agent_and_workflow_toggle_do_not_500(db):
+    """UX-40：智能体与工作流的「禁用 / 启用」不能 500（``as_bool`` 漏 import）。"""
+    from app.models.agent import Agent
+    from app.models.workflow import Workflow
+
+    tag = uuid.uuid4().hex[:8]
+    agent = Agent(
+        code=f"ux40-agent-{tag}",
+        name="UX40 Agent",
+        system_prompt="UX40 prompt.",
+        model="ux40-model",
+        base_url="https://ux40.example/v1",
+        api_key_cipher="cipher",
+        enabled=1,
+    )
+    workflow = Workflow(
+        code=f"ux40-wf-{tag}",
+        name="UX40 WF",
+        enabled=1,
+        definition={"entry": "step1", "nodes": []},
+        version=1,
+    )
+    db.add_all([agent, workflow])
+    await db.commit()
+
+    client, csrf = await _logged_in_client()
+    try:
+        toggled = await client.post(
+            f"/admin/agents/{agent.code}/toggle",
+            data={"csrf_token": csrf, "enabled": "0"},
+            follow_redirects=False,
+        )
+        assert toggled.status_code == 303, toggled.text
+        assert "notice=toggled" in toggled.headers["location"]
+
+        toggled_wf = await client.post(
+            f"/admin/workflows/{workflow.code}/toggle",
+            data={"csrf_token": csrf, "enabled": "0"},
+            follow_redirects=False,
+        )
+        assert toggled_wf.status_code == 303, toggled_wf.text
+        assert "notice=toggled" in toggled_wf.headers["location"]
+    finally:
+        await client.aclose()
+
+
+def test_mcp_field_errors_use_transport_to_choose_field():
+    """UX-33：字段归属由传输方式决定。"""
+    from services.admin_web.form_errors import _mcp_field_errors
+
+    stdio = _mcp_field_errors(McpTransportError("boom"), "stdio")
+    assert set(stdio) == {"command"}
+    http = _mcp_field_errors(McpTransportError("boom"), "http")
+    assert set(http) == {"url"}
+    assert http["url"] == "The HTTP URL could not be validated."
+    # 未指定传输方式时回落到 url（HTTP 是默认传输）。
+    assert set(_mcp_field_errors(McpTransportError("boom"))) == {"url"}
+

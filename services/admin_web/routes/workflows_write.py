@@ -12,9 +12,9 @@ from app.repo.workflow_repo import workflow_repo
 from services.admin_web.audit import audit_principal_action
 from services.admin_web.deletion import record_deletion
 from services.admin_web.common import (
-    business_redirect, can_edit_resource, json_response_no_store, not_found,
-    operation_authorized, origin_ok, require_csrf, safe_next, tenant_id_of,
-    unauthorized, with_auth,
+    as_bool, business_redirect, can_edit_resource, json_response_no_store,
+    not_found, operation_authorized, origin_ok, require_csrf, safe_next,
+    tenant_id_of, unauthorized, with_auth,
 )
 from services.admin_web.workflow_save import (
     prepare_workflow_create,

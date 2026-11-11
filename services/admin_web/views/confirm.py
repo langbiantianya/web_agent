@@ -91,6 +91,7 @@ def delete_trigger(
     impacts: tuple[str, ...] = (),
     disabled_reason: str = "",
     button_label: str = "Delete",
+    confirm_label: str = "",
     accessible_label: str = "",
 ) -> Any:
     """渲染「打开删除确认对话框」的触发按钮。
@@ -104,6 +105,9 @@ def delete_trigger(
 
     ``disabled_reason`` 非空时按钮禁用（并把原因写进 ``title``），
     用于「这个资源正被引用，删不掉」这类行内锁定。
+
+    ``confirm_label`` 是**对话框里**那个提交按钮的文案；留空则用默认的
+    「Delete」。软删除类动作（归档）要传自己的文案。
     """
     return form(
         input_(type="hidden", name="csrf_token", value=csrf),
@@ -120,6 +124,14 @@ def delete_trigger(
             data_confirm_title=title,
             data_confirm_summary=summary,
             data_confirm_impacts="\n".join(impacts),
+            # 对话框里那个真正提交按钮的文案。默认与触发器一致；
+            # 「归档」这类动作要写「归档」而不是「删除」——
+            # 标题写着「归档技能 X」，按钮却叫「删除」，管理员会犹豫。
+            **(
+                {"data_confirm_submit_label": confirm_label}
+                if confirm_label
+                else {}
+            ),
         ),
         action=action,
         method="post",

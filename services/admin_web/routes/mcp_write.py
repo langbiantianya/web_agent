@@ -85,7 +85,7 @@ def register(app: Any) -> None:
                     invalid_form_redirect(
                         f"/admin/mcp?resource={quote(code, safe='')}",
                         submitted,
-                        _mcp_field_errors(exc),
+                        _mcp_field_errors(exc, existing.transport),
                     ),
                     status_code=303,
                 )
@@ -245,8 +245,16 @@ def register(app: Any) -> None:
                 return business_redirect("/admin/mcp", error="missing")
             try:
                 result = await refresh_catalog(db, server=server)
-            except McpCatalogError:
-                return business_redirect("/admin/mcp", error="failed")
+            except McpCatalogError as exc:
+                # 区分「连不上」与「工具仍被占用」（UX-34）。
+                return business_redirect(
+                    "/admin/mcp",
+                    error=(
+                        "mcp_tools_in_use"
+                        if exc.reason == "tools_in_use"
+                        else "mcp_unreachable"
+                    ),
+                )
             await audit_principal_action(
                 db,
                 principal,

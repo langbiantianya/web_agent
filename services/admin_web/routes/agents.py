@@ -49,7 +49,7 @@ def register(app: Any) -> None:
         try:
             if not await can_access_page(db, principal, "agents"):
                 return not_found()
-            flash, _ = flash_from_query(request)
+            flash, flash_kind = flash_from_query(request)
             undo_id = undo_id_from_query(request)
             # 深链接到编辑面板（UX-09）：``?resource=<code>`` 决定打开
             # 哪个 Agent 的编辑面板。
@@ -115,6 +115,7 @@ def register(app: Any) -> None:
                     component_code="agent_editor",
                 ),
                 flash=flash,
+                flash_kind=flash_kind,
                 undo_id=undo_id,
                 create_errors=create_errors,
                 create_values=create_values,
