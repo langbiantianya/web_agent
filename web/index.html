@@ -132,6 +132,29 @@
   .banner { padding: 8px 14px; font-size: 12px; border-top: 1px solid var(--border); display: none; }
   .banner.show { display: block; }
   .banner.warn { background: #3d3319; color: var(--yellow); }
+
+  /* 链路自检面板：每一段一行，标记 + 名称 + 说明。
+     一眼能看出「哪一段断了」——这是排障时最需要的信息。 */
+  .stage {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 0; border-bottom: 1px solid var(--border);
+  }
+  .stage:last-child { border-bottom: none; }
+  .stage .st-mark {
+    flex: none; width: 54px; text-align: center; font-size: 11px;
+    font-weight: 600; padding: 3px 0; border-radius: 4px; letter-spacing: .04em;
+  }
+  .stage.pass .st-mark { background: #1c3d24; color: var(--green); }
+  .stage.fail .st-mark { background: #3d1c1c; color: var(--red); }
+  .stage.warn .st-mark { background: #3d3319; color: var(--yellow); }
+  .stage.run  .st-mark { background: #12233d; color: var(--accent); }
+  .stage.skip .st-mark { background: #21262d; color: var(--dim); }
+  .stage .st-body { flex: 1; min-width: 0; }
+  .stage .st-name { font-size: 13px; }
+  .stage .st-detail { font-size: 12px; color: var(--dim); word-break: break-word; }
+  .stage.fail .st-name { color: var(--red); }
+  .sc-group { font-size: 11px; color: var(--dim); margin: 12px 0 2px; letter-spacing: .06em; }
+  .sc-group:first-child { margin-top: 0; }
   .banner.ok { background: #16281a; color: var(--green); }
 
   #log { height: 190px; overflow-y: auto; padding: 10px 14px; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; }
@@ -192,7 +215,37 @@
     </div>
 
     <div class="card">
-      <h2>③ 工作流</h2>
+      <h2>③ 模型端点</h2>
+      <div class="body">
+        <div class="list" id="llmList"></div>
+        <div class="muted" style="margin-top:8px">
+          模型地址与密钥只存在库里，页面不回显密钥。
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>④ 技能</h2>
+      <div class="body">
+        <div class="list" id="skillList"></div>
+        <div class="muted" style="margin-top:8px">
+          技能正文会作为独立的 system 消息注入提示词。
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>⑤ MCP 服务器</h2>
+      <div class="body">
+        <div class="list" id="mcpList"></div>
+        <div class="muted" style="margin-top:8px">
+          工具名以 mcp__服务器__工具 的限定名展示。
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>⑥ 工作流</h2>
       <div class="body"><div class="list" id="wfList"></div></div>
     </div>
   </div>
@@ -200,7 +253,24 @@
   <!-- 右栏 -->
   <div class="stack">
     <div class="card">
-      <h2>④ 对话与流式输出</h2>
+      <h2>⑦ 链路自检（模型 → 智能体 → 技能 → MCP → 工作流）</h2>
+      <div class="body stack">
+        <div class="row">
+          <button class="primary" id="btnSelfCheck" disabled>运行自检</button>
+          <button id="btnExport" disabled>导出报告</button>
+          <span class="muted" id="scSummary">未运行</span>
+        </div>
+        <div class="muted">
+          自检分两段：<b>配置自检</b>核对库里每一段配置是否接得上；
+          <b>动态探测</b>真的跑一次会话，看模型有没有吐字、模型有没有调 MCP 工具、
+          工作流节点有没有按序执行、审批挂起后能不能继续。
+        </div>
+        <div id="scStages"><div class="muted">点击「运行自检」开始。</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>⑧ 对话与流式输出</h2>
       <div class="chat" id="chat"><div class="muted">创建会话后发送一条消息，这里会按节点实时显示吐字。</div></div>
 
       <div class="banner warn" id="banner"></div>
@@ -227,7 +297,7 @@
     </div>
 
     <div class="card">
-      <h2>⑤ 事件日志（id 即 seq，续传锚点）</h2>
+      <h2>⑨ 事件日志（id 即 seq，续传锚点）</h2>
       <div id="log"></div>
     </div>
   </div>
@@ -315,8 +385,13 @@ async function api(path, method = 'GET', body) {
     err.status = r.status;
     err.code = data && data.code;
     if (r.status === 401 && path !== '/api/auth/me') {
-      banner('登录已过期，正在返回登录页…', 'warn');
-      setTimeout(() => location.reload(), 500);
+      // 只有「本来登录过、现在掉线」才回登录页。**没登录时**（首屏加载
+      // catalog / selfcheck 都会 401）不能 reload——否则页面每 500ms 自己
+      // 刷新一次，既刷屏又刷请求。
+      if (AUTH_USER) {
+        banner('登录已过期，正在返回登录页…', 'warn');
+        setTimeout(() => location.reload(), 500);
+      }
     }
     throw err;
   }
@@ -529,9 +604,22 @@ async function submitApproval(el, approved) {
   const comment = (el.querySelector('.ap-comment').value || '').trim();
   el.querySelectorAll('.acts button').forEach(b => { b.disabled = true; });
   try {
-    const r = await api(`/api/runs/${S.runId}/approval`, 'POST', {
-      approved, comment,
-    });
+    // 409 的重试是有原因的：编排器是「先 emit approval_required、再把 run
+    // 置为 waiting」，中间只有几毫秒。人看到卡片就点批准，很容易正好撞在
+    // 这个窗口里——这不是人的错，重试几次等它过去就行。
+    let r = null;
+    let lastError = null;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        r = await api(`/api/runs/${S.runId}/approval`, 'POST', { approved, comment });
+        break;
+      } catch (e) {
+        lastError = e;
+        if (e.status !== 409) break;
+        await new Promise(res => setTimeout(res, 300));
+      }
+    }
+    if (!r) throw lastError;
     settleApproval(el, approved, r.comment || comment);
     banner(approved ? '已批准，流程从审批处继续往下跑' : '已驳回，本次 run 就此终止', approved ? 'ok' : 'warn');
   } catch (e) {
@@ -636,6 +724,8 @@ function handle(ev, seq, data) {
 
 // ---------------------------------------------------------------- SSE
 function onEvent(ev, seq, data) {
+  // 动态探测靠这些事件打分：先把原始事件存下来。
+  if (SC.probe) SC.probe.events.push({ ev, seq, data });
   // seq 连续性自检：续传不该出现重复或乱序
   if (seq != null) {
     if (seq <= S.lastSeqSeen) { S.seqOk = false; }
@@ -837,6 +927,291 @@ async function loadPendingApproval(runId) {
   setState('waiting');
 }
 
+// ---------------------------------------------------------------- 链路自检
+
+// 自检分两段：**配置自检**核对库里每一段配置接不接得上（静态，快）；
+// **动态探测**真的跑一次会话（动态，贵但有说服力）。两者分开显示，
+// 出问题时一眼能分清是「没配好」还是「配好了但跑不动」。
+const SC = {
+  report: null,   // 配置自检报告（/api/selfcheck）
+  probe: null,    // 动态探测结果
+  running: false,
+};
+
+const SC_MARK = { pass: 'PASS', fail: 'FAIL', warn: 'WARN', run: 'RUN', skip: 'SKIP' };
+
+// 探测用的固定问题：技能正文里写明了「必须先调 MCP 工具」，
+// 所以模型一旦调了工具，就同时证明了「技能注入生效」与「工具链路通」。
+const PROBE_TEXT = '请按技能说明完成一次端到端自检。';
+
+function scStage(status, name, detail) {
+  const el = document.createElement('div');
+  el.className = 'stage ' + status;
+  const mark = document.createElement('div');
+  mark.className = 'st-mark';
+  mark.textContent = SC_MARK[status] || status;
+  const body = document.createElement('div');
+  body.className = 'st-body';
+  const n = document.createElement('div');
+  n.className = 'st-name';
+  n.textContent = name;
+  const d = document.createElement('div');
+  d.className = 'st-detail';
+  d.textContent = detail || '';
+  body.appendChild(n);
+  body.appendChild(d);
+  el.appendChild(mark);
+  el.appendChild(body);
+  return el;
+}
+
+function scGroup(title) {
+  const el = document.createElement('div');
+  el.className = 'sc-group';
+  el.textContent = title;
+  return el;
+}
+
+function renderScStages() {
+  const box = $('scStages');
+  box.innerHTML = '';
+  if (!SC.report && !SC.probe) {
+    box.innerHTML = '<div class="muted">点击「运行自检」开始。</div>';
+    return;
+  }
+  if (SC.report) {
+    box.appendChild(scGroup('配置自检'));
+    const chains = SC.report.chains || [];
+    if (!chains.length) {
+      box.appendChild(scStage('warn', '没有可检的工作流', '库里还没有工作流，先在管理端建一个'));
+    }
+    for (const chain of chains) {
+      for (const st of chain.stages || []) {
+        const status = st.status === 'fail' ? 'fail' : (st.status === 'warn' ? 'warn' : 'pass');
+        box.appendChild(scStage(status, chain.workflow_code + ' · ' + st.label, st.detail));
+      }
+    }
+  }
+  if (SC.probe) {
+    box.appendChild(scGroup('动态探测'));
+    for (const st of SC.probe.stages || []) {
+      box.appendChild(scStage(st.status, st.name, st.detail));
+    }
+  }
+}
+
+/** 挑一个适合做探测的工作流。
+
+    优先选「节点绑了 MCP 工具」的那个——只有它能探到工具调用这一段；
+    没有就退回下拉框里选的那个。
+ */
+function pickProbeWorkflow() {
+  const chains = (SC.report && SC.report.chains) || [];
+  const withTool = chains.find(c =>
+    (c.stages || []).some(s => String(s.key || '').endsWith(':mcp') && s.status !== 'fail'));
+  if (withTool) return withTool.workflow_code;
+  return $('wfSelect').value || '';
+}
+
+function scSummaryText() {
+  const cfg = (SC.report && SC.report.summary) || {};
+  const probe = SC.probe || {};
+  const stages = probe.stages || [];
+  const failed = stages.filter(s => s.status === 'fail').length;
+  const passed = stages.filter(s => s.status === 'pass').length;
+  const cfgFailed = cfg.failed_stages || 0;
+  return '配置自检 ' + (cfgFailed ? cfgFailed + ' 段异常' : '全通') +
+    ' · 动态探测 ' + passed + '/' + stages.length + ' 通过' +
+    (failed ? '（' + failed + ' 段失败）' : '');
+}
+
+/** 跑一次动态探测：建会话 → 发消息 → 订阅事件流 → 判定。 */
+async function runProbe() {
+  const wfCode = pickProbeWorkflow();
+  const stages = [];
+  const push = (status, name, detail) => {
+    stages.push({ status, name, detail });
+    renderScStages();
+  };
+  SC.probe = { stages, wf: wfCode, events: [], runId: null, convId: null };
+
+  if (!wfCode) {
+    push('skip', '动态探测', '没有可用的工作流，跳过');
+    return;
+  }
+  push('run', '建立会话', '工作流 ' + wfCode);
+  const conv = await api('/api/conversations', 'POST', { workflow_code: wfCode });
+  SC.probe.convId = conv.id;
+  const sent = await api('/api/conversations/' + conv.id + '/messages', 'POST', { content: PROBE_TEXT });
+  SC.probe.runId = sent.run_id;
+  S.runId = sent.run_id;
+  $('mRun').textContent = sent.run_id;
+  S.streaming = true;
+  S.finished = false;
+  enableRun(true);
+  push('run', '已触发 run', 'run #' + sent.run_id + '，正在订阅事件流…');
+  await connect();
+  await waitProbe(sent.run_id);
+  await gradeProbe();
+}
+
+/** 等这次探测的 run 走到终态。
+
+    「waiting」（挂在审批节点上）**不是**终态：审批要人来点，
+    所以这里继续等，等到人批完或者超时。
+ */
+async function waitProbe(runId) {
+  const deadline = Date.now() + 240000;
+  while (Date.now() < deadline) {
+    let run;
+    try { run = await api('/api/runs/' + runId); } catch { return; }
+    if (['done', 'error', 'cancelled', 'rejected'].includes(run.status)) {
+      SC.probe.status = run.status;
+      return;
+    }
+    await new Promise(r => setTimeout(r, 800));
+  }
+  SC.probe.status = 'timeout';
+}
+
+/** 用收到的事件给动态探测打分。 */
+async function gradeProbe() {
+  const events = SC.probe.events || [];
+  const tokens = events.filter(e => e.ev === 'token');
+  const calls = [];
+  for (const e of events) {
+    if (e.ev !== 'tool_call') continue;
+    for (const tc of (e.data.toolCalls || [])) calls.push((tc.function || {}).name || '');
+  }
+  const results = events.filter(e => e.ev === 'tool_result');
+  const started = events.filter(e => e.ev === 'node_start').map(e => e.data.node);
+  const ended = events.filter(e => e.ev === 'node_end').map(e => e.data.node);
+  const approvals = events.filter(e => e.ev === 'approval_required');
+  const approved = events.filter(e => e.ev === 'approved');
+  const done = events.filter(e => e.ev === 'done');
+  const errors = events.filter(e => e.ev === 'error');
+  const stages = SC.probe.stages;
+
+  stages.push({
+    status: tokens.length ? 'pass' : 'fail',
+    name: '模型调用',
+    detail: tokens.length
+      ? '收到 ' + tokens.length + ' 个 token 事件'
+      : '没有收到任何 token：模型没有响应',
+  });
+
+  const mcpCall = calls.find(n => String(n).startsWith('mcp__'));
+  if (mcpCall) {
+    const matched = results.find(r => String(r.data.tool || '') === mcpCall);
+    stages.push({
+      status: 'pass',
+      name: 'MCP 工具调用',
+      detail: '模型调用了 ' + mcpCall +
+        (matched ? '，结果：' + String(matched.data.summary || '').slice(0, 80) : '（未收到结果事件）'),
+    });
+  } else if (calls.length) {
+    stages.push({
+      status: 'warn', name: 'MCP 工具调用',
+      detail: '模型调用了内置工具（' + calls.join('、') + '），没调用 MCP 工具',
+    });
+  } else {
+    stages.push({
+      status: 'warn', name: 'MCP 工具调用',
+      detail: '本次没有工具调用事件：若该工作流绑了 MCP 工具，说明模型没按技能说明调用',
+    });
+  }
+
+  stages.push({
+    status: started.length && ended.length >= started.length ? 'pass' : 'fail',
+    name: '工作流节点',
+    detail: started.length
+      ? 'node_start：' + started.join(' → ') + '；node_end：' + ended.join(' → ')
+      : '没有节点事件',
+  });
+
+  if (approvals.length) {
+    stages.push({
+      status: approved.length ? 'pass' : 'warn',
+      name: '人工审批',
+      detail: approved.length
+        ? '流程在审批节点挂起，批准后继续执行'
+        : '流程在审批节点挂起，未见批准事件',
+    });
+  } else {
+    stages.push({
+      status: 'skip', name: '人工审批',
+      detail: '该工作流没有审批节点',
+    });
+  }
+
+  let msgDetail = '';
+  let msgStatus = 'fail';
+  try {
+    const msgs = await api('/api/runs/' + SC.probe.runId + '/messages');
+    const rows = msgs || [];
+    const assistants = rows.filter(m => m.role === 'assistant' && (m.content || '').trim());
+    if (assistants.length) {
+      msgStatus = 'pass';
+      msgDetail = '最终消息 ' + assistants[assistants.length - 1].content.length + ' 字，已落库';
+    } else {
+      msgDetail = '没有 assistant 消息落库';
+    }
+  } catch (e) {
+    msgDetail = '读取最终消息失败：' + e.message;
+  }
+  stages.push({
+    status: done.length && !errors.length ? 'pass' : 'fail',
+    name: 'run 终态',
+    detail: done.length
+      ? 'status=' + (done[done.length - 1].data.status || '?') + (errors.length ? '，有错误事件' : '')
+      : '没有收到 done 事件',
+  });
+  stages.push({ status: msgStatus, name: '最终消息', detail: msgDetail });
+  renderScStages();
+}
+
+async function runSelfCheck() {
+  if (SC.running) return;
+  SC.running = true;
+  $('btnSelfCheck').disabled = true;
+  $('btnExport').disabled = true;
+  SC.probe = null;
+  SC.report = null;
+  $('scSummary').textContent = '运行中…';
+  renderScStages();
+  try {
+    SC.report = await api('/api/selfcheck');
+    renderScStages();
+    await runProbe();
+    $('scSummary').textContent = scSummaryText();
+    $('btnExport').disabled = false;
+  } catch (e) {
+    fail(e);
+    $('scSummary').textContent = '自检失败：' + e.message;
+  } finally {
+    SC.running = false;
+    $('btnSelfCheck').disabled = false;
+  }
+}
+
+function exportSelfCheck() {
+  const payload = {
+    generated_at: new Date().toISOString(),
+    config: SC.report,
+    probe: SC.probe,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'selfcheck-' + Date.now() + '.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  banner('自检报告已导出为 JSON', 'ok');
+}
+
 // ---------------------------------------------------------------- 加载
 async function loadConfig(authenticated) {
   const [catalog, health] = await Promise.all([
@@ -846,9 +1221,9 @@ async function loadConfig(authenticated) {
   $('healthDot').className = 'dot on';
   $('healthDot').title = `${health.app} ${health.version} · db ${health.db}`;
 
-  $('agentList').innerHTML = agents.map(a =>
-    `<div><span>${a.code}</span><span class="tag ${a.enabled ? 'ok' : ''}">${a.model} · v${a.version}</span></div>`
-  ).join('') || '<div class="muted">暂无</div>';
+  // 目录接口的 Agent 没有 version 字段——之前这里渲染成「vundefined」。
+  // 真正有用的是「绑的是哪个端点、端点就绪了吗」，那些在自检报告里有。
+  renderAgentList(agents.map(a => ({ code: a.code, model: a.model, enabled: a.enabled })));
 
   $('wfList').innerHTML = wfs.map(w => {
     const ids = (w.nodes || []).join(' → ');
@@ -860,6 +1235,49 @@ async function loadConfig(authenticated) {
     || '<option value="">（没有已启用的 workflow，请先 python -m scripts.seed）</option>';
 
   enableConv(authenticated && enabled.length > 0);
+
+  // 链路自检的静态部分：模型端点 / 技能 / MCP 服务器以前在客户端根本看不见。
+  if (!authenticated) {
+    $('llmList').innerHTML = '<div class="muted">登录后可见</div>';
+    $('skillList').innerHTML = '<div class="muted">登录后可见</div>';
+    $('mcpList').innerHTML = '<div class="muted">登录后可见</div>';
+    return;
+  }
+  $('btnSelfCheck').disabled = false;
+  try {
+    SC.report = await api('/api/selfcheck');
+    renderScStages();
+    renderSelfCheckLists(SC.report);
+    if (SC.report.agents) renderAgentList(SC.report.agents);
+  } catch (e) {
+    banner('链路自检数据加载失败：' + e.message, 'warn');
+  }
+}
+
+/** 渲染 Agent 列表：code + 模型 + 绑定的端点与就绪状态。 */
+function renderAgentList(agents) {
+  $('agentList').innerHTML = (agents || []).map(a =>
+    `<div><span>${escapeHtml(a.code)}</span><span class="tag ${a.enabled && a.llm_ready !== false ? 'ok' : 'warn'}">` +
+    `${escapeHtml(a.model || '未选模型')} · ${escapeHtml(a.llm_endpoint_code || '未绑定端点')}</span></div>`
+  ).join('') || '<div class="muted">暂无</div>';
+}
+
+/** 把自检报告里的三段清单渲染到左栏。 */
+function renderSelfCheckLists(report) {
+  $('llmList').innerHTML = (report.llm_endpoints || []).map(l =>
+    `<div><span>${escapeHtml(l.code)}</span><span class="tag ${l.enabled && l.key_configured ? 'ok' : 'warn'}">` +
+    `${escapeHtml(l.model || '未选模型')} · ${escapeHtml(l.host)}</span></div>`
+  ).join('') || '<div class="muted">暂无</div>';
+
+  $('skillList').innerHTML = (report.skills || []).map(s =>
+    `<div><span>${escapeHtml(s.code)}</span><span class="tag ${s.enabled && s.status === 'published' ? 'ok' : 'warn'}">` +
+    `v${s.version} · ${escapeHtml(s.status)}</span></div>`
+  ).join('') || '<div class="muted">暂无</div>';
+
+  $('mcpList').innerHTML = (report.mcp_servers || []).map(m =>
+    `<div><span>${escapeHtml(m.code)}</span><span class="tag ${m.enabled && m.tool_count ? 'ok' : 'warn'}">` +
+    `${escapeHtml(m.transport)} · ${m.tool_count} 工具</span></div>`
+  ).join('') || '<div class="muted">暂无</div>';
 }
 
 $('btnLogin').onclick = () => login().catch(fail);
@@ -869,6 +1287,8 @@ $('btnSend').onclick = () => send().catch(fail);
 $('btnCancel').onclick = () => cancel().catch(fail);
 $('btnReconnect').onclick = () => reconnectNow().catch(fail);
 $('btnResume').onclick = () => restore().catch(fail);
+$('btnSelfCheck').onclick = () => runSelfCheck().catch(fail);
+$('btnExport').onclick = () => exportSelfCheck();
 $('input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send().catch(fail); }
 });
@@ -914,3 +1334,15 @@ syncMeta();
 </script>
 </body>
 </html>
+
+
+
+
+
+
+
+
+
+
+
+

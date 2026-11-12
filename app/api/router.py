@@ -13,6 +13,7 @@ from app.api.routes import (
     mcp,
     oauth_provider,
     run,
+    selfcheck,
     skill,
     tool,
     tool_audit,
@@ -32,6 +33,7 @@ api_router.include_router(tool_audit.router)
 api_router.include_router(workflow.router)
 api_router.include_router(conversation.router)
 api_router.include_router(run.router)
+api_router.include_router(selfcheck.router)
 api_router.include_router(skill.router)
 api_router.include_router(mcp.router)
 
