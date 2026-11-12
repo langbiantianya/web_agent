@@ -1026,6 +1026,25 @@ function scSummaryText() {
     (failed ? '（' + failed + ' 段失败）' : '');
 }
 
+/** 更新某一阶段的结论。
+
+    「建立会话」「已触发 run」这两个阶段一开始是 `run`（进度态），跑完
+    之后必须落成 pass/fail——不然它们永远停在 RUN，汇总会说「6/8 通过」
+    而实际全过，看着像有东西没成。
+
+    Args:
+        name: 阶段名。
+        status: 新的状态（pass/fail/warn/skip）。
+        detail: 新的说明；不给就保留原来的。
+ */
+function setStage(name, status, detail) {
+  const st = ((SC.probe && SC.probe.stages) || []).find(x => x.name === name);
+  if (!st) return;
+  st.status = status;
+  if (detail) st.detail = detail;
+  renderScStages();
+}
+
 /** 跑一次动态探测：建会话 → 发消息 → 订阅事件流 → 判定。 */
 async function runProbe() {
   const wfCode = pickProbeWorkflow();
@@ -1092,6 +1111,18 @@ async function gradeProbe() {
   const done = events.filter(e => e.ev === 'done');
   const errors = events.filter(e => e.ev === 'error');
   const stages = SC.probe.stages;
+
+  // 进度阶段要落定：建会话 / 已触发 run 一开始是 run（RUN），跑完之后
+  // 不改的话它们会永远停在 RUN，汇总就变成「6/8 通过」，实际却是全过。
+  const probeStatus = SC.probe.status || '';
+  const convOk = !!SC.probe.convId;
+  setStage('建立会话', convOk ? 'pass' : 'fail',
+    convOk ? '会话已建立：conv #' + SC.probe.convId : '会话建立失败');
+  const runOk = !!SC.probe.runId && probeStatus === 'done';
+  setStage('已触发 run', runOk ? 'pass' : 'fail',
+    SC.probe.runId
+      ? 'run #' + SC.probe.runId + ' 终态：' + (probeStatus || '?')
+      : '没有触发 run');
 
   stages.push({
     status: tokens.length ? 'pass' : 'fail',

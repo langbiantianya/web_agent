@@ -192,7 +192,23 @@ docker exec -w /app -e PYTHONPATH=/app webagent-client \
 4. 流程跑到审批节点会挂起 → 在对话流里点「**批准**」；
 5. 自检面板逐段出结论；点「**导出报告**」下载 JSON。
 
-实测截图：`docs/testing/audit/client-selfcheck-pass.png`。
+实测截图：
+
+- `docs/testing/audit/client-selfcheck-m3flash-pass.png`（M3.1-Flash 全过）
+- `docs/testing/audit/client-selfcheck-m3flash-8of8.png`（动态探测 **8/8 通过**）
+
+### 6.1 自检面板的两处收尾（已修）
+
+第一版面板里，「建立会话」「已触发 run」这两个阶段是以**进度态**（RUN）加进去的，
+跑完之后没人把它们落定，于是它们永远停在 RUN——汇总那句话就成了
+「动态探测 6/8 通过」，明明全过，看着像有东西没成。
+
+现在收尾时会把这两段落成 pass/fail（`setStage()`）：
+
+- 「建立会话」：会话建成了就是 pass，写明 conv id；
+- 「已触发 run」：run 终态是 `done` 才算 pass，否则 fail 并写明终态。
+
+修完再跑就是 **8/8 通过**，两段都带着结论，不再有悬着的 RUN。
 
 左栏同时补齐了以前**看不见**的三段：模型端点、技能、MCP 服务器（工具数与
 限定名）。以前客户端只有 Agent 与工作流两个列表。
