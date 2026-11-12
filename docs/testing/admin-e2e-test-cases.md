@@ -1,5 +1,7 @@
 # 管理后台完整验收用例（按钮级）
 
+> [`e2e-agent-skill-mcp-workflow.md`](e2e-agent-skill-mcp-workflow.md)。
+
 测试环境：`http://192.168.5.19:8001/admin/`
 部署：`192.168.5.19` 的 `/docker/web-agent-stack`，
 `docker compose -f deploy/docker-compose.stack.yml --env-file .env up -d --build`
@@ -457,3 +459,4 @@
 | `test_mobile_sidebar_does_not_stick` | 同上 | UX-48：手机端回到 `position: static` |
 | `test_form_control_rules_skip_checkboxes_and_radios` | 同上 | UX-49：表单控件规则不许套到勾选框 / 单选框 |
 | `test_checkbox_and_radio_have_a_fixed_size` | 同上 | UX-49：固定 16×16 + 主题 accent 色 |
+
