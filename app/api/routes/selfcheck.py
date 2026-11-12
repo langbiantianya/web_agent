@@ -17,6 +17,7 @@ MCP 服务器与 LLM 端点这几段链路是**看不见**的——于是「为�
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -24,13 +25,17 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter
 
 from app.api.deps import CurrentUserDep, DbSession
+from app.config.settings import settings
 from app.core.mcp.naming import is_mcp_name
+from app.core.studio import get_studio_client
 from app.core.workflow_def import collect_graph_issues
 from app.repo.agent_repo import agent_repo
 from app.repo.llm_endpoint_repo import llm_endpoint_repo
 from app.repo.mcp_repo import mcp_server_repo, mcp_tool_repo
 from app.repo.skill_repo import skill_repo
 from app.repo.workflow_repo import workflow_repo
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/selfcheck", tags=["selfcheck"])
 
@@ -71,6 +76,115 @@ def _stage(key: str, label: str, status: str, detail: str) -> dict[str, Any]:
         阶段字典。
     """
     return {"key": key, "label": label, "status": status, "detail": detail}
+
+
+async def _studio_section(db, skill_rows) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """查 studio（脚本执行服务）的状态，以及哪些技能带脚本。
+
+    studio 是**独立容器**：没有凭据、只读根文件系统、禁出网（§22.8.1）。
+    技能里的脚本由它执行，脚本正文随请求发过去——studio 不认识技能业务。
+
+    Args:
+        db: 数据库会话。
+        skill_rows: 技能行（用来数脚本资源）。
+
+    Returns:
+        ``(studio 字典, 逐段判定)``。
+    """
+    configured = bool((settings.studio_exec_addr or "").strip())
+    client = get_studio_client()
+    health = None
+    if client is not None:
+        try:
+            health = await client.health(timeout=3.0)
+        except Exception as exc:  # noqa: BLE001 —— 自检不该因为 studio 挂了就 500
+            logger.warning("studio 健康检查失败：%s", exc)
+
+    script_skills: list[dict[str, Any]] = []
+    for row in skill_rows:
+        resources = await skill_repo.list_resources(db, row.id)
+        scripts = [
+            str(r.path)
+            for r in resources
+            if str(r.path or "").startswith("scripts/")
+        ]
+        if scripts:
+            script_skills.append({"code": row.code, "scripts": scripts})
+
+    studio = {
+        "configured": configured,
+        "addr": settings.studio_exec_addr or "",
+        "ready": bool(health.ready) if health is not None else False,
+        "version": health.version if health is not None else "",
+        "languages": list(health.languages) if health is not None else [],
+        "profiles": [p.name for p in health.profiles] if health is not None else [],
+        "script_skills": script_skills,
+    }
+
+    stages: list[dict[str, Any]] = []
+    if not configured:
+        stages.append(
+            _stage(
+                "studio",
+                "Studio 脚本执行服务",
+                WARN,
+                "未配置 STUDIO_EXEC_ADDR：技能脚本不能执行（skill_exec 工具不注册）",
+            )
+        )
+    elif health is None:
+        stages.append(
+            _stage(
+                "studio",
+                "Studio 脚本执行服务",
+                FAIL,
+                f"连不上 studio（{settings.studio_exec_addr}）",
+            )
+        )
+    elif not health.ready:
+        stages.append(
+            _stage(
+                "studio",
+                "Studio 脚本执行服务",
+                FAIL,
+                f"studio 未就绪（版本 {health.version}）",
+            )
+        )
+    else:
+        stages.append(
+            _stage(
+                "studio",
+                "Studio 脚本执行服务",
+                PASS,
+                f"已就绪，版本 {health.version}，运行时 "
+                f"{'/'.join(health.languages)}，档位 "
+                f"{'/'.join(p.name for p in health.profiles) or health.profile}",
+            )
+        )
+
+    if script_skills:
+        total = sum(len(s["scripts"]) for s in script_skills)
+        stages.append(
+            _stage(
+                "studio:scripts",
+                "技能脚本资源",
+                PASS,
+                f"{len(script_skills)} 个技能带脚本，共 {total} 个："
+                + "、".join(
+                    f"{s['code']}（{len(s['scripts'])}）" for s in script_skills
+                ),
+            )
+        )
+    else:
+        stages.append(
+            _stage(
+                "studio:scripts",
+                "技能脚本资源",
+                WARN,
+                "没有任何技能带 scripts/ 下的脚本：studio 通了也没东西可跑",
+            )
+        )
+
+    return studio, stages
 
 
 async def _selfcheck_payload(db, tenant_id: str) -> dict[str, Any]:
@@ -314,6 +428,8 @@ async def _selfcheck_payload(db, tenant_id: str) -> dict[str, Any]:
             }
         )
 
+    studio_out, studio_stages = await _studio_section(db, skill_rows)
+
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "tenant_id": tenant_id,
@@ -339,6 +455,8 @@ async def _selfcheck_payload(db, tenant_id: str) -> dict[str, Any]:
             for wf in workflow_rows
         ],
         "chains": chains,
+        "studio": studio_out,
+        "studio_stages": studio_stages,
         "summary": {
             "llm_endpoints": len(llm_out),
             "agents": len(agent_out),
@@ -346,6 +464,7 @@ async def _selfcheck_payload(db, tenant_id: str) -> dict[str, Any]:
             "mcp_servers": len(mcp_out),
             "workflows": len(workflow_rows),
             "failed_stages": sum(c["failed"] for c in chains),
+            "studio_ready": bool(studio_out["ready"]),
             "ready": all(c["failed"] == 0 for c in chains) and bool(chains),
         },
     }

@@ -42,6 +42,23 @@ def test_skill_body_points_at_the_mcp_tool():
     assert "E2E_SUM" in flow.SKILL_BODY
 
 
+def test_skill_body_points_at_the_studio_script():
+    """技能正文也要点名 studio 要执行的脚本。
+
+    模型只有拿到这段正文才会去调 ``skill_exec``——所以「模型真的调了
+    skill_exec」反过来证明「技能正文真的注入进提示词了」。
+    """
+    assert flow.SCRIPT_PATH in flow.SKILL_BODY
+    assert "skill_exec" in flow.SKILL_BODY
+    assert flow.SCRIPT_PATH.startswith("scripts/")
+
+
+def test_studio_script_resource_is_under_scripts_dir():
+    """脚本资源必须在 ``scripts/`` 下——那是 studio 执行器的口径（§22.8.3）。"""
+    assert flow.SCRIPT_PATH.startswith("scripts/")
+    assert flow.SCRIPT_MARK in flow.SCRIPT_BODY
+
+
 def test_tool_qualified_names_match_server_code():
     """限定名由服务器 code + 工具名拼出，改了 code 就得同步改引用。"""
     from app.core.mcp.naming import build_qualified_name, parse_qualified_name
@@ -109,11 +126,16 @@ EXPECTED_CASES = {
     "E2E-18",
     "E2E-19",
     "E2E-20",
+    "E2E-21",
+    "E2E-22",
+    "E2E-23",
+    "E2E-24",
+    "E2E-25",
 }
 
 
 def test_every_case_id_is_reported():
-    """21 条用例的编号都在脚本里被 ``report.add`` / ``report.skip`` 用上。
+    """26 条用例的编号都在脚本里被 ``report.add`` / ``report.skip`` 用上。
 
     编号只出现在注释或文档里不算数——它必须真的落进报告。
     """

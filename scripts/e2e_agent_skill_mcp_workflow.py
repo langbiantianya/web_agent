@@ -95,15 +95,36 @@ TOOL_ADD = build_qualified_name(MCP_CODE, "add")
 TOOL_ECHO = build_qualified_name(MCP_CODE, "echo")
 TOOL_FAIL = build_qualified_name(MCP_CODE, "always_fail")
 
+# 技能脚本：studio 侧要执行的脚本资源（§22.8）。它跑在 studio 容器里——
+# 没有凭据、不能出网，只负责把一个标记打到 stdout 上。
+SCRIPT_PATH = "scripts/e2e_sum.py"
+SCRIPT_MARK = "E2E_STUDIO_SUM:7"
+SCRIPT_BODY = '''#!/usr/bin/env python3
+"""端到端验收脚本。
+
+它证明三件事：脚本正文真的随请求发到了 studio、studio 真的起了子进程、
+stdout 真的回到了 web_agent 并回灌给了模型。
+"""
+
+print("E2E_STUDIO_SUM:7")
+'''
+
 # 技能正文是「行为指令」：模型只有拿到这段正文才会去调那个 MCP 工具。
 # 于是「工具真的被调了」反过来证明「技能真的注入进提示词了」——这是本流程
 # 里最能说明问题的一条断言。
+#
+# 技能、MCP、studio 在**同一次 run** 里一起用：一次调用证明「技能注入 →
+# 模型按技能办事」，同时验证 MCP 工具与 studio 脚本两条工具链都通。
 SKILL_BODY = f"""# 端到端验收技能
 
-你必须**先**调用 MCP 工具 `{TOOL_ADD}`（参数 a=1、b=1），再回答用户。
+你必须按顺序做两件事，**一件都不能少**：
 
-回答里必须原样包含工具返回的 `E2E_SUM:2` 标记；如果工具没有返回这个标记，
-就回答「未获得工具结果」，不要编造。
+1. 调用 MCP 工具 `{TOOL_ADD}`（参数 a=1、b=1）；
+2. 调用内置工具 `skill_exec`（参数 skill=`{SKILL_CODE}`、
+   script=`{SCRIPT_PATH}`），在 studio 容器里执行技能脚本。
+
+然后再回答用户。回答里必须原样包含 MCP 工具返回的 `E2E_SUM:2` 标记；
+如果工具没有返回这个标记，就回答「未获得工具结果」，不要编造。
 """
 
 AGENT_PROMPT = "你是端到端验收助手。严格按技能说明执行，不要自行发挥。"
@@ -418,12 +439,34 @@ async def ensure_skill(db: AsyncSession) -> dict[str, Any]:
             )
         )
         await db.commit()
+
+    # 脚本资源：studio 侧要执行的就是它。路径必须在 scripts/ 下（§22.8.3）。
+    script_exists = await db.scalar(
+        sa.select(SkillResource.id).where(
+            SkillResource.skill_id == row.id,
+            SkillResource.path == SCRIPT_PATH,
+        )
+    )
+    if script_exists is None:
+        payload = SCRIPT_BODY.encode("utf-8")
+        db.add(
+            SkillResource(
+                skill_id=row.id,
+                path=SCRIPT_PATH,
+                mime_type="text/x-python",
+                is_text=1,
+                content=payload,
+                size_bytes=len(payload),
+            )
+        )
+        await db.commit()
     return {
         "code": row.code,
         "version": row.version,
         "status": row.status,
         "enabled": bool(row.enabled),
         "resource": resource_path,
+        "script": SCRIPT_PATH,
     }
 
 
@@ -862,7 +905,9 @@ async def run_flow(args: argparse.Namespace, report: Report) -> int:
             f"{mcp['code']} 传输={mcp['transport']} 导入={mcp['imported']}",
         )
 
-        await ensure_agents(db, llm, [TOOL_ADD, TOOL_ECHO])
+        # skill_exec 是**可选工具**：只有 studio 可用时才注册（§22.8.6）。
+        # 它要显式列进智能体的工具里，模型才看得见。
+        await ensure_agents(db, llm, [TOOL_ADD, TOOL_ECHO, "skill_exec"])
         await ensure_workflow(db)
         log("布场完成。")
 
@@ -1107,6 +1152,105 @@ async def run_flow(args: argparse.Namespace, report: Report) -> int:
             f"审计条数={len(audit_rows)}，命中 MCP 工具={len(mcp_audits)}",
         )
 
+        # ---- studio：脚本执行这一段 --------------------------------
+        #
+        # studio 是独立容器（无凭据、只读、禁出网）。这里先问它的健康，
+        # 再直接跑一次技能脚本，最后看模型**有没有**在 run 里真的调了它。
+        from app.core.skill_exec import exec_skill_script
+        from app.core.studio import configure_studio, get_studio_client
+
+        # 脚本进程**不是** web_agent 主服务：主服务在启动时配置过 studio
+        # （init_studio），这个独立进程没有——所以这里自己配一次，
+        # 否则 get_studio_client() 永远是 None，会误判成「studio 没部署」。
+        client_obj = get_studio_client() or configure_studio(
+            settings.studio_exec_addr
+        )
+        if client_obj is None:
+            report.add(
+                "E2E-21",
+                "studio 脚本执行服务已连接",
+                False,
+                "studio 未配置（STUDIO_EXEC_ADDR 为空）",
+            )
+        else:
+            try:
+                health = await client_obj.health(timeout=5.0)
+                report.add(
+                    "E2E-21",
+                    "studio 脚本执行服务已连接",
+                    bool(health.ready),
+                    f"版本={health.version}，就绪={health.ready}，"
+                    f"运行时={list(health.languages)}，"
+                    f"档位={[p.name for p in health.profiles]}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                report.add(
+                    "E2E-21",
+                    "studio 脚本执行服务已连接",
+                    False,
+                    f"健康检查失败：{exc}",
+                )
+
+        # 直接跑一次脚本：证明「脚本正文 → studio → 子进程 → stdout」这条链是通的。
+        script_ok = False
+        script_detail = ""
+        try:
+            async with SessionLocal() as sdb:
+                ok, text = await exec_skill_script(
+                    sdb,
+                    skill=SKILL_CODE,
+                    script=SCRIPT_PATH,
+                    argv=None,
+                    stdin="",
+                    timeout_ms=None,
+                    allowed_codes={SKILL_CODE},
+                )
+            script_ok = bool(ok) and SCRIPT_MARK in text
+            script_detail = text.strip().replace("\n", " ")[:160]
+        except Exception as exc:  # noqa: BLE001
+            script_detail = f"执行失败：{exc}"
+        report.add(
+            "E2E-22",
+            "技能脚本经 studio 真实执行",
+            script_ok,
+            script_detail,
+        )
+
+        # 模型在 run 里真的调了 skill_exec（工具链事件里能看到）。
+        skill_exec_calls = [
+            name for name in called if name == "skill_exec"
+        ]
+        report.add(
+            "E2E-23",
+            "模型在同一次 run 里真实调用了 skill_exec",
+            bool(skill_exec_calls),
+            f"调用列表={called}",
+        )
+
+        # 脚本输出真的回灌进了模型上下文（标记要出现在工具结果里）。
+        exec_summary = " ".join(
+            str(d.get("summary") or "")
+            for d in results
+            if str(d.get("tool") or "") == "skill_exec"
+        )
+        report.add(
+            "E2E-24",
+            "studio 脚本输出已回灌到模型上下文",
+            SCRIPT_MARK in exec_summary,
+            f"回灌片段={exec_summary[:120]}",
+        )
+
+        # 审计里也要有 skill_exec 这一条。
+        exec_audits = [
+            a for a in audit_rows if str(a.get("tool_name") or "") == "skill_exec"
+        ]
+        report.add(
+            "E2E-25",
+            "skill_exec 调用审计已落库",
+            bool(exec_audits),
+            f"审计条数={len(audit_rows)}，命中 skill_exec={len(exec_audits)}",
+        )
+
         if not args.keep:
             await cleanup(conv_id)
 
@@ -1117,6 +1261,20 @@ async def _close_mcp() -> None:
     """关掉本进程起过的 MCP 连接。"""
     try:
         await mcp_manager.close_all()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def _close_studio() -> None:
+    """关掉本进程起过的 studio 客户端。
+
+    脚本为了直连 studio 自己配了一个客户端（见 E2E-21）；进程退出前要
+    把它关掉，否则 gRPC 的 aio 通道会留个未关闭的告警。
+    """
+    try:
+        from app.core.studio import close_studio_client
+
+        await close_studio_client()
     except Exception:  # noqa: BLE001
         pass
 
@@ -1151,6 +1309,7 @@ def main() -> int:
         return 2
     finally:
         asyncio.run(_close_mcp())
+        asyncio.run(_close_studio())
 
     print(report.render())
     if args.json:

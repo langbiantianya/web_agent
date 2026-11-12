@@ -993,6 +993,15 @@ function renderScStages() {
       }
     }
   }
+  if (SC.report) {
+    const studioStages = SC.report.studio_stages || [];
+    if (studioStages.length) {
+      box.appendChild(scGroup('Studio 脚本执行'));
+      for (const st of studioStages) {
+        box.appendChild(scStage(st.status, st.label, st.detail));
+      }
+    }
+  }
   if (SC.probe) {
     box.appendChild(scGroup('动态探测'));
     for (const st of SC.probe.stages || []) {
@@ -1021,7 +1030,14 @@ function scSummaryText() {
   const failed = stages.filter(s => s.status === 'fail').length;
   const passed = stages.filter(s => s.status === 'pass').length;
   const cfgFailed = cfg.failed_stages || 0;
+  const studio = (SC.report && SC.report.studio) || null;
+  const studioText = studio
+    ? (studio.ready
+        ? 'studio ' + (studio.version || '?') + ' 就绪'
+        : (studio.configured ? 'studio 未就绪' : 'studio 未配置'))
+    : '';
   return '配置自检 ' + (cfgFailed ? cfgFailed + ' 段异常' : '全通') +
+    (studioText ? ' · ' + studioText : '') +
     ' · 动态探测 ' + passed + '/' + stages.length + ' 通过' +
     (failed ? '（' + failed + ' 段失败）' : '');
 }
@@ -1191,6 +1207,37 @@ async function gradeProbe() {
   } catch (e) {
     msgDetail = '读取最终消息失败：' + e.message;
   }
+  // 脚本执行（studio）：模型在 run 里真的调了 skill_exec，且脚本输出回灌了。
+  const execCalls = calls.filter(n => n === 'skill_exec');
+  const execResults = results.filter(r => String(r.data.tool || '') === 'skill_exec');
+  const execText = execResults
+    .map(r => String(r.data.summary || ''))
+    .join(' ')
+    .trim();
+  const hasScriptSkill = (((SC.report && SC.report.studio &&
+    SC.report.studio.script_skills) || []).length) > 0;
+  if (execCalls.length && execResults.length) {
+    stages.push({
+      status: 'pass',
+      name: '脚本执行（studio）',
+      detail: '模型调用了 skill_exec，脚本输出：' + (execText.slice(0, 80) || '（空）'),
+    });
+  } else if (hasScriptSkill) {
+    stages.push({
+      status: 'warn',
+      name: '脚本执行（studio）',
+      detail: execCalls.length
+        ? '调了 skill_exec，但没收到工具结果事件'
+        : '有技能带脚本，但模型这次没调 skill_exec',
+    });
+  } else {
+    stages.push({
+      status: 'skip',
+      name: '脚本执行（studio）',
+      detail: '没有技能带 scripts/ 下的脚本，本次不涉及 studio',
+    });
+  }
+
   stages.push({
     status: done.length && !errors.length ? 'pass' : 'fail',
     name: 'run 终态',

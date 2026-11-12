@@ -1,4 +1,4 @@
-# 端到端验收流程：MiniMax × 智能体 × 技能 × MCP × 工作流
+# 端到端验收流程：MiniMax × 智能体 × 技能 × MCP × studio × 工作流
 
 > 落地日期：2026-11-12　｜　执行环境：`192.168.5.19`（docker compose 栈：客户端 8000 / 管理端 8001 / studio 9000）
 > 可执行脚本：`scripts/e2e_agent_skill_mcp_workflow.py`　｜　夹具服务器：`scripts/e2e_mcp_server.py`
@@ -13,7 +13,7 @@
 
 ## 1. 为什么要有这条流程
 
-系统里有五段链路，任意一段断了，用户看到的都只是「模型不回话」：
+系统里有六段链路，任意一段断了，用户看到的都只是「模型不回话」：
 
 | 段 | 配在哪 | 断了的表现 |
 | --- | --- | --- |
@@ -21,12 +21,16 @@
 | 智能体 | `agent` | 找不到节点、模型名空 |
 | 技能 | `skill` + `agent.skills` | 模型不按说明做事（**最隐蔽**：不报错） |
 | MCP | `mcp_server` + `mcp_tool` + `agent.tools` | 模型不调工具，或调用即失败 |
+| studio | `STUDIO_EXEC_ADDR` + 技能里的 `scripts/` 资源 | 技能脚本跑不了；`skill_exec` 工具压根不注册 |
 | 工作流 | `workflow.definition` | 节点不串起来、审批挂起不恢复 |
 
-以前这五段没有一个入口能一眼看完，于是排查只能靠猜。这条流程的产出就是
+以前这几段没有一个入口能一眼看完，于是排查只能靠猜。这条流程的产出就是
 **一个能一眼看完的结论**：每段通过/失败，加上失败原因。
 
-## 2. 环境前提（三条，缺一条就跑不了）
+**技能、MCP、studio 是在同一次 run 里一起验的**——技能正文同时点名 MCP 工具
+与 studio 脚本，模型按技能办事的过程就把两条工具链都走了一遍。
+
+## 2. 环境前提（四条，缺一条就跑不了）
 
 ### 2.1 管理端与运行时是**分库**的
 
@@ -55,7 +59,20 @@
 MCP_ALLOWED_COMMAND_PREFIXES=["/usr/local/bin/python"]
 ```
 
-### 2.3 浏览器端登录需要运行时库里有登录供应商
+### 2.3 studio 必须部署着
+
+技能脚本在 **studio 容器**里执行（§22.8）。客户端要配上：
+
+```dotenv
+STUDIO_EXEC_ADDR=studio:9000
+STUDIO_EXEC_REQUIRED=true
+```
+
+`STUDIO_EXEC_REQUIRED=true` 时 studio 连不上会**让主服务启动失败**——这是故意的：
+部署不完整就别装作能跑。脚本执行能力**整体不存在**时，`skill_exec` 工具根本不
+注册（模型看不见它），所以流程里如果模型压根没调 `skill_exec`，先查 studio。
+
+### 2.4 浏览器端登录需要运行时库里有登录供应商
 
 客户端控制台走 OIDC 登录。运行时库里的 `oauth_provider` 行是同步过去的
 （`local-idp`，issuer `http://192.168.5.19:3002`，client `webagent-admin`）。
@@ -65,19 +82,20 @@ MCP_ALLOWED_COMMAND_PREFIXES=["/usr/local/bin/python"]
 
 | 资产 | code | 说明 |
 | --- | --- | --- |
-| 技能 | `e2e-selfcheck-skill` | 正文写死「必须先调用 `mcp__e2e-selfcheck-mcp__add`」 |
+| 技能 | `e2e-selfcheck-skill` | 正文写死「先调 `mcp__e2e-selfcheck-mcp__add`，再调 `skill_exec` 跑 `scripts/e2e_sum.py`」 |
+| 技能脚本 | `e2e-selfcheck-skill` / `scripts/e2e_sum.py` | studio 执行的脚本，stdout 打固定标记 `E2E_STUDIO_SUM:7` |
 | MCP 服务器 | `e2e-selfcheck-mcp` | stdio，子进程跑 `scripts/e2e_mcp_server.py` |
 | 工具 | `mcp__e2e-selfcheck-mcp__{add,echo,now_iso,always_fail}` | 限定名由「服务器 code + 工具名」拼出 |
-| 智能体 | `e2e-selfcheck-agent` | 绑 minimax 端点 + 技能 + 两个 MCP 工具 |
+| 智能体 | `e2e-selfcheck-agent` | 绑 minimax 端点 + 技能 + 两个 MCP 工具 + `skill_exec` |
 | 智能体 | `e2e-selfcheck-writer` | 绑 minimax 端点，不带工具（汇总节点） |
 | 工作流 | `e2e-selfcheck-wf` | `collect`（技能+MCP）→ `gate`（人工审批）→ `report`（汇总） |
 | 终端用户 | `e2e-selfcheck` | 直接在运行时库建用户 + 服务端会话（不走外部 IdP） |
 
-**技能正文是行为指令**：模型只有拿到这段正文才会去调那个 MCP 工具。所以
-「工具真的被调了」反过来证明「技能真的注入进提示词了」——这是整条流程里
-最有说服力的一条断言。
+**技能正文是行为指令**：模型只有拿到这段正文才会去调那个 MCP 工具、才会让
+studio 跑脚本。所以「工具真的被调了」反过来证明「技能真的注入进提示词了」
+——这是整条流程里最有说服力的一条断言。
 
-## 4. 用例总表（21 条）
+## 4. 用例总表（26 条）
 
 编号前缀 `E2E-`。每条都给出**判定口径**——「看起来对」不算判定。
 
@@ -112,7 +130,25 @@ MCP_ALLOWED_COMMAND_PREFIXES=["/usr/local/bin/python"]
 | E2E-19 | 最终 assistant 消息已落库 | `GET /api/runs/{id}/messages` 里有非空 assistant 正文 | PASS（145 字） |
 | E2E-20 | 工具调用审计已落库 | `tool_call_audit` 里有本次 run 的 MCP 工具记录 | PASS（1 条命中） |
 
-## 4.3 模型与密钥（2026-11-12 换过一次）
+### 4.3 studio 脚本执行（E2E-21 ~ E2E-25）
+
+这一段验的是**技能脚本**这一条链：脚本正文随请求发到 studio，studio 起子进程
+跑它，输出再回灌给模型（§22.8）。**技能、MCP、studio 在同一次 run 里一起用**
+——一次调用同时证明「技能注入 → 模型按技能办事」与两条工具链都通。
+
+| 编号 | 用例 | 判定口径 | 实测 |
+| --- | --- | --- | --- |
+| E2E-21 | studio 脚本执行服务已连接 | studio 的 Health 返回 ready，版本 ≥ 最低要求 | PASS（2.0.0，运行时 bash/node/python，档位 fast/isolated） |
+| E2E-22 | 技能脚本经 studio 真实执行 | 直接调 `exec_skill_script`，退出码 0 且 stdout 含脚本标记 | PASS（`exit_code: 0 --- stdout --- E2E_STUDIO_SUM:7`） |
+| E2E-23 | 模型在同一次 run 里真实调用了 skill_exec | 事件流里有 `tool_call` 且工具名是 `skill_exec` | PASS（调用列表含 `mcp__…__add` 与 `skill_exec`） |
+| E2E-24 | studio 脚本输出已回灌到模型上下文 | `tool_result.summary` 里含脚本打印的标记 | PASS（`E2E_STUDIO_SUM:7`） |
+| E2E-25 | skill_exec 调用审计已落库 | `tool_call_audit` 里有 `skill_exec` 记录 | PASS（1 条命中） |
+
+> **注意**：脚本进程**不是** web_agent 主服务。主服务在启动时 `init_studio()`
+> 配置过 studio，验收脚本是独立进程，得自己 `configure_studio()` 一次——否则
+> `get_studio_client()` 永远是 `None`，会被误判成「studio 没部署」。
+
+## 4.4 模型与密钥（2026-11-12 换过一次）
 
 端点 `minimax` 现在的配置：
 
@@ -176,13 +212,16 @@ docker exec -w /app -e PYTHONPATH=/app webagent-client \
 除了脚本，客户端控制台也做了一键复现：**⑦ 链路自检**面板
 （`http://192.168.5.19:8000/`）。
 
-面板分两段：
+面板分三段：
 
 - **配置自检**（静态，来自 `GET /api/selfcheck`）：每个工作流的每一段配置
   （图结构 / 模型端点 / 技能 / MCP）逐段给出通过、失败或提醒；
+- **Studio 脚本执行**（静态）：studio 在不在、连不连得上、版本与档位、
+  哪些技能带 `scripts/` 下的脚本（没脚本的 studio 是空转）；
 - **动态探测**（动态）：真的建会话、发消息、订阅 SSE、跑完一次工作流，
-  然后按事件打分：模型有没有吐字、有没有调 MCP 工具、节点有没有按序执行、
-  审批挂起后有没有继续、最终消息有没有落库。
+  然后按事件打分：模型有没有吐字、有没有调 MCP 工具、**有没有调
+  `skill_exec` 让 studio 跑脚本**、节点有没有按序执行、审批挂起后有没有
+  继续、最终消息有没有落库。
 
 复现步骤（全部鼠标操作）：
 
@@ -196,6 +235,8 @@ docker exec -w /app -e PYTHONPATH=/app webagent-client \
 
 - `docs/testing/audit/client-selfcheck-m3flash-pass.png`（M3.1-Flash 全过）
 - `docs/testing/audit/client-selfcheck-m3flash-8of8.png`（动态探测 **8/8 通过**）
+- `docs/testing/audit/client-selfcheck-studio-pass.png`（加上 studio 后
+  **9/9 通过**，含「脚本执行（studio）」一段）
 
 ### 6.1 自检面板的两处收尾（已修）
 
@@ -213,7 +254,7 @@ docker exec -w /app -e PYTHONPATH=/app webagent-client \
 左栏同时补齐了以前**看不见**的三段：模型端点、技能、MCP 服务器（工具数与
 限定名）。以前客户端只有 Agent 与工作流两个列表。
 
-## 7. 实测发现的两件真事
+## 7. 实测发现的三件真事
 
 ### 7.1 管理端配好的端点，运行时根本读不到
 
@@ -255,6 +296,19 @@ UPDATE** 写的，所以「状态变成 waiting」就意味着 seq 锚点也已�
 
 回归用例：`tests/test_approval_race.py`（4 条：竞态窗口内提交成功 / seq 锚点
 没退回旧值 / 没有待审批记录仍然 409 / 正常 waiting 路径不变）。
+
+### 7.3 studio 是独立容器，脚本进程要自己配一次（已修）
+
+验收脚本是**独立进程**，不是 web_agent 主服务。主服务在启动时 `init_studio()`
+配过 studio 客户端，脚本进程没有——`get_studio_client()` 永远是 `None`，
+于是 E2E-21/22 一开始判成「studio 没部署」。
+
+修法：脚本自己 `configure_studio(settings.studio_exec_addr)` 一次，并在退出前
+`close_studio_client()`。这也从侧面说明一件事——**部署里 studio 是不是真的
+在跑，光看客户端的界面是看不出来的**，得有一条独立断言去问它。
+
+回归用例：`tests/test_selfcheck_studio.py`（3 条：没配 studio 是提醒不是失败 /
+配了但连不上是失败 / 就绪时脚本资源要列出来）。
 
 ## 8. 回归防护
 
