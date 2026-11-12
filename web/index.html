@@ -604,9 +604,10 @@ async function submitApproval(el, approved) {
   const comment = (el.querySelector('.ap-comment').value || '').trim();
   el.querySelectorAll('.acts button').forEach(b => { b.disabled = true; });
   try {
-    // 409 的重试是有原因的：编排器是「先 emit approval_required、再把 run
-    // 置为 waiting」，中间只有几毫秒。人看到卡片就点批准，很容易正好撞在
-    // 这个窗口里——这不是人的错，重试几次等它过去就行。
+    // 409 的重试是兜底：服务端已经会等编排器把 run 状态落上（见
+    // app/api/routes/run.py 的 _await_waiting），正常路径第一次就成功。
+    // 万一审批被别人并发决策掉，409 是该有的答案——重试几次也省得让人
+    // 再点一次。
     let r = null;
     let lastError = null;
     for (let attempt = 0; attempt < 8; attempt++) {

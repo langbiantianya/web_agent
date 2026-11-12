@@ -976,10 +976,9 @@ async def run_flow(args: argparse.Namespace, report: Report) -> int:
             ev == "approval_required" for ev, _s, _d in streamer.events
         )
         if approval_seen:
-            # 编排器 _pause 的顺序是「先 emit approval_required，再把 run 置为
-            # waiting」，中间只有几毫秒。于是「看到审批卡片就立刻点批准」会
-            # 撞上 409（run 状态还没翻过去）。这里重试几次把窗口等过去——
-            # 真实前端也是这么该做的。
+            # 服务端已经会等编排器把 run 状态落上（见 app/api/routes/run.py 的
+            # _await_waiting），所以正常路径是**第一次就 200**。这里保留重试
+            # 只是兜底：万一审批被并发决策掉，409 是该有的答案。
             appr = None
             attempts = 0
             for _ in range(8):

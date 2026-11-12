@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Query
@@ -130,6 +131,45 @@ async def get_pending_approval(
     return ApprovalOut.model_validate(approval)
 
 
+async def _await_waiting(
+    db,
+    run_id: int,
+    tenant_id: str,
+    user_id: str,
+    timeout: float = 5.0,
+):
+    """等 run 的状态落成 ``waiting``。
+
+    编排器暂停在审批节点时的顺序是「建审批记录 → emit 事件 → 置状态」，
+    中间只有几毫秒。客户端收到 ``approval_required`` 事件就可能立刻点
+    批准，那一刻状态往往还没落上——这里把它等过去。
+
+    **每次轮询前都要 rollback**：MySQL 默认的 REPEATABLE READ 会让同一
+    个事务里反复读到**同一个快照**，不换掉事务就永远看不到状态变化。
+
+    Args:
+        db: 请求级数据库会话。
+        run_id: run id。
+        tenant_id: 租户。
+        user_id: 用户 id。
+        timeout: 最长等待秒数。
+
+    Returns:
+        最后一次读到的 run（等不到 waiting 就返回它，让调用方自己判断）。
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        await db.rollback()
+        run = await run_repo.get_for_user(db, run_id, tenant_id, user_id)
+        if run is None:
+            return None
+        if run.status == RunStatus.WAITING.value:
+            return run
+        if time.monotonic() >= deadline:
+            return run
+        await asyncio.sleep(0.05)
+
+
 @router.post("/{run_id}/approval", response_model=ApprovalDecisionOut)
 async def submit_approval(
     run_id: int,
@@ -157,12 +197,36 @@ async def submit_approval(
     if run is None:
         raise NotFoundError(f"run 不存在：{run_id}")
 
-    if run.status != RunStatus.WAITING.value:
-        raise ConflictError(f"run 当前状态是 {run.status}，不在等待审批")
-
+    # **竞态**：编排器 `_pause` 的顺序是「先建审批记录 → 再 emit
+    # approval_required → 最后把 run 置为 waiting」。客户端看到事件就可能
+    # 立刻点批准，而那一刻 run 的状态往往还是 running——直接判 409 会让
+    # 「手快点批准」变成一次失败（实测能稳定复现）。
+    #
+    # 这里的处理是**等编排器把状态落上**，而不是让人重试：
+    # run 的 status 与 last_seq 是同一条 UPDATE 写的，所以「状态变成
+    # waiting」就意味着 seq 锚点也已经写准——恢复执行读到的 start_seq
+    # 不会退回旧值（那会与 run_event 的 uk_run_seq 撞车）。
+    #
+    # 只有「压根没有待审批记录」才直接拒：那说明这个 run 真的不在审批点上。
     approval = await run_approval_repo.get_pending(db, run_id)
     if approval is None:
-        raise ConflictError("该 run 没有待审批项（可能已被决策过）")
+        raise ConflictError(
+            f"run 当前状态是 {run.status}，没有待审批项（可能已被决策过）"
+        )
+    if run.status != RunStatus.WAITING.value:
+        run = await _await_waiting(
+            db, run_id, user.tenant_id, user.user_id, timeout=5.0
+        )
+        if run is None:
+            raise NotFoundError(f"run 不存在：{run_id}")
+        if run.status != RunStatus.WAITING.value:
+            raise ConflictError(f"run 当前状态是 {run.status}，不在等待审批")
+        # 等的这几毫秒里可能被别人批了：重新取一次待审批项。
+        # （**必须重新取**：等待过程里 rollback 过，之前那个 ORM 对象已经
+        # 过期，再去读它的字段会触发同步 IO，在异步会话里直接炸。）
+        approval = await run_approval_repo.get_pending(db, run_id)
+        if approval is None:
+            raise ConflictError("该 run 没有待审批项（可能已被决策过）")
 
     # 用户审批人身份只来自当前会话，请求体不能指定其他人。
     decided_by = user.username
