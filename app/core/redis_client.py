@@ -143,6 +143,18 @@ async def redis_search_available(client: Redis | None = None) -> bool:
         )
     except (RedisError, OSError, ValueError):
         return False
+    except Exception as exc:
+        # Redis 7+ 对**不存在的命令**返回 `*1` + 一个 nil 元素
+        # （Redis 6 返回的是空数组 `*0`）。redis-py 8.x 的 "COMMAND" 回调
+        # ``parse_command()`` 直接对每个元素取 ``command[0]``，遇到 nil 就抛
+        # ``TypeError: 'NoneType' object is not subscriptable``——异常发生在
+        # redis-py 内部，**回不到上面那段 dict/list 判断**，于是「服务端没有
+        # RediSearch」这件普通事被变成了一个看不懂的 TypeError。
+        #
+        # 这里宽泛地兜住：探测函数的契约是「返回 bool，永不抛异常」——
+        # 它只是回答「有没有 FT.*」，任何解读失败都等价于「没有」。
+        logger.debug("RediSearch 探测失败，按「不支持」处理：%s", exc)
+        return False
     if isinstance(result, dict):
         # redis-py 8 / RESP3 会把 ``COMMAND INFO`` 的顶层结果解码成
         # ``{command_name: metadata}``；旧版本则返回列表。
