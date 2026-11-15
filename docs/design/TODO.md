@@ -73,11 +73,11 @@
 
 ## 构建与依赖
 
-- [ ] **P1：Python 3.15 升级被上游阻塞**
-  目标是把全部镜像与开发环境统一到 Python 3.15。截至目前只有**没有阻塞的组件**能升：
-  dispatcher、sandbox 已升到 3.15（纯标准库 / 只有 docker SDK，已在 3.15 解释器上
-  实测依赖可解析、模块可导入）；admin-web、主服务、studio、测试镜像仍锁 3.14。
-  卡住它们的是三个「没有 cp315 轮子」的二进制包：
+- [ ] **P2：Python 3.15 升级（当前统一锁定 3.14）**
+  **当前口径：全部镜像与本地开发环境统一锁定 Python 3.14**——主服务、admin-web、
+  studio、dispatcher、sandbox 与测试镜像都是 3.14，不再混版本。这不是保守，
+  是当前唯一能装上的版本：依赖链上三个「没有 cp315 轮子」的二进制包会把 3.15
+  顶回源码编译，而 slim 镜像里没有 C 编译器。
 
   | 包 | 谁引入 | 症状 |
   | --- | --- | --- |
@@ -85,21 +85,23 @@
   | `orjson` | `langgraph-checkpoint-redis` / `langgraph-sdk` | 最新版最高 cp314，3.15 上退回源码编译 |
   | `PyYAML` | `alembic` → `Mako` → `PyYAML` | 最新版最高 cp314；admin-web 也被这条链卡住 |
 
-  slim 镜像里没有 C 编译器，所以「源码编译」这条路在镜像构建期直接失败——
-  `pip install` 会退回 sdist 然后报错（3.15 解释器上实测 `pip install pyyaml` 失败）。
+  3.15 解释器上实测：`pip install pyyaml` 直接 `Failed to build pyyaml`；把
+  `--ignore-requires-python` 开到全局更糟——pip 会挑到没有 cp315 轮子的版本再
+  回退源码编译（zstandard 即如此），所以不能靠这个开关绕过。
 
-  `langsmith` 从 0.3.45 起就依赖 `zstandard`，而 `langchain-core` 1.7.0 起要求
-  `langsmith>=0.14.9`；要绕开只能把 `langchain-core` 降到 1.6.0 并把 `langsmith`
-  钉到 0.9.x——那是给编排引擎降依赖，风险远大于收益。因此主服务维持 3.14。
-  另外 `grpcio` 侧还有一条独立的矛盾：只有 1.85.1 提供 cp315 轮子，而 1.85.1 在
-  无 AVX 的 x86_64 小主机（`100.114.77.27`）上有 import 即段错误（退出 139）的记录，
-  所以 studio 也暂留 3.14。
+  另外两条独立的障碍：`langsmith` 从 0.3.45 起依赖 `zstandard`，而
+  `langchain-core` 1.7.0 起要求 `langsmith>=0.14.9`，绕开只能给编排引擎降依赖
+  （langchain-core 降到 1.6.0 + langsmith 钉到 0.9.x），风险大于收益；
+  `grpcio` 侧只有 1.85.1 提供 cp315 轮子，而它在无 AVX 的 x86_64 小主机
+  （`100.114.77.27`）上有 import 即段错误（退出 139）的记录。
 
-  解阻条件（三条都满足才能整体升到 3.15）：
+  **解锁条件**（四条都满足才动版本号）：
   1. `zstandard`、`orjson` 与 `PyYAML` 发布 cp315 轮子；
   2. `langgraph-checkpoint-redis` 的 `Requires-Python` 放开到 3.15；
-  3. `grpcio` 1.85.1 在无 AVX 主机上的段错误被证实不复现，或上游给出可用的旧版
-     cp315 轮子。
+  3. `grpcio` 1.85.1 在无 AVX 主机上的段错误被证实不复现，或上游给出可用的
+     旧版 cp315 轮子；
+  4. 在真实部署主机上把五个镜像全部重建并跑通 Docker e2e（当前 30 个真实容器
+     用例只能在有 Docker 的环境跑）。
 
 - [ ] **P2：把「解释器升级」写进开发环境的固定流程**
   本机之前踩过的坑：`.venv` 是用 scoop 的 `python`（指向 `current` 软链）建的，
@@ -111,13 +113,15 @@
 
 ## 已完成
 
-- [x] **P1：Python 3.15 部分同步与 pywin32 显式钉版**
-  没有上游阻塞的组件已经升到 Python 3.15：dispatcher、sandbox；admin-web、主服务、
-  studio、测试镜像维持 3.14，阻塞原因见上一节的「Python 3.15 升级被上游阻塞」。同时在 `requirements.txt` 显式钉住
+- [x] **P1：Python 版本统一锁定 3.14 与 pywin32 显式钉版**
+  主服务、admin-web、studio、dispatcher、sandbox 与测试镜像统一锁定 Python 3.14，
+  本地开发环境同步到 3.14.7（用带版本号的解释器路径重建，避免 scoop `current`
+  软链把 venv 拽到别的版本、留下 ABI 错位的 `.pyd`）。升 3.15 的前置条件写进
+  上一节的「Python 3.15 升级」。同时在 `requirements.txt` 显式钉住
   `pywin32==312; sys_platform == "win32"`——它是 MCP SDK 在 Windows 上的硬依赖
   （`mcp.server.stdio` → `mcp.os.win32.utilities` → `pywintypes`），此前只靠
   `mcp` 传递引入，轮子按 CPython ABI 发布，解释器一换就只剩旧 `.pyd`。
-  开发环境的 venv 重建方式也写进了 `app/README.md`（必须用带版本号的解释器路径）。
+  venv 重建方式也写进了 `app/README.md`（必须用带版本号的解释器路径）。
 
 - [x] **P1：Workflow 编排可视化**
   手写 definition JSON 的后台编辑器已替换为拖拽画布编排器

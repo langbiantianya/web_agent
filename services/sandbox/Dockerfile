@@ -13,7 +13,8 @@
 
 FROM node:20.18.1-bookworm-slim AS node
 
-FROM python:3.15-slim-bookworm
+# 运行时与全部其他镜像统一锁定 Python 3.14（见 docs/design/TODO.md）。
+FROM python:3.14-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

@@ -1,9 +1,9 @@
 # ---- Python 版本 ----
-# 当前运行时基线是 **Python 3.14**（见 Dockerfile）。上 3.15 目前被上游卡住：
-# 这条链上的 zstandard（langgraph → langchain-core → langsmith →）、
-# orjson（langgraph-checkpoint-redis →）和 PyYAML（alembic → Mako →）都没有
-# cp315 轮子，3.15 只能源码编译，而 slim 镜像里没有 C 编译器。
-# 详见 docs/design/TODO.md 的「Python 3.15 升级阻塞」。
+# 全部镜像与开发环境**统一锁定 Python 3.14**（见 Dockerfile）。这不是保守，
+# 是当前唯一可用的选择：这条链上的 zstandard（langgraph → langchain-core →
+# langsmith →）、orjson（langgraph-checkpoint-redis →）和 PyYAML（alembic →
+# Mako →）都没有 cp315 轮子，3.15 只能源码编译，而 slim 镜像里没有 C 编译器。
+# 解锁条件见 docs/design/TODO.md 的「Python 3.15 升级」。
 
 # ---- Web 框架 ----
 fastapi>=0.115

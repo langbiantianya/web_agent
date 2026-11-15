@@ -128,8 +128,9 @@ copy .env.example .env
 python run.py
 ```
 
-运行时基线是 **Python 3.14**（见 `Dockerfile`）。建 venv 时要用**带版本号的解释器
-路径**，不要用 PATH 上的 `python`：Windows 上 `python` 常是指向「当前版本」的软链
+全部镜像与本地开发环境**统一锁定 Python 3.14**（见 `Dockerfile`）。建 venv 时要用
+**带版本号的解释器路径**，不要用 PATH 上的 `python`：Windows 上 `python` 常是指向
+「当前版本」的软链
 （例如 scoop 的 `current`），它一旦被升级，已经建好的 venv 会被拽着换解释器，而
 site-packages 里仍是旧 ABI 的 `.pyd`，结果是 `DLL load failed` / `DLL 初始化例程失败`
 这类看不出根因的导入错误。
