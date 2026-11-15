@@ -3435,7 +3435,7 @@
   ```markdown
   - [x] **P1：Workflow 编排可视化**
     手写 definition JSON 的后台编辑器已替换为拖拽画布编排器
-    （`/admin/workflows/{code}`），见 [V4.8](../../app/design/v4.8-workflow-visual-editor.md)。
+    （`/admin/workflows/{code}`），见 [V4.8](../../../app/design/v4.8-workflow-visual-editor.md)。
     图结构校验规则仍只有一份（`app/core/workflow_def.py`），后台通过
     `POST /admin/workflows/validate` 拿结构化问题，客户端 API 契约不变。
   ```

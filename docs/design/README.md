@@ -6,8 +6,9 @@
 
 | 项 | 当前版本 | 状态 |
 | --- | --- | --- |
-| web_agent 主服务 | V4.6 | 基础实现完成 |
+| web_agent 主服务 | V4.8 | 基础实现完成 |
 | 用户 OAuth 与会话历史归属 | V4.6 | OIDC、会话与所有权隔离已通过真 PostgreSQL 验证；真实 IdP/存量迁移待完成 |
+| Workflow 可视化编排 | V4.8 | 拖拽画布、属性检查器、实时校验端点、撤销重做与自动布局已落地 |
 | 独立 admin-web 与管理员体系 | V4.7 | 独立 Ludic 容器、两种管理员 Session、Casbin、平台超级管理员、UI 权限、三主题、通知、审计、六类业务管理页、动态 OAuth Provider 配置和首次安装 owner 日志初始化已落地；旧管理员 API Key 管理栈已退役 |
 | 生产恢复与沙箱治理 | V4.5 | 已实现并完成真 PostgreSQL / Docker 验证 |
 | MCP 工具 | V4 | 已实现 |
@@ -27,7 +28,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [主服务设计索引](../../app/design/README.md) | V1–V4.1 的阅读顺序与章节映射 |
+| [主服务设计索引](../../app/design/README.md) | V1–V4.8 的阅读顺序与章节映射 |
 | [V1：单实例基础版](../../app/design/v1-foundation.md) | 目标、架构、持久化、SSE、线性 Agent 流水线 |
 | [V2：多实例与 LangGraph](../../app/design/v2-multi-instance.md) | Redis Stream/Pub/Sub、租约、LangGraph 替换自研控制流 |
 | [V3：编排、审批、工具与安全](../../app/design/v3-orchestration.md) | DAG、条件边、人工审批、工具闭环、PostgreSQL、敏感内容过滤 |
@@ -39,6 +40,7 @@
 | [V4.5：备份恢复、沙箱准入与成本闭环](../../app/design/v4.5-recovery-governance.md) | PostgreSQL PITR、自定义 seccomp、跨 studio 准入、真实资源成本、MCP OAuth 机器身份 |
 | [V4.6：用户 OAuth 登录与会话历史归属](../../app/design/v4.6-user-oauth-conversation.md) | OIDC、服务端会话、用户身份绑定、conversation owner、越权防护与迁移 |
 | [V4.7：独立 admin-web、Casbin RBAC 与 Ludic SSR](../../app/design/v4.7-oauth-admin.md) | 独立容器、OAuth 管理员、账号密码超级管理员、Casbin、页面/组件权限与三主题 |
+| [V4.8：Workflow 可视化编排器](../../app/design/v4.8-workflow-visual-editor.md) | 拖拽画布编排、节点 `label`、definition 顶层 `layout` 坐标、服务端校验端点与结构化问题定位、撤销重做与自动布局 |
 
 ### studio 服务
 
