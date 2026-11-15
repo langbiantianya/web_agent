@@ -1,4 +1,9 @@
 # Ludic 1.x 要求 Python >= 3.14；admin-web 与其他容器保持独立运行时。
+#
+# 运行时暂时留在 Python 3.14：这条链上 Ludic / FastAPI / SQLAlchemy /
+# cryptography / argon2-cffi 都有 cp315 轮子，但 alembic → Mako → PyYAML
+# 这一支没有——PyYAML 最新版最高只到 cp314，3.15 上只能源码编译，而
+# slim 镜像里没有 C 编译器。详见 docs/design/TODO.md。
 FROM python:3.14-slim-bookworm
 
 ARG PIP_INDEX_URL=https://pypi.org/simple

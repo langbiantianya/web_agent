@@ -7,7 +7,7 @@
 
 截至 V4.8 设计，OAuth/OIDC 主链路、独立 admin-web 业务页和 workflow 可视化编排器
 已经落地，旧管理员 API Key 管理栈已退役。尚未完成的生产 P1 项集中在真实 IdP 联调、
-登录限频/过期 attempt 清理、存量会话归属处理，以及 Windows 开发环境依赖缺口。
+登录限频/过期 attempt 清理、存量会话归属处理，以及 Python 3.15 升级的上游阻塞。
 
 ## 隔离执行与成本
 
@@ -73,20 +73,51 @@
 
 ## 构建与依赖
 
-- [ ] **P1：Windows 开发环境 pywin32 与 Python 版本错配**
-  本机 `.venv` 是 Python 3.15.2，而 `Dockerfile` / `Dockerfile.admin` / `Dockerfile.test`
-  全部锁 Python 3.14（Ludic 1.x 要求 ≥3.14）。venv 内装的是 pywin32 312，在 3.15 上
-  加载失败，导致 `tests/test_mcp_e2e.py::test_refresh_discovers_tools_into_snapshot` 失败：
-  `mcp/os/win32/utilities.py` → `import pywintypes` → `_win32sysloader` 报
-  `DLL load failed while importing _win32sysloader`。这不是产品缺陷，但会掩盖真实回归。
-  处理方式：对齐本地 Python 到 3.14，或安装与 3.15 匹配的 pywin32 版本。
+- [ ] **P1：Python 3.15 升级被上游阻塞**
+  目标是把全部镜像与开发环境统一到 Python 3.15。截至目前只有**没有阻塞的组件**能升：
+  dispatcher、sandbox 已升到 3.15（纯标准库 / 只有 docker SDK，已在 3.15 解释器上
+  实测依赖可解析、模块可导入）；admin-web、主服务、studio、测试镜像仍锁 3.14。
+  卡住它们的是三个「没有 cp315 轮子」的二进制包：
 
-- [ ] **P1：requirements.txt 未显式钉住 pywin32**
-  pywin32 目前只通过 `mcp` SDK 在 Windows 上传递引入（`mcp` 2.x 的 stdio 传输在
-  Windows 上依赖 `mcp.os.win32.utilities` → `pywintypes`），版本随 Python 解释器漂移。
-  需要在依赖里按 Python 版本显式约束，避免不同机器上的 MCP stdio 测试结果不一致。
+  | 包 | 谁引入 | 症状 |
+  | --- | --- | --- |
+  | `zstandard` | `langgraph` → `langchain-core` → `langsmith` | **任何版本都没有 cp315 轮子**，只能源码编译（要 C 编译器） |
+  | `orjson` | `langgraph-checkpoint-redis` / `langgraph-sdk` | 最新版最高 cp314，3.15 上退回源码编译 |
+  | `PyYAML` | `alembic` → `Mako` → `PyYAML` | 最新版最高 cp314；admin-web 也被这条链卡住 |
+
+  slim 镜像里没有 C 编译器，所以「源码编译」这条路在镜像构建期直接失败——
+  `pip install` 会退回 sdist 然后报错（3.15 解释器上实测 `pip install pyyaml` 失败）。
+
+  `langsmith` 从 0.3.45 起就依赖 `zstandard`，而 `langchain-core` 1.7.0 起要求
+  `langsmith>=0.14.9`；要绕开只能把 `langchain-core` 降到 1.6.0 并把 `langsmith`
+  钉到 0.9.x——那是给编排引擎降依赖，风险远大于收益。因此主服务维持 3.14。
+  另外 `grpcio` 侧还有一条独立的矛盾：只有 1.85.1 提供 cp315 轮子，而 1.85.1 在
+  无 AVX 的 x86_64 小主机（`100.114.77.27`）上有 import 即段错误（退出 139）的记录，
+  所以 studio 也暂留 3.14。
+
+  解阻条件（三条都满足才能整体升到 3.15）：
+  1. `zstandard`、`orjson` 与 `PyYAML` 发布 cp315 轮子；
+  2. `langgraph-checkpoint-redis` 的 `Requires-Python` 放开到 3.15；
+  3. `grpcio` 1.85.1 在无 AVX 主机上的段错误被证实不复现，或上游给出可用的旧版
+     cp315 轮子。
+
+- [ ] **P2：把「解释器升级」写进开发环境的固定流程**
+  本机之前踩过的坑：`.venv` 是用 scoop 的 `python`（指向 `current` 软链）建的，
+  scoop 把 `current` 切到 3.15.2 之后，venv 里的解释器被拽着升到 3.15，而
+  site-packages 里还是 3.14 ABI 的 `.pyd`，报 `DLL load failed` / `DLL 初始化例程失败`，
+  根因完全看不出。当前已在 `app/README.md` 写明「用带版本号的解释器路径建 venv」，
+  但还需要一条可执行的检查（例如 CI 里比对 `pyvenv.cfg` 的 `version` 与
+  `sys.version`），避免同类问题再次以「依赖坏了」的形式出现。
 
 ## 已完成
+
+- [x] **P1：Python 3.15 部分同步与 pywin32 显式钉版**
+  没有上游阻塞的组件已经升到 Python 3.15：dispatcher、sandbox；admin-web、主服务、
+  studio、测试镜像维持 3.14，阻塞原因见上一节的「Python 3.15 升级被上游阻塞」。同时在 `requirements.txt` 显式钉住
+  `pywin32==312; sys_platform == "win32"`——它是 MCP SDK 在 Windows 上的硬依赖
+  （`mcp.server.stdio` → `mcp.os.win32.utilities` → `pywintypes`），此前只靠
+  `mcp` 传递引入，轮子按 CPython ABI 发布，解释器一换就只剩旧 `.pyd`。
+  开发环境的 venv 重建方式也写进了 `app/README.md`（必须用带版本号的解释器路径）。
 
 - [x] **P1：Workflow 编排可视化**
   手写 definition JSON 的后台编辑器已替换为拖拽画布编排器

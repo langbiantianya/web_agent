@@ -1,8 +1,12 @@
 # 测试
 
 推荐用固定 Python 3.14 的测试镜像运行全量测试，避免宿主解释器与二进制依赖不匹配。
-独立 admin-web 使用的 Ludic 1.x 要求 Python >= 3.14；客户端与 studio 的生产镜像
-也已统一到 Python 3.14，但三者仍是各自独立的镜像：
+独立 admin-web 使用的 Ludic 1.x 要求 Python >= 3.14，因此 admin-web、客户端与 studio
+的镜像目前都固定在 Python 3.14——依赖链上 `PyYAML`（alembic → Mako →）、
+`zstandard`（langgraph → langchain-core → langsmith →）和 `orjson` 这几个包
+**都没有 cp315 轮子**，3.15 只能源码编译，而 slim 镜像里没有 C 编译器。
+原因见 [`docs/design/TODO.md`](../docs/design/TODO.md) 的「Python 3.15 升级阻塞」。
+三个镜像仍是各自独立的构建：
 
 ```bash
 docker build -f Dockerfile.test -t webagent/tests:local .

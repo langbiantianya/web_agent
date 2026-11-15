@@ -117,7 +117,10 @@ docker run --rm --memory=768m --cpus=1 --pids-limit=256 \
 ```
 
 `Ludic 1.x` 要求 Python 3.14，因此 admin 镜像使用独立 Python 运行时；客户端镜像是
-另一个独立镜像，同样基于 Python 3.14（两者不共享基础层，也不是同一个构建）。
+另一个独立镜像（两者不共享基础层，也不是同一个构建）。两者目前都固定在
+Python 3.14：admin 镜像被 `alembic → Mako → PyYAML` 这条链卡住（PyYAML 没有
+cp315 轮子），客户端镜像被 `zstandard` / `orjson` 卡住，原因见
+[`docs/design/TODO.md`](../../docs/design/TODO.md)。
 
 ## 当前页面
 

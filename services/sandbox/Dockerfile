@@ -13,7 +13,7 @@
 
 FROM node:20.18.1-bookworm-slim AS node
 
-FROM python:3.11.9-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

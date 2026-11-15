@@ -12,5 +12,8 @@ grpcio==1.76.0
 #
 # 6.31.1 是 grpcio-tools 1.76.0 生成代码时写进
 # ValidateProtobufRuntimeVersion 的版本。grpcio 1.85.1 的 wheel 在无 AVX
-# 的 x86_64 小主机上 import 即段错误，因此 runtime、生成器和桩必须一起固定。
+# 的 x86_64 小主机（100.114.77.27）上 import 即段错误，因此 runtime、生成器
+# 和桩必须一起固定。
+# 想上 Python 3.15 就必须换 1.85.1（唯一有 cp315 轮子的版本），但那会踩回
+# 上面这条段错误——目前「3.15」与「不踩 AVX」互斥，见 docs/design/TODO.md。
 protobuf==6.31.1
