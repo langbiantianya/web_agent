@@ -649,6 +649,8 @@ def test_field_order_is_explicit_for_every_resource() -> None:
         "llm_endpoint_code",
         "model",
         "system_prompt",
+        "response_format",
+        "response_schema",
     ]
     assert [f.name for f in AGENT_CREATE_FIELDS] == [
         "code",
@@ -656,6 +658,8 @@ def test_field_order_is_explicit_for_every_resource() -> None:
         "llm_endpoint_code",
         "model",
         "system_prompt",
+        "response_format",
+        "response_schema",
         "enabled",
     ]
     assert [f.name for f in SKILL_FIELDS] == [

@@ -127,6 +127,22 @@ def agent_fields(
             rows=8,
             edit_rows=10,
         ),
+        # 输出格式：文本或 JSON。选 JSON 会在提示词里追加一条硬性约束，
+        # 并在运行期校验模型确实返回了 JSON。
+        Field(
+            "response_format",
+            "Output format",
+            kind="select",
+            options=(("Plain text", "text"), ("JSON", "json")),
+        ),
+        # JSON Schema（可选）：限定 JSON 的结构。留空表示只要求「是 JSON」。
+        Field(
+            "response_schema",
+            "JSON schema (optional)",
+            kind="textarea",
+            rows=6,
+            edit_rows=8,
+        ),
     )
 
 

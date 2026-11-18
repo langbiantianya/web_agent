@@ -10,6 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.agent_response_format import (
+    parse_response_format,
+    parse_response_schema,
+)
 from app.core.skill_names import SkillConfigError, normalize_skill_codes
 from app.core.tools import normalize_tool_names
 from app.repo.agent_repo import agent_repo
@@ -66,6 +70,11 @@ async def _agent_form_values(
         "llm_endpoint_code": llm_endpoint_code,
         "tools": tools,
         "skills": [] if normalized_skills is None else normalized_skills,
+        # 输出格式与 JSON 结构要求。两者都可能是**非法值**：格式取值不在
+        # 白名单里、Schema 文本不是合法 JSON 对象——都在这里拒掉，错误码
+        # 本身就是字段名（见 _business_field_errors）。
+        "response_format": parse_response_format(form.get("response_format")),
+        "response_schema": parse_response_schema(form.get("response_schema")),
         "enabled": as_bool(form.get("enabled"), enabled_default),
     }
     # 保留旧客户端兼容字段，但管理端新表单不再渲染它们。
@@ -95,6 +104,14 @@ def _business_field_errors(exc: ValueError) -> dict[str, str]:
         "invalid_skill_binding": (
             "skills",
             "One or more selected skills no longer exist.",
+        ),
+        "invalid_response_format": (
+            "response_format",
+            "Choose either plain text or JSON.",
+        ),
+        "invalid_response_schema": (
+            "response_schema",
+            "The JSON schema must be a valid JSON object.",
         ),
     }
     if code in messages:

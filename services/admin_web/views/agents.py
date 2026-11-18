@@ -5,8 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+import json
+
 from ludic.html import a, div, small, span, td, tr
 
+from app.core.agent_response_format import normalize_response_format
 from app.models.admin_control import AdminPageDefinition
 from services.admin_web.accounts import AdminPrincipal
 from services.admin_web.views.agent_connection import (
@@ -29,6 +32,41 @@ from services.admin_web.views.edit_panel import edit_link, edit_panel
 from services.admin_web.views.list_controls import list_controls
 from services.admin_web.listing import ListParams
 from services.admin_web.views.fields import render_form
+
+
+def _schema_text(schema: Any) -> str:
+    """把 JSON Schema 对象渲染成表单里可编辑的文本。
+
+    Args:
+        schema: 库里存的 JSON Schema 对象；为空表示不限定结构。
+
+    Returns:
+        缩进后的 JSON 文本；没有 schema 时是空串。
+    """
+    if not schema:
+        return ""
+    return json.dumps(schema, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _output_cell(row: Any) -> Any:
+    """渲染 Agent 的输出格式。
+
+    Args:
+        row: Agent 行。
+
+    Returns:
+        展示用的小节内容：JSON 模式带一个「有结构要求」的补充说明。
+    """
+    if normalize_response_format(getattr(row, "response_format", "text")) == "json":
+        schema = getattr(row, "response_schema", None)
+        return div(
+            span("JSON"),
+            small(
+                "Schema enforced" if schema else "Any JSON",
+                class_="block-muted",
+            ),
+        )
+    return span("Plain text")
 
 
 def agents_page(
@@ -87,6 +125,14 @@ def agents_page(
                 ),
                 "model": row.model,
                 "system_prompt": row.system_prompt or "",
+                # 输出格式与 JSON 结构要求。schema 存的是对象，表单里要展示
+                # 成**可编辑的 JSON 文本**——所以这里序列化后回填。
+                "response_format": normalize_response_format(
+                    getattr(row, "response_format", "text")
+                ),
+                "response_schema": _schema_text(
+                    getattr(row, "response_schema", None)
+                ),
                 **per_row_values.get(row.code, {}),
             },
             csrf=csrf,
@@ -165,6 +211,7 @@ def agents_page(
                 td(row.name, small(row.code, class_="block-muted")),
                 td(_connection_cell(row, endpoints_by_code)),
                 td(row.model),
+                td(_output_cell(row)),
                 td(
                     capability_summary(
                         row,
@@ -262,6 +309,7 @@ def agents_page(
             "Agent",
             "LLM connection",
             "Model",
+            "Output",
             "Capabilities",
             "Used by workflows",
             "State",

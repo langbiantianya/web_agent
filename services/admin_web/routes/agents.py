@@ -202,6 +202,8 @@ def register(app: Any) -> None:
                 api_key_cipher=encrypt(payload.api_key),
                 tools=payload.tools,
                 skills=payload.skills,
+                response_format=payload.response_format,
+                response_schema=payload.response_schema,
                 enabled=1 if payload.enabled else 0,
             )
             await audit_principal_action(

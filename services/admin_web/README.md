@@ -139,7 +139,7 @@ cp315 轮子），客户端镜像被 `zstandard` / `orjson` 卡住，解锁条�
 - `/admin/workflows`：Workflow 图定义、启停和删除。
 - `/admin/workflows/{code}`：Workflow 画布编排器（拖拽节点、连线、条件边、
   属性检查器、实时校验、撤销重做、自动布局）。
-- `/admin/agents`：租户内 Agent、模型、提示词、工具与 Skill 绑定。
+- `/admin/agents`：租户内 Agent、模型、提示词、工具与 Skill 绑定，以及输出格式（文本/JSON）与可选 JSON Schema。
 - `/admin/skills`：技能草稿/发布状态、正文修订和归档。
 - `/admin/mcp`：MCP 连接、启停、删除和工具目录刷新。
 - `/admin/llm`：LLM 接口优先级、默认模型、启停和只写 API Key；页面说明统一走

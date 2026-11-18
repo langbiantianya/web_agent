@@ -133,6 +133,33 @@ class RunCancelled(Exception):
     """内部信号：用户主动取消生成。"""
 
 
+class ResponseFormatError(Exception):
+    """模型没有按 Agent 的输出格式配置返回 JSON。
+
+    与 :class:`ToolLoopExceeded` 相反，这里**刻意可重试**：模型没把 JSON 包好
+    多半是偶发的（加了一句前言、套了代码围栏），再跑一遍通常就好了。编排器的
+    重试循环会把它当成普通失败重试该节点；重试仍然失败时，节点以「期望 JSON
+    但没有」收尾——用户看到的是原因，而不是一段无法解析的原文。
+
+    错误信息里只带**解析失败的原因**（行号、列号、JSON 解析器的措辞），
+    不带模型原文：原文可能包含用户数据，而失败原因落进 ``run.error_msg``
+    之后会被 ``GET /api/runs/{id}`` 原样回显。
+
+    Args:
+        reason: 解析失败的原因描述（不含模型原文）。
+    """
+
+    def __init__(self, reason: str) -> None:
+        """构造异常。
+
+        Args:
+            reason: 解析失败的原因描述。
+        """
+        super().__init__(f"模型没有返回合法 JSON：{reason}")
+        self.reason = reason
+        self.message = str(self)
+
+
 class ToolLoopExceeded(Exception):
     """工具调用轮数超限——模型在工具上陷住了。
 

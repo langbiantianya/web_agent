@@ -33,6 +33,11 @@ from langgraph.types import Command
 
 from app.config.db import SessionLocal
 from app.config.settings import settings
+from app.core.agent_response_format import (
+    build_response_format_messages,
+    is_json_response,
+    parse_json_response,
+)
 from app.core.agent_runner import AgentResult, AgentRunner, _client_factory
 from app.core.checkpoint import (
     checkpoint_config,
@@ -40,6 +45,7 @@ from app.core.checkpoint import (
     get_checkpointer,
 )
 from app.core.errors import (
+    ResponseFormatError,
     RunCancelled,
     SensitiveContentError,
     ToolLoopExceeded,
@@ -596,6 +602,14 @@ class Orchestrator:
                     messages = (
                         [{"role": MessageRole.SYSTEM.value, "content": agent.system_prompt}]
                         + skill_plan.messages
+                        # JSON 输出指令：文本模式下这里是**空列表**，一个字符都
+                        # 不会多插；json 模式下追加一条 system 消息，位置在技能
+                        # 正文之后、对话历史之前——离用户输入最近，模型最容易
+                        # 记住这条硬约束。
+                        + build_response_format_messages(
+                            getattr(agent, "response_format", "text"),
+                            getattr(agent, "response_schema", None),
+                        )
                         + context
                         + [{"role": MessageRole.USER.value, "content": rendered_input}]
                     )
@@ -620,15 +634,28 @@ class Orchestrator:
                         endpoints=endpoints,
                     )
                     result = await runner.run_with_tools(messages)
+                    output: dict[str, Any] = {
+                        "text": result.text,
+                        "toolCalls": result.tool_calls,
+                        "toolRounds": result.tool_rounds,
+                    }
+                    if is_json_response(getattr(agent, "response_format", "text")):
+                        # 配了 JSON 就必须真的拿到 JSON。解析失败**抛错**而不是
+                        # 默默把原文塞回去：调用方按 JSON 消费时，拿到一段散文
+                        # 比拿到一个明确错误更难排查。抛错会走上面的重试循环，
+                        # 模型再试一次通常就能包好。
+                        parsed, reason = parse_json_response(result.text)
+                        if reason:
+                            raise ResponseFormatError(reason)
+                        output["responseFormat"] = "json"
+                        output["json"] = parsed
+                    else:
+                        output["responseFormat"] = "text"
                     await self._finish_step(
                         run_id,
                         node.id,
                         StepStatus.DONE,
-                        {
-                            "text": result.text,
-                            "toolCalls": result.tool_calls,
-                            "toolRounds": result.tool_rounds,
-                        },
+                        output,
                     )
                     return result
 

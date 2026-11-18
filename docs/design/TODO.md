@@ -5,8 +5,9 @@
 
 优先级：`P0` 阻断生产采用，`P1` 重要缺口，`P2` 体验与扩展。
 
-截至 V4.8 设计，OAuth/OIDC 主链路、独立 admin-web 业务页和 workflow 可视化编排器
-已经落地，旧管理员 API Key 管理栈已退役。尚未完成的生产 P1 项集中在真实 IdP 联调、
+截至 V4.9 设计，OAuth/OIDC 主链路、独立 admin-web 业务页、workflow 可视化编排器
+和 Agent JSON 输出契约已经落地，旧管理员 API Key 管理栈已退役。尚未完成的生产
+P1 项集中在真实 IdP 联调、
 登录限频/过期 attempt 清理、存量会话归属处理，以及 Python 3.15 升级的上游阻塞。
 
 ## 隔离执行与成本

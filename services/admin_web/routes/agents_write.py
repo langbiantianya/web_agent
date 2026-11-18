@@ -65,6 +65,8 @@ def register(app: Any) -> None:
                 "llm_endpoint_code": str(
                     form.get("llm_endpoint_code") or ""
                 ),
+                "response_format": str(form.get("response_format") or ""),
+                "response_schema": str(form.get("response_schema") or ""),
             }
             try:
                 raw = await _agent_form_values(

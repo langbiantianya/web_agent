@@ -10,7 +10,11 @@ from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.skill_names import SkillConfigError, known_skill_codes, normalize_skill_codes
 from app.core.tool_policy import normalize_tool_policy
 from app.core.tools import known_tool_names, normalize_tool_names
-from app.repo.agent_repo import agent_repo
+from app.core.agent_response_format import (
+    build_response_format_messages,
+    normalize_response_format,
+)
+from app.repo.agent_repo import CLEAR, agent_repo
 from app.repo.llm_endpoint_repo import llm_endpoint_repo
 from app.repo.skill_repo import skill_repo
 from app.schemas.agent import AgentCreate, AgentOut, AgentUpdate
@@ -88,6 +92,8 @@ def _to_out(
         tools=known_tool_names(agent.tools, known_mcp),
         tool_policy=agent.tool_policy,
         skills=known_skill_codes(agent.skills, known_skills),
+        response_format=normalize_response_format(agent.response_format),
+        response_schema=agent.response_schema,
         extra_params=agent.extra_params,
         enabled=bool(agent.enabled),
         version=agent.version or 1,
@@ -143,6 +149,8 @@ async def create_agent(
             payload.tool_policy, known_tools=set(tools or [])
         ),
         skills=skills,
+        response_format=payload.response_format,
+        response_schema=payload.response_schema,
         extra_params=payload.extra_params,
         enabled=1 if payload.enabled else 0,
     )
@@ -232,6 +240,10 @@ async def update_agent(
         # 显式传 null 或 [] 表示「解绑全部」。仓储层的约定是「值为 None 的键跳过」，
         # 所以这里用空列表表达「清空」——空列表不是 None，会被真的写进去。
         fields["skills"] = [] if normalized is None else normalized
+    if "response_schema" in fields and fields["response_schema"] is None:
+        # 显式传 null = 「清空结构要求」。仓储层把 None 当「不修改」，所以这里
+        # 换成哨兵值，让它真的写 NULL。
+        fields["response_schema"] = CLEAR
     if "enabled" in fields and fields["enabled"] is not None:
         fields["enabled"] = 1 if fields["enabled"] else 0
     if fields.get("llm_endpoint_code"):
@@ -298,6 +310,10 @@ async def preview_agent_prompt(
         messages=[
             {"role": "system", "content": agent.system_prompt},
             *plan.messages,
+            # JSON 输出指令与编排器发出的**逐字一致**（同一份实现）。
+            *build_response_format_messages(
+                agent.response_format, agent.response_schema
+            ),
         ],
         skipped=[{"code": c, "reason": r} for c, r in plan.skipped],
     )

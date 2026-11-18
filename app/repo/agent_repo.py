@@ -8,6 +8,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.agent import Agent
 
 
+class _Clear:
+    """「把这个列置空」的哨兵值。
+
+    仓储层的约定是「值为 None 的键跳过」（None 表示不修改），所以**清空**
+    一个可空列没法用 None 表达。传这个哨兵就能明确地写 NULL，而不影响
+    「不传这个键 = 不修改」的语义。
+
+    Args:
+        无。
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        """调试用摘要。"""
+        return "<CLEAR>"
+
+
+#: 清空可空列时用的哨兵值。
+CLEAR = _Clear()
+
+
 def _agent_sort(sort: str) -> tuple[Any, ...]:
     """把排序字段名翻译成 ORDER BY 片段。
 
@@ -190,7 +212,10 @@ class AgentRepo:
         if agent is None:
             return None
         for k, v in fields.items():
-            if v is not None:
+            if v is CLEAR:
+                # 明确要求置空：写 NULL，而不是「不修改」。
+                setattr(agent, k, None)
+            elif v is not None:
                 setattr(agent, k, v)
         if bump_version:
             await db.execute(

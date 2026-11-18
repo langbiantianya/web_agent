@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -46,8 +47,22 @@ class AgentBase(BaseModel):
     # 绑定的技能 code 列表（V4，§22.5）。技能只贡献**指令正文**，不授予任何
     # 工具权限——能不能调工具仍然只看 tools。
     skills: list[str] | None = None
+    # 输出格式：``text``（默认）或 ``json``（最终回答必须是 JSON）。
+    # json 模式由「提示词约束 + 服务端解析校验」两道把关实现，不改 LLM
+    # 请求参数——``response_format={"type":"json_object"}`` 并非所有
+    # OpenAI 兼容端点都认。
+    response_format: Literal["text", "json"] = "text"
+    # JSON 模式下的结构要求（JSON Schema 对象）。为空表示「只要求是 JSON，
+    # 不限定结构」。
+    response_schema: dict | None = None
     extra_params: dict | None = None
     enabled: bool = True
+
+    @field_validator("response_schema")
+    @classmethod
+    def _check_response_schema(cls, v: dict | None) -> dict | None:
+        """JSON Schema 的深度与规模守卫（理由同 :meth:`_check_extra_params`）。"""
+        return check_json_shape(v)
 
     @field_validator("extra_params")
     @classmethod
@@ -80,8 +95,17 @@ class AgentUpdate(BaseModel):
     tools: list[str] | None = None
     tool_policy: dict[str, ToolPolicyIn] | None = None
     skills: list[str] | None = None
+    response_format: Literal["text", "json"] | None = None
+    # 显式传 ``null`` 表示「清空结构要求」，不传表示「保持原样」。
+    response_schema: dict | None = None
     extra_params: dict | None = None
     enabled: bool | None = None
+
+    @field_validator("response_schema")
+    @classmethod
+    def _check_response_schema(cls, v: dict | None) -> dict | None:
+        """JSON Schema 的深度与规模守卫（理由同 :meth:`AgentBase._check_extra_params`）。"""
+        return check_json_shape(v)
 
     @field_validator("extra_params")
     @classmethod
@@ -104,6 +128,8 @@ class AgentOut(ORMBase):
     tools: list[str] | None = None
     tool_policy: dict[str, dict] | None = None
     skills: list[str] | None = None
+    response_format: str = "text"
+    response_schema: dict | None = None
     extra_params: dict | None = None
     enabled: bool
     version: int

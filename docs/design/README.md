@@ -6,7 +6,8 @@
 
 | 项 | 当前版本 | 状态 |
 | --- | --- | --- |
-| web_agent 主服务 | V4.8 | 基础实现完成 |
+| web_agent 主服务 | V4.9 | 基础实现完成 |
+| Agent JSON 输出契约 | V4.9 | 输出格式配置、JSON Schema、提示词层约束与服务端解析校验已落地 |
 | 用户 OAuth 与会话历史归属 | V4.6 | OIDC、会话与所有权隔离已通过真 PostgreSQL 验证；真实 IdP/存量迁移待完成 |
 | Workflow 可视化编排 | V4.8 | 拖拽画布、属性检查器、实时校验端点、撤销重做与自动布局已落地 |
 | 独立 admin-web 与管理员体系 | V4.7 | 独立 Ludic 容器、两种管理员 Session、Casbin、平台超级管理员、UI 权限、三主题、通知、审计、六类业务管理页、动态 OAuth Provider 配置和首次安装 owner 日志初始化已落地；旧管理员 API Key 管理栈已退役 |
@@ -28,7 +29,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [主服务设计索引](../../app/design/README.md) | V1–V4.8 的阅读顺序与章节映射 |
+| [主服务设计索引](../../app/design/README.md) | V1–V4.9 的阅读顺序与章节映射 |
 | [V1：单实例基础版](../../app/design/v1-foundation.md) | 目标、架构、持久化、SSE、线性 Agent 流水线 |
 | [V2：多实例与 LangGraph](../../app/design/v2-multi-instance.md) | Redis Stream/Pub/Sub、租约、LangGraph 替换自研控制流 |
 | [V3：编排、审批、工具与安全](../../app/design/v3-orchestration.md) | DAG、条件边、人工审批、工具闭环、PostgreSQL、敏感内容过滤 |
@@ -41,6 +42,7 @@
 | [V4.6：用户 OAuth 登录与会话历史归属](../../app/design/v4.6-user-oauth-conversation.md) | OIDC、服务端会话、用户身份绑定、conversation owner、越权防护与迁移 |
 | [V4.7：独立 admin-web、Casbin RBAC 与 Ludic SSR](../../app/design/v4.7-oauth-admin.md) | 独立容器、OAuth 管理员、账号密码超级管理员、Casbin、页面/组件权限与三主题 |
 | [V4.8：Workflow 可视化编排器](../../app/design/v4.8-workflow-visual-editor.md) | 拖拽画布编排、节点 `label`、definition 顶层 `layout` 坐标、服务端校验端点与结构化问题定位、撤销重做与自动布局 |
+| [V4.9：Agent JSON 响应值配置](../../app/design/v4.9-agent-json-response.md) | 输出格式（text/json）、JSON Schema、提示词层硬约束与服务端解析校验 |
 
 ### studio 服务
 
@@ -146,6 +148,7 @@
 | 用户登录、Cookie 会话和历史按用户隔离 | [V4.6](../../app/design/v4.6-user-oauth-conversation.md) |
 | 独立 admin-web、OAuth 管理员、账号密码超级管理员、Casbin 与 Ludic SSR | [V4.7](../../app/design/v4.7-oauth-admin.md) |
 | 工作流可视化编排画布、实时校验与布局 | [V4.8](../../app/design/v4.8-workflow-visual-editor.md) |
+| 配置 Agent 的 JSON 输出、结构要求或排查输出解析失败 | [V4.9](../../app/design/v4.9-agent-json-response.md) |
 | studio 协议、隔离、资源限制 | [studio V4](../../services/studio/design/v4-current.md) |
 | 下一步开发 | [TODO](TODO.md) |
 

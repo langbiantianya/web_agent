@@ -9,7 +9,7 @@
 | --- | --- | --- |
 | GET/POST | `/api/agents` | 列出或创建 Agent |
 | GET/PUT/DELETE | `/api/agents/{code}` | Agent 详情、更新或删除 |
-| GET | `/api/agents/{code}/prompt-preview` | 预览 Skill 注入后的提示词 |
+| GET | `/api/agents/{code}/prompt-preview` | 预览 Skill 与 JSON 输出约束注入后的提示词 |
 | GET | `/api/tools` | 当前部署可用的工具目录 |
 | GET | `/api/tool-audits` | 管理员分页查询工具审计摘要 |
 | GET | `/api/tool-audits/{id}` | 管理员查看脱敏参数与限长结果 |

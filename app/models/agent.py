@@ -37,6 +37,16 @@ class Agent(Base):
     # 绑定的技能 code 列表（V4，§22.5）。**不是**工具白名单：技能只贡献指令
     # 正文，模型能不能调工具仍然只看 tools。
     skills: Mapped[list | None] = mapped_column(JSON_COL, default=None)
+    # 输出格式：``text``（默认，照常输出文本）或 ``json``（最终回答必须是
+    # JSON）。json 模式由提示词层约束 + 服务端解析校验两道把关，**不改**
+    # LLM 请求参数——``response_format={"type":"json_object"}`` 并非所有
+    # OpenAI 兼容端点都认（MiniMax 与部分自建端点会直接 400）。
+    response_format: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="text"
+    )
+    # JSON 模式下的结构要求（JSON Schema 对象）。为空表示「只要求是 JSON，
+    # 不限定结构」。
+    response_schema: Mapped[dict | None] = mapped_column(JSON_COL, default=None)
     extra_params: Mapped[dict | None] = mapped_column(JSON_COL, default=None)
     enabled: Mapped[bool] = mapped_column(sa.SmallInteger, default=1)
     version: Mapped[int] = mapped_column(sa.Integer, default=1)

@@ -853,6 +853,75 @@
                                   "attrs": {},
                                   "children": [
                                     {
+                                      "text": "Output format"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "response_format",
+                                    "required": "false"
+                                  },
+                                  "children": [
+                                    {
+                                      "attrs": {
+                                        "value": "text"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "Plain text"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    },
+                                    {
+                                      "attrs": {
+                                        "value": "json"
+                                      },
+                                      "children": [
+                                        {
+                                          "text": "JSON"
+                                        }
+                                      ],
+                                      "tag": "option"
+                                    }
+                                  ],
+                                  "tag": "select"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
+                                      "text": "JSON schema (optional)"
+                                    }
+                                  ],
+                                  "tag": "span"
+                                },
+                                {
+                                  "attrs": {
+                                    "name": "response_schema",
+                                    "rows": "6"
+                                  },
+                                  "children": [],
+                                  "tag": "textarea"
+                                }
+                              ],
+                              "tag": "label"
+                            },
+                            {
+                              "attrs": {},
+                              "children": [
+                                {
+                                  "attrs": {},
+                                  "children": [
+                                    {
                                       "text": "Enabled"
                                     }
                                   ],
@@ -1477,6 +1546,15 @@
                                           "attrs": {},
                                           "children": [
                                             {
+                                              "text": "Output"
+                                            }
+                                          ],
+                                          "tag": "th"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
                                               "text": "Capabilities"
                                             }
                                           ],
@@ -1587,6 +1665,21 @@
                                           "children": [
                                             {
                                               "text": "gpt-4.1-mini"
+                                            }
+                                          ],
+                                          "tag": "td"
+                                        },
+                                        {
+                                          "attrs": {},
+                                          "children": [
+                                            {
+                                              "attrs": {},
+                                              "children": [
+                                                {
+                                                  "text": "Plain text"
+                                                }
+                                              ],
+                                              "tag": "span"
                                             }
                                           ],
                                           "tag": "td"
