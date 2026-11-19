@@ -409,3 +409,114 @@ async def test_admin_form_values_reject_bad_response_schema():
 
     errors = _business_field_errors(ValueError("invalid_response_schema"))
     assert errors["response_schema"]
+
+
+# ------------------------------------------------------------------ 管理端写入
+
+
+@pytest.mark.asyncio
+async def test_admin_update_clears_response_schema(db):
+    """管理端把 JSON Schema 清空后要真的写 NULL（不能被当成「不修改」）。
+
+    这是浏览器实测发现的回归：表单里清空 schema 会提交空串，解析成 None，
+    而仓储层把 None 当「不修改」——不换哨兵值的话旧 schema 会一直留着。
+    """
+    import uuid
+
+    import sqlalchemy as sa
+
+    from app.models.agent import Agent
+    from app.repo.llm_endpoint_repo import llm_endpoint_repo
+    from services.admin_web import app as admin_web_app
+    from services.admin_web.accounts import (
+        create_super_admin_account,
+        create_super_admin_session,
+    )
+    from services.admin_web.db import AdminSessionLocal
+    from services.admin_web.notifications import DeliveryResult
+    from services.admin_web.registry import seed_registry
+    from services.admin_web.security import (
+        super_csrf_cookie_name,
+        super_session_cookie_name,
+    )
+
+    async def _password_sender(*, username, email, phone, password):
+        """测试账号创建只需要成功回执。"""
+        return DeliveryResult(email_status="sent", sms_status="skipped")
+
+    tag = uuid.uuid4().hex[:8]
+    endpoint_code = f"ep-{tag}"
+    agent_code = f"agent-{tag}"
+    await llm_endpoint_repo.create(
+        db,
+        code=endpoint_code,
+        name="Connection",
+        base_url="https://example.invalid/v1",
+        model="m",
+        api_key_cipher="encrypted-key",
+        priority=10,
+        enabled=1,
+    )
+    async with AdminSessionLocal() as adb:
+        await seed_registry(adb)
+        account, _ = await create_super_admin_account(
+            adb,
+            username=f"admin_{tag}",
+            email=f"admin-{tag}@example.com",
+            phone=None,
+            password_sender=_password_sender,
+        )
+        token, csrf = await create_super_admin_session(adb, account)
+        await adb.commit()
+    client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=admin_web_app.app),
+        base_url="http://test",
+        follow_redirects=False,
+    )
+    client.cookies.set(super_session_cookie_name(), token)
+    client.cookies.set(super_csrf_cookie_name(), csrf)
+    try:
+        created = await client.post(
+            "/admin/agents",
+            data={
+                "csrf_token": csrf,
+                "code": agent_code,
+                "name": "JSON agent",
+                "llm_endpoint_code": endpoint_code,
+                "model": "",
+                "tools": "",
+                "skills": "",
+                "system_prompt": "你是助手",
+                "response_format": "json",
+                "response_schema": '{"type": "object"}',
+                "enabled": "1",
+            },
+        )
+        assert created.status_code == 303, created.text
+        stored = await db.scalar(sa.select(Agent).where(Agent.code == agent_code))
+        assert stored is not None
+        assert stored.response_format == "json"
+        assert stored.response_schema == {"type": "object"}
+
+        # 表单里把 schema 清空 → 必须真的写 NULL
+        updated = await client.post(
+            f"/admin/agents/{agent_code}/update",
+            data={
+                "csrf_token": csrf,
+                "name": "JSON agent",
+                "llm_endpoint_code": endpoint_code,
+                "model": "",
+                "tools": "",
+                "skills": "",
+                "system_prompt": "你是助手",
+                "response_format": "json",
+                "response_schema": "",
+                "enabled": "1",
+            },
+        )
+        assert updated.status_code == 303, updated.text
+        await db.refresh(stored)
+        assert stored.response_format == "json"
+        assert stored.response_schema is None
+    finally:
+        await client.aclose()

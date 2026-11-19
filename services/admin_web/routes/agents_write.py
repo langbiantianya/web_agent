@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from starlette.responses import RedirectResponse
 
 from app.core.crypto import encrypt
-from app.repo.agent_repo import agent_repo
+from app.repo.agent_repo import CLEAR, agent_repo
 from app.repo.workflow_repo import workflow_repo
 from app.schemas.agent import AgentUpdate
 from services.admin_web.agent_forms import (
@@ -101,6 +101,11 @@ def register(app: Any) -> None:
             fields = payload.model_dump(exclude_unset=True)
             if "api_key" in fields:
                 fields["api_key_cipher"] = encrypt(fields.pop("api_key"))
+            if "response_schema" in fields and fields["response_schema"] is None:
+                # 表单里把 JSON Schema 清空 = 「不限定结构」，要真的写 NULL。
+                # 仓储层的约定是「值为 None 的键跳过」（None = 不修改），所以
+                # 这里换成哨兵值——与客户端 API 的处理保持一致。
+                fields["response_schema"] = CLEAR
             if "enabled" in fields:
                 fields["enabled"] = 1 if fields["enabled"] else 0
             await agent_repo.update(
