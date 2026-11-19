@@ -51,6 +51,31 @@ docker compose -f deploy/docker-compose.admin.yml up -d --build
 - 为 admin 与客户端配置独立数据库账号，限制客户端读取超级管理员密码摘要；
 - 不在客户端镜像中安装 Ludic、Argon2 管理页或短信 SDK。
 
+## 生产拓扑：PostgreSQL 单一数据源 + 双账号
+
+管理端与客户端**共用一个 PostgreSQL 库，但用两个不同账号**。这不是「分库」——
+分库会让管理端写进去的 Agent / Workflow / LLM 端点在客户端读不到，管理界面
+等于白做。
+
+| 账号 | 权限 | 职责 |
+| --- | --- | --- |
+| 管理端（`ADMIN_DATABASE_URL`） | 全部权限 | 读写所有表；**由它跑 `alembic upgrade head`** |
+| 客户端（`DATABASE_URL`） | 仅 DML（SELECT/INSERT/UPDATE/DELETE） | 运行期读写业务数据 |
+
+客户端账号要额外 `REVOKE` 掉 `super_admin_account` 的读取权：客户端不需要
+超级管理员的口令摘要，能读就等于把口令摘要交给了运行期。
+
+```sql
+-- 库由管理端账号持有；客户端账号只有 DML
+GRANT USAGE ON SCHEMA public TO webagent;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO webagent;
+REVOKE ALL ON TABLE super_admin_account FROM webagent;
+```
+
+**迁移以管理端为准**：客户端账号没有 DDL 权限，它启动时那次
+`alembic upgrade head` 只在库**已经是 head** 时成立（空操作）。升级到含新
+迁移的版本时，先让管理端起来把结构迁完，客户端随后自动重试即可。
+
 ## 安全要求
 
 - studio 不注入数据库口令、模型 Key、`SECRET_KEY` 或任何 secret。
