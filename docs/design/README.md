@@ -125,6 +125,7 @@
 | 后端只提供固定管理页面 | Ludic SSR 注册页面/组件，数据库配置 permission binding 和租户覆盖 | 在不允许任意代码的前提下支持页面和组件级 UI 授权 |
 | 后台和客户端共用同一 Web 进程 | `/admin` 独立 admin-web 容器，客户端不注册管理页面；共享数据库和领域语义 | 隔离发布、Session、静态资源、依赖和运行故障 |
 | 用户名密码管理员登录 | 明确不做；OAuth 是唯一人员登录协议 | 不维护另一套密码、重置、锁定和高危本地账户体系 |
+| 完整 OpenTelemetry SDK | 明确不做；只保留 W3C `traceparent` 传播（`app/core/trace.py`） | 排障只需要贯穿 HTTP、工具、studio、dispatcher 的链路 id，不做指标、采样与导出 |
 
 ## 阅读路径
 

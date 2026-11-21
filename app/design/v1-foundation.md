@@ -878,7 +878,10 @@ web_agent/
   （与「配置即数据」一致，`SKILL.md` 降为导出格式）、正文进提示词、资源按需读，
   脚本经 gRPC 交给**独立的 studio 容器**执行、不在本进程起子进程（**已完成**，见 §22，
   服务侧见 [`studio V4`](../../services/studio/design/v4-current.md)）；
-  OpenTelemetry 链路追踪仍在 [TODO](../../docs/design/TODO.md)，token 成本统计尚未形成完整设计。
+  链路追踪**不引入完整 OpenTelemetry SDK**：只保留 W3C `traceparent` 传播
+  （`app/core/trace.py`，见 [V4.4](v4.4-governance-runtime.md)），跨 HTTP、工具、
+  studio、dispatcher 与 sandbox 日志打通；token 成本统计仍未完成，见
+  [TODO](../../docs/design/TODO.md)。
 
   V4 分三个 Phase 落地，各自可交付：
 
