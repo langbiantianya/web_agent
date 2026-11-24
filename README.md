@@ -11,11 +11,12 @@
 | 主服务 | [app/README.md](app/README.md) | 架构图、快速开始、配置、模块地图 |
 | API | [app/api/README.md](app/api/README.md) | REST 接口、SSE ticket、事件协议、恢复策略 |
 | 核心运行时 | [app/core/README.md](app/core/README.md) | Workflow、LangGraph、审批、工具、Redis 和敏感内容过滤 |
-| 设计总目录 | [docs/design/README.md](docs/design/README.md) | V1–V4.9 版本、迭代记录和设计入口 |
+| 设计总目录 | [docs/design/README.md](docs/design/README.md) | V1–V4.10 版本、迭代记录和设计入口 |
 | 设计 TODO | [docs/design/TODO.md](docs/design/TODO.md) | 尚未完成的工作与优先级 |
 | Web 页面 | [web/README.md](web/README.md) | 客户端功能验证台 |
 | 独立服务 | [services/README.md](services/README.md) | studio、dispatcher、sandbox 的拓扑与信任边界 |
 | admin-web | [services/admin_web/README.md](services/admin_web/README.md) | 独立 Ludic 后台、Casbin、平台超级管理员与管理页面 |
+| admin-ui | [services/admin_ui/README.md](services/admin_ui/README.md) | 后台前端 SvelteKit 工程（迁移中）：主题令牌、i18n 词典与管理面 API 客户端 |
 | studio | [services/studio/README.md](services/studio/README.md) | 脚本执行、档位、资源限制和运维入口 |
 | studio 设计 | [services/studio/design/README.md](services/studio/design/README.md) | gRPC 契约、进程隔离、沙箱和部署设计 |
 | dispatcher | [services/dispatcher/README.md](services/dispatcher/README.md) | isolated 档控制面、HTTP 接口和环境变量 |
@@ -38,6 +39,7 @@
 | 设计独立 admin-web、平台超级管理员或 Ludic SSR | [V4.7 管理员体系与 UI](app/design/v4.7-oauth-admin.md) |
 | 编辑工作流画布或排查流程校验 | [V4.8 Workflow 可视化编排器](app/design/v4.8-workflow-visual-editor.md) |
 | 配置 Agent 的 JSON 输出或结构要求 | [V4.9 Agent JSON 响应值配置](app/design/v4.9-agent-json-response.md) |
+| 迁移后台前端到 SvelteKit 或改管理面 API | [V4.10 后台前端迁移到 SvelteKit](app/design/v4.10-sveltekit-admin-ui.md) |
 | 接入 Skill 脚本或 MCP | [app/core/README.md](app/core/README.md#审批与工具) |
 | 部署脚本执行服务 | [deploy/README.md](deploy/README.md) |
 | 运行测试或压测 | [tests/README.md](tests/README.md) 与 [scripts/README.md](scripts/README.md) |

@@ -41,7 +41,7 @@ Casbin 策略，浏览器不是权限边界。
 services/admin_web/
   app.py          应用装配：创建 app、lifespan、中间件、静态挂载、注册路由
   common.py       跨业务域共用的请求处理辅助（21 个公开名）
-  routes/         12 个业务域的路由模块（14 个文件），每个暴露 register(app)
+  routes/         12 个业务域的路由模块（15 个文件），每个暴露 register(app)
   views/          16 个模块：13 个业务域页面 + shell / components / fields
 ```
 
@@ -51,9 +51,16 @@ services/admin_web/
 `access_mappings.py` 管 OAuth 外部角色映射。拆分后单个文件仍遵守 350 行上限。
 权限目录、角色投影和继承环检测集中在 `access_policy.py`。
 
+`routes/api.py` 是**给 SvelteKit 前端用的管理面 JSON API**（V4.10）：
+`GET /admin/api/session` 返回身份、界面偏好、可见页面与 CSRF 令牌，
+`GET /admin/api/dashboard` 返回概览页指标与组件可见性。两者与页面路由共用
+同一套 `with_auth` / CSRF / Casbin 判定，差别只有两点：返回 JSON；未认证返回
+**401** 而不是 302。**前端不允许出现第二份权限判断**——它只消费这里下发的
+「可见页面/组件」用于渲染。
+
 **路由注册顺序是行为的一部分。** Starlette 首个匹配 path 的路由胜出，所以
 顺序固化在 `routes/__init__.py` 的 `register_all` 里，并由
-`tests/snapshots/admin/routes.json`（55 条，含 `/admin/static` 挂载）保序比对。
+`tests/snapshots/admin/routes.json`（65 条路由条目 / 55 个唯一路径，含 `/admin/static` 挂载）保序比对。
 往 `register_all` 里加域时，插在正确的位置比追加到末尾更重要。
 
 **回归保护有两层：**

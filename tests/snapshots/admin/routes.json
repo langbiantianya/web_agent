@@ -455,5 +455,21 @@
     ],
     "name": "undo",
     "path": "/admin/undo/{entry_id}"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "admin_api_session",
+    "path": "/admin/api/session"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "admin_api_dashboard",
+    "path": "/admin/api/dashboard"
   }
 ]

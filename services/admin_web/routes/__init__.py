@@ -24,6 +24,7 @@ def register_all(app: Any) -> None:
     """
     from services.admin_web.routes import (
         access,
+        api,
         access_components,
         access_mappings,
         access_roles,
@@ -70,5 +71,6 @@ def register_all(app: Any) -> None:
         platform_admins,
         preferences,
         undo,
+        api,
     ):
         module.register(app)

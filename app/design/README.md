@@ -5,8 +5,9 @@
 独立 admin-web 服务、OAuth 管理员、账号密码超级管理员、Casbin RBAC、Ludic SSR
 业务管理页，并退役旧管理员 API Key 栈。V4.8 已把 workflow 配置从手写 JSON
 替换为拖拽画布编排器。V4.9 已给 Agent 增加「输出格式」配置：可选 JSON
-输出并附 JSON Schema，服务端负责校验模型确实返回了 JSON。真实 IdP 联调和
-存量数据处置仍以 TODO 为准。
+输出并附 JSON Schema，服务端负责校验模型确实返回了 JSON。V4.10 启动后台
+前端的 SvelteKit 迁移：鉴权与授权仍留在 Python 侧，前端按 A–E 五个阶段
+增量替换。真实 IdP 联调、存量数据处置与迁移剩余阶段仍以 TODO 为准。
 版本页不重复粘贴早期章节，因此排障或修改基础协议时要回到对应版本。
 
 | 版本 | 文档 | 主要内容 |
@@ -24,6 +25,7 @@
 | V4.7 | [独立 admin-web、Casbin RBAC 与 Ludic SSR](v4.7-oauth-admin.md) | 独立容器、OAuth `admin_user`、账号密码超级管理员、Casbin、页面/组件权限、三主题、六类业务页与旧管理栈退役 |
 | V4.8 | [Workflow 可视化编排器](v4.8-workflow-visual-editor.md) | 拖拽画布编排、节点 `label`、definition 顶层 `layout` 坐标、服务端校验端点与结构化问题定位、撤销重做与自动布局 |
 | V4.9 | [Agent JSON 响应值配置](v4.9-agent-json-response.md) | 输出格式（text/json）、JSON Schema、提示词层约束与服务端解析校验 |
+| V4.10 | [后台前端迁移到 SvelteKit](v4.10-sveltekit-admin-ui.md) | SvelteKit 3 + Svelte 5 runes + Tailwind 4、Python 侧管理面 JSON API、鉴权转发契约、i18n 词典、A–E 迁移阶段 |
 
 跨项目版本历史、已移除方案和任务导航见 [设计总目录](../../docs/design/README.md)。未完成事项只在 [TODO](../../docs/design/TODO.md) 中维护。
 
@@ -42,4 +44,5 @@
 - 设计或实现独立 admin-web 容器、平台超级管理员、Casbin、Ludic SSR、UI 权限和主题：读 V4.7。
 - 设计或实现工作流的拖拽画布编排、节点属性、条件边和实时校验：读 V4.8。
 - 设计或实现 Agent 的 JSON 输出契约、JSON Schema 与输出解析：读 V4.9。
+- 设计或实现后台前端的 SvelteKit 迁移、管理面 JSON API 与鉴权转发契约：读 V4.10。
 - 修改 studio 契约：同时读 [V4 调用侧](v4-tools-skills.md) 和 [studio 服务侧](../../services/studio/design/v4-current.md)。

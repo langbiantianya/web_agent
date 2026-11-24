@@ -6,7 +6,8 @@
 
 | 项 | 当前版本 | 状态 |
 | --- | --- | --- |
-| web_agent 主服务 | V4.9 | 基础实现完成 |
+| web_agent 主服务 | V4.10 | 基础实现完成 |
+| 后台前端迁移（SvelteKit） | V4.10 | SvelteKit 3 + Svelte 5 骨架、Python 侧管理面 JSON API、主题令牌与 i18n 词典已就位；页面迁移按 A–E 阶段推进，鉴权与授权仍只在 Python 侧 |
 | Agent JSON 输出契约 | V4.9 | 输出格式配置、JSON Schema、提示词层约束与服务端解析校验已落地 |
 | 用户 OAuth 与会话历史归属 | V4.6 | OIDC、会话与所有权隔离已通过真 PostgreSQL 验证；真实 IdP/存量迁移待完成 |
 | Workflow 可视化编排 | V4.8 | 拖拽画布、属性检查器、实时校验端点、撤销重做与自动布局已落地 |
@@ -29,7 +30,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [主服务设计索引](../../app/design/README.md) | V1–V4.9 的阅读顺序与章节映射 |
+| [主服务设计索引](../../app/design/README.md) | V1–V4.10 的阅读顺序与章节映射 |
 | [V1：单实例基础版](../../app/design/v1-foundation.md) | 目标、架构、持久化、SSE、线性 Agent 流水线 |
 | [V2：多实例与 LangGraph](../../app/design/v2-multi-instance.md) | Redis Stream/Pub/Sub、租约、LangGraph 替换自研控制流 |
 | [V3：编排、审批、工具与安全](../../app/design/v3-orchestration.md) | DAG、条件边、人工审批、工具闭环、PostgreSQL、敏感内容过滤 |
@@ -43,6 +44,7 @@
 | [V4.7：独立 admin-web、Casbin RBAC 与 Ludic SSR](../../app/design/v4.7-oauth-admin.md) | 独立容器、OAuth 管理员、账号密码超级管理员、Casbin、页面/组件权限与三主题 |
 | [V4.8：Workflow 可视化编排器](../../app/design/v4.8-workflow-visual-editor.md) | 拖拽画布编排、节点 `label`、definition 顶层 `layout` 坐标、服务端校验端点与结构化问题定位、撤销重做与自动布局 |
 | [V4.9：Agent JSON 响应值配置](../../app/design/v4.9-agent-json-response.md) | 输出格式（text/json）、JSON Schema、提示词层硬约束与服务端解析校验 |
+| [V4.10：后台前端迁移到 SvelteKit](../../app/design/v4.10-sveltekit-admin-ui.md) | SvelteKit 3 + Svelte 5 runes + Tailwind 4、管理面 JSON API、鉴权转发契约、i18n 词典、A–E 迁移阶段 |
 
 ### studio 服务
 
@@ -88,6 +90,8 @@
 | V4.6 | 用户 OIDC 登录、本地 `app_user`、服务端 cookie session、PKCE/state/nonce、conversation owner 隔离 | 客户端提交 `user_id` 改为认证主体派生；OAuth token 不进入浏览器存储；消息、run、审批和 SSE 统一按会话 owner 授权 | 基础实现与真 PostgreSQL 验证完成；真实 IdP 与存量迁移待完成 |
 | V4.7 | 独立 `admin-web` 容器、OAuth `admin_user`、`super_admin_account`、Casbin RBAC、Ludic SSR、页面/组件权限、三主题、密码轮换、通知、审计、业务管理页、动态客户端/管理端 OAuth Provider 和首次安装 owner 日志初始化 | 后台不再挂载到客户端进程；客户端管理 API 改用两种后台 Session 与 Casbin；Provider 从管理端动态维护并按登录用途分别过滤；首次安装无需邮件/短信即可输出一次随机 owner 密码；旧 `X-Admin-Key` 和数据库管理员 Key 退役 | 已实现 |
 | V4.8 | `/admin/workflows` 可视化拖拽编排：画布与连线、属性检查器、实时校验端点、撤销重做、整理布局与适应画布、结构化图校验的节点/边定位 | 工作流配置从手写 JSON 改为画布编辑；图规则仍是 `app/core/workflow_def.py` 一份实现，节点级 `label` 与顶层 `layout` 挂在既有 JSON 列上，不新增迁移、不引入前端构建链。同版本管理端后端按业务域拆成 `routes/` 与 `views/` 两个包，`app.py` 只留应用装配（行为由元素树快照 + 路由表快照 + 结构契约测试锁定，注册顺序不变） | 已实现 |
+| V4.9 | Agent 输出格式（text/json）、可选 JSON Schema、提示词层硬约束与服务端解析校验 | 「配了 JSON 就一定拿得到 JSON」由服务端保证；不引入 `response_format` 请求参数以兼容非 OpenAI 端点 | 已实现 |
+| V4.10 | 后台前端迁移到 SvelteKit 3 + Svelte 5 runes + Tailwind 4，Python 侧新增管理面 JSON API | 手写 DOM JS 与 283 个 CSS 变量换成型别化的组件与语义令牌；鉴权、CSRF、Casbin 判定与审计仍只在 Python 侧，浏览器不直连管理端 | 进行中（A–E 阶段） |
 
 ## 已移除、已替换或明确不做
 
@@ -122,7 +126,8 @@
 | 浏览器保存 OAuth access/refresh token | 登录只建立 HttpOnly 服务端会话，第三方 token 默认不落库、不下发浏览器 | 降低 XSS 泄漏面，并让会话可以服务端立即撤销 |
 | 所有管理员只走 OAuth，或所有管理员都使用本地密码 | OAuth 管理员使用 Casbin；另设独立 `super_admin_account` 提供内置及后续平台超级管理员 | 同时满足常规 OAuth 管理与平台级应急管理 |
 | 手工写死管理员 role | 使用 Casbin `p/g`、permission metadata 和 OAuth 角色映射 | 权限可审计、可组合，外部目录是人员角色的权威来源 |
-| 后端只提供固定管理页面 | Ludic SSR 注册页面/组件，数据库配置 permission binding 和租户覆盖 | 在不允许任意代码的前提下支持页面和组件级 UI 授权 |
+| 后端只提供固定管理页面 | 页面/组件注册表与 permission binding 不变，渲染层从 Ludic SSR 逐步换成 SvelteKit 组件 | 在不允许任意代码的前提下支持页面和组件级 UI 授权；渲染层可以换，授权判定不换 |
+| 前端自行判定权限 | 越权判定只在 Python 侧；前端只消费「可见页面/组件」用于渲染 | 权限判定出现第二份实现必然漂移，且漂移方向通常是放行 |
 | 后台和客户端共用同一 Web 进程 | `/admin` 独立 admin-web 容器，客户端不注册管理页面；共享数据库和领域语义 | 隔离发布、Session、静态资源、依赖和运行故障 |
 | 用户名密码管理员登录 | 明确不做；OAuth 是唯一人员登录协议 | 不维护另一套密码、重置、锁定和高危本地账户体系 |
 | 完整 OpenTelemetry SDK | 明确不做；只保留 W3C `traceparent` 传播（`app/core/trace.py`） | 排障只需要贯穿 HTTP、工具、studio、dispatcher 的链路 id，不做指标、采样与导出 |
@@ -150,6 +155,7 @@
 | 独立 admin-web、OAuth 管理员、账号密码超级管理员、Casbin 与 Ludic SSR | [V4.7](../../app/design/v4.7-oauth-admin.md) |
 | 工作流可视化编排画布、实时校验与布局 | [V4.8](../../app/design/v4.8-workflow-visual-editor.md) |
 | 配置 Agent 的 JSON 输出、结构要求或排查输出解析失败 | [V4.9](../../app/design/v4.9-agent-json-response.md) |
+| 迁移后台前端、管理面 JSON API、鉴权转发契约或后台主题与 i18n | [V4.10](../../app/design/v4.10-sveltekit-admin-ui.md) |
 | studio 协议、隔离、资源限制 | [studio V4](../../services/studio/design/v4-current.md) |
 | 下一步开发 | [TODO](TODO.md) |
 

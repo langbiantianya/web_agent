@@ -1,0 +1,111 @@
+@import 'tailwindcss';
+
+/*
+ * 主题令牌。
+ *
+ * 旧后台是 283 个 CSS 变量 + 三套主题（fluent / cloudscape / material）。
+ * 这里先把**骨架真正用到的**令牌迁到 Tailwind 的 `@theme inline`，其余变量
+ * 在后续阶段按页面逐步迁移——一次性搬 283 个变量会让 diff 无法审阅。
+ *
+ * 主题挂在 <html data-admin-theme="..."> 上：服务端按管理员偏好渲染，
+ * 客户端切换时只改这个属性，不重刷页面。
+ */
+
+@theme inline {
+	--color-app: var(--admin-bg);
+	--color-surface: var(--admin-surface);
+	--color-surface-2: var(--admin-surface-2);
+	--color-line: var(--admin-border);
+	--color-ink: var(--admin-text);
+	--color-ink-muted: var(--admin-text-muted);
+	--color-accent: var(--admin-accent);
+	--color-accent-ink: var(--admin-accent-contrast);
+	--color-danger: var(--admin-danger);
+	--radius-card: var(--admin-radius);
+}
+
+:root,
+[data-admin-theme='fluent'] {
+	--admin-bg: #f4f6fb;
+	--admin-surface: #ffffff;
+	--admin-surface-2: #eef2f9;
+	--admin-border: #d5dcea;
+	--admin-text: #16202f;
+	--admin-text-muted: #5a6b82;
+	--admin-accent: #2f6feb;
+	--admin-accent-contrast: #ffffff;
+	--admin-danger: #c0392b;
+	--admin-radius: 12px;
+}
+
+[data-admin-theme='cloudscape'] {
+	--admin-bg: #f2f3f3;
+	--admin-surface: #ffffff;
+	--admin-surface-2: #eaeded;
+	--admin-border: #d5dbdb;
+	--admin-text: #16191f;
+	--admin-text-muted: #545b64;
+	--admin-accent: #0972d3;
+	--admin-accent-contrast: #ffffff;
+	--admin-danger: #d13212;
+	--admin-radius: 8px;
+}
+
+[data-admin-theme='material'] {
+	--admin-bg: #fafafa;
+	--admin-surface: #ffffff;
+	--admin-surface-2: #f0f0f0;
+	--admin-border: #e0e0e0;
+	--admin-text: #1c1b1f;
+	--admin-text-muted: #49454f;
+	--admin-accent: #6750a4;
+	--admin-accent-contrast: #ffffff;
+	--admin-danger: #b3261e;
+	--admin-radius: 16px;
+}
+
+[data-admin-color-mode='dark'] {
+	--admin-bg: #10141b;
+	--admin-surface: #171d27;
+	--admin-surface-2: #1f2734;
+	--admin-border: #2b3543;
+	--admin-text: #e6ebf2;
+	--admin-text-muted: #9aa8bd;
+	--admin-accent: #6ea8fe;
+	--admin-accent-contrast: #0b1017;
+	--admin-danger: #ff6b6b;
+}
+
+[data-admin-density='compact'] {
+	--admin-space: 0.5rem;
+}
+
+:root {
+	--admin-space: 0.875rem;
+}
+
+html,
+body {
+	height: 100%;
+}
+
+body {
+	background: var(--admin-bg);
+	color: var(--admin-text);
+	font-family:
+		'Segoe UI', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+	[data-admin-color-mode='system'] {
+		--admin-bg: #10141b;
+		--admin-surface: #171d27;
+		--admin-surface-2: #1f2734;
+		--admin-border: #2b3543;
+		--admin-text: #e6ebf2;
+		--admin-text-muted: #9aa8bd;
+		--admin-accent: #6ea8fe;
+		--admin-accent-contrast: #0b1017;
+		--admin-danger: #ff6b6b;
+	}
+}
