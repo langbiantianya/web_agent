@@ -48,3 +48,91 @@ export interface DashboardPayload {
 	counts: DashboardCounts;
 	components: { metrics: boolean; quickActions: boolean };
 }
+
+/** Agent 列表项。 */
+export interface AdminAgent {
+	code: string;
+	name: string;
+	description: string;
+	systemPrompt: string;
+	model: string;
+	llmEndpointCode: string;
+	tools: string[];
+	skills: string[];
+	responseFormat: 'text' | 'json';
+	responseSchema: Record<string, unknown> | null;
+	enabled: boolean;
+	createdAt: string | null;
+	updatedAt: string | null;
+}
+
+/** Agent 表单需要的候选项。 */
+export interface AgentOptions {
+	llmEndpoints: { code: string; name: string; model: string; enabled: boolean }[];
+	skills: { code: string; name: string }[];
+	mcpServers: { code: string; name: string }[];
+	mcpTools: string[];
+}
+
+/** 列表分页参数。 */
+export interface ListPage {
+	q: string;
+	sort: string;
+	page: number;
+	size: number;
+}
+
+/** Agent 列表响应。 */
+export interface AgentListPayload {
+	items: AdminAgent[];
+	total: number;
+	page: ListPage;
+	options: AgentOptions;
+}
+
+/** 写入 Agent 时提交的字段。 */
+export interface AgentInput {
+	code?: string;
+	name: string;
+	description: string;
+	systemPrompt: string;
+	model: string;
+	llmEndpointCode: string;
+	tools: string[];
+	skills: string[];
+	responseFormat: 'text' | 'json';
+	responseSchema: Record<string, unknown> | null;
+	enabled: boolean;
+}
+
+/** LLM 端点。 */
+export interface LlmEndpoint {
+	code: string;
+	name: string;
+	baseUrl: string;
+	model: string;
+	priority: number;
+	enabled: boolean;
+	hasApiKey: boolean;
+	boundAgents: number;
+	createdAt: string | null;
+	updatedAt: string | null;
+}
+
+/** LLM 端点列表响应。 */
+export interface LlmListPayload {
+	items: LlmEndpoint[];
+	total: number;
+	page: ListPage;
+}
+
+/** 写入 LLM 端点时提交的字段。 */
+export interface LlmInput {
+	code?: string;
+	name: string;
+	baseUrl: string;
+	model: string;
+	apiKey: string;
+	priority: number;
+	enabled: boolean;
+}

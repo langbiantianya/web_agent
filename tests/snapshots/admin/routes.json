@@ -471,5 +471,93 @@
     ],
     "name": "admin_api_dashboard",
     "path": "/admin/api/dashboard"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_agents_create",
+    "path": "/admin/api/agents"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_agents_update",
+    "path": "/admin/api/agents/{code}"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_agents_toggle",
+    "path": "/admin/api/agents/{code}/toggle"
+  },
+  {
+    "methods": [
+      "DELETE"
+    ],
+    "name": "api_agents_delete",
+    "path": "/admin/api/agents/{code}"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_agents_list",
+    "path": "/admin/api/agents"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_agents_get",
+    "path": "/admin/api/agents/{code}"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_llm_list",
+    "path": "/admin/api/llm"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_llm_get",
+    "path": "/admin/api/llm/{code}"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_llm_create",
+    "path": "/admin/api/llm"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_llm_update",
+    "path": "/admin/api/llm/{code}"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_llm_toggle",
+    "path": "/admin/api/llm/{code}/toggle"
+  },
+  {
+    "methods": [
+      "DELETE"
+    ],
+    "name": "api_llm_delete",
+    "path": "/admin/api/llm/{code}"
   }
 ]

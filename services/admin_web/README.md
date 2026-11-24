@@ -41,7 +41,7 @@ Casbin 策略，浏览器不是权限边界。
 services/admin_web/
   app.py          应用装配：创建 app、lifespan、中间件、静态挂载、注册路由
   common.py       跨业务域共用的请求处理辅助（21 个公开名）
-  routes/         12 个业务域的路由模块（15 个文件），每个暴露 register(app)
+  routes/         12 个业务域的路由模块 + 4 个管理面 API 模块（27 个文件），每个暴露 register(app)
   views/          16 个模块：13 个业务域页面 + shell / components / fields
 ```
 
@@ -58,9 +58,20 @@ services/admin_web/
 **401** 而不是 302。**前端不允许出现第二份权限判断**——它只消费这里下发的
 「可见页面/组件」用于渲染。
 
+资源域的管理面 API 按域拆成独立模块（`routes/api_agents.py`、
+`routes/api_agents_write.py`、`routes/api_llm.py`），共用
+`services/admin_web/api_support.py` 里的四个动作：**认证、CSRF、权限、错误
+形状**。写操作的 CSRF 令牌从 `X-CSRF-Token` 头取——服务端持有会话 Cookie 与
+令牌，浏览器全程不参与。
+
+失败一律是 JSON：`{"code": "<机器码>", "message": "<给人看的话>",
+"fieldErrors": {...}}`。机器码稳定（`unauthorized` / `invalid_csrf` /
+`not_found` / `duplicate` / `missing` / `invalid_input` / `agent_in_use` /
+`endpoint_in_use`），前端据此决定提示、重试还是跳登录页，**不去解析文案**。
+
 **路由注册顺序是行为的一部分。** Starlette 首个匹配 path 的路由胜出，所以
 顺序固化在 `routes/__init__.py` 的 `register_all` 里，并由
-`tests/snapshots/admin/routes.json`（65 条路由条目 / 55 个唯一路径，含 `/admin/static` 挂载）保序比对。
+`tests/snapshots/admin/routes.json`（77 条路由条目 / 61 个唯一路径，含 `/admin/static` 挂载）保序比对。
 往 `register_all` 里加域时，插在正确的位置比追加到末尾更重要。
 
 **回归保护有两层：**

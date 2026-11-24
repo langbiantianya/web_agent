@@ -12,7 +12,16 @@
  *    「可见页面/组件」只是渲染依据，不是授权依据。
  */
 
-import type { AdminSession, DashboardPayload } from '#lib/types';
+import type {
+	AdminAgent,
+	AdminSession,
+	AgentInput,
+	AgentListPayload,
+	DashboardPayload,
+	LlmEndpoint,
+	LlmInput,
+	LlmListPayload
+} from '#lib/types';
 import { adminApiBaseUrl } from '#lib/server/config';
 
 
@@ -91,4 +100,164 @@ export async function loadSession(cookie: string): Promise<AdminSession | null> 
 /** 读取概览页载荷。 */
 export async function loadDashboard(cookie: string, csrfToken: string): Promise<DashboardPayload> {
 	return await adminFetch<DashboardPayload>('/admin/api/dashboard', { cookie });
+}
+
+/** 读取 Agent 列表（含表单候选项）。 */
+export async function loadAgents(
+	cookie: string,
+	query: { q?: string; sort?: string; page?: number; size?: number } = {}
+): Promise<AgentListPayload> {
+	const params = new URLSearchParams();
+	if (query.q) params.set('q', query.q);
+	if (query.sort) params.set('sort', query.sort);
+	if (query.page) params.set('page', String(query.page));
+	if (query.size) params.set('size', String(query.size));
+	const suffix = params.toString() ? `?${params.toString()}` : '';
+	return await adminFetch<AgentListPayload>(`/admin/api/agents${suffix}`, { cookie });
+}
+
+/** 创建 Agent。 */
+export async function createAgent(
+	cookie: string,
+	csrfToken: string,
+	input: AgentInput
+): Promise<AdminAgent> {
+	const result = await adminFetch<{ item: AdminAgent }>('/admin/api/agents', {
+		method: 'POST',
+		cookie,
+		csrfToken,
+		body: JSON.stringify(input)
+	});
+	return result.item;
+}
+
+/** 更新 Agent。 */
+export async function updateAgent(
+	cookie: string,
+	csrfToken: string,
+	code: string,
+	input: AgentInput
+): Promise<AdminAgent> {
+	const result = await adminFetch<{ item: AdminAgent }>(
+		`/admin/api/agents/${encodeURIComponent(code)}`,
+		{
+			method: 'PUT',
+			cookie,
+			csrfToken,
+			body: JSON.stringify(input)
+		}
+	);
+	return result.item;
+}
+
+/** 切换 Agent 的启用状态。 */
+export async function toggleAgent(
+	cookie: string,
+	csrfToken: string,
+	code: string,
+	enabled: boolean
+): Promise<AdminAgent> {
+	const result = await adminFetch<{ item: AdminAgent }>(
+		`/admin/api/agents/${encodeURIComponent(code)}/toggle`,
+		{
+			method: 'POST',
+			cookie,
+			csrfToken,
+			body: JSON.stringify({ enabled })
+		}
+	);
+	return result.item;
+}
+
+/** 删除 Agent。 */
+export async function deleteAgent(
+	cookie: string,
+	csrfToken: string,
+	code: string
+): Promise<void> {
+	await adminFetch<{ ok: boolean }>(`/admin/api/agents/${encodeURIComponent(code)}`, {
+		method: 'DELETE',
+		cookie,
+		csrfToken
+	});
+}
+
+/** 读取 LLM 端点列表。 */
+export async function loadLlmEndpoints(
+	cookie: string,
+	query: { q?: string; sort?: string; page?: number; size?: number } = {}
+): Promise<LlmListPayload> {
+	const params = new URLSearchParams();
+	if (query.q) params.set('q', query.q);
+	if (query.sort) params.set('sort', query.sort);
+	if (query.page) params.set('page', String(query.page));
+	if (query.size) params.set('size', String(query.size));
+	const suffix = params.toString() ? `?${params.toString()}` : '';
+	return await adminFetch<LlmListPayload>(`/admin/api/llm${suffix}`, { cookie });
+}
+
+/** 新增 LLM 端点。 */
+export async function createLlmEndpoint(
+	cookie: string,
+	csrfToken: string,
+	input: LlmInput
+): Promise<LlmEndpoint> {
+	const result = await adminFetch<{ item: LlmEndpoint }>('/admin/api/llm', {
+		method: 'POST',
+		cookie,
+		csrfToken,
+		body: JSON.stringify(input)
+	});
+	return result.item;
+}
+
+/** 更新 LLM 端点。 */
+export async function updateLlmEndpoint(
+	cookie: string,
+	csrfToken: string,
+	code: string,
+	input: LlmInput
+): Promise<LlmEndpoint> {
+	const result = await adminFetch<{ item: LlmEndpoint }>(
+		`/admin/api/llm/${encodeURIComponent(code)}`,
+		{
+			method: 'PUT',
+			cookie,
+			csrfToken,
+			body: JSON.stringify(input)
+		}
+	);
+	return result.item;
+}
+
+/** 切换 LLM 端点的启用状态。 */
+export async function toggleLlmEndpoint(
+	cookie: string,
+	csrfToken: string,
+	code: string,
+	enabled: boolean
+): Promise<LlmEndpoint> {
+	const result = await adminFetch<{ item: LlmEndpoint }>(
+		`/admin/api/llm/${encodeURIComponent(code)}/toggle`,
+		{
+			method: 'POST',
+			cookie,
+			csrfToken,
+			body: JSON.stringify({ enabled })
+		}
+	);
+	return result.item;
+}
+
+/** 删除 LLM 端点。 */
+export async function deleteLlmEndpoint(
+	cookie: string,
+	csrfToken: string,
+	code: string
+): Promise<void> {
+	await adminFetch<{ ok: boolean }>(`/admin/api/llm/${encodeURIComponent(code)}`, {
+		method: 'DELETE',
+		cookie,
+		csrfToken
+	});
 }

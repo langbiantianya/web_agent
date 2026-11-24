@@ -6,12 +6,12 @@
 优先级：`P0` 阻断生产采用，`P1` 重要缺口，`P2` 体验与扩展。
 
 截至 V4.10 设计，OAuth/OIDC 主链路、独立 admin-web 业务页、workflow 可视化编排器
-和 Agent JSON 输出契约已经落地，旧管理员 API Key 管理栈已退役；后台前端开始
-迁移到 SvelteKit（骨架与概览页就位，页面迁移分 A–E 五阶段推进）。尚未完成的
-**P1** 共六项：真实 IdP 联调（含登录限频、过期 attempt 清理、provider 故障
-监控）、存量会话归属处理，以及 SvelteKit 迁移的四个阶段门禁（资源页、访问
-控制页、端到端联调、部署接线）；其余 13 项均为 P2，涵盖成本账本、容器预热、
-MCP 能力边界与构建依赖。
+和 Agent JSON 输出契约已经落地，旧管理员 API Key 管理栈已退役；后台前端正在
+迁移到 SvelteKit：阶段 A（骨架 + 概览页）与端到端联调已完成，阶段 B 的智能体
+与 LLM 端点两页已迁，其余资源页仍走旧 Ludic 页面。尚未完成的 **P1** 共四项：
+真实 IdP 联调（含登录限频、过期 attempt 清理、provider 故障监控）、存量会话
+归属处理，以及 SvelteKit 迁移的阶段 B 剩余资源页与部署接线；其余 13 项均为
+P2，涵盖成本账本、容器预热、MCP 能力边界与构建依赖。
 
 ## 后台前端迁移（SvelteKit）
 
@@ -20,10 +20,21 @@ MCP 能力边界与构建依赖。
 反向代理直指 `admin-web` 即可）。鉴权与授权**不重写**：会话 Cookie、CSRF、
 Casbin 判定、审计、Argon2 口令全部留在 Python 侧。
 
-- [ ] **P1：阶段 B —— 资源页迁移**
+- [ ] **P1：阶段 B —— 资源页迁移（agents / llm 已迁，其余待迁）**
   `agents` / `skills` / `mcp` / `llm` / `workflows` 五个列表页及其表单迁到
   SvelteKit。每页至少一条 Playwright 用例（读一条 + 写一条），失败信息要能
   指到具体组件，而不是只报「页面没渲染出来」。
+
+  **已完成**：
+  - `agents`（`/admin/agents`）：Python 侧 `GET/POST /admin/api/agents`、
+    `GET/PUT/DELETE /admin/api/agents/{code}`、`POST .../toggle`；SvelteKit
+    页面含列表、搜索/排序/分页、创建表单与编辑面板；浏览器实测读、写、改、
+    删全链路通过，JSON Schema 的「显式 null = 写 NULL」语义与页面路由一致。
+  - `llm`（`/admin/llm`）：Python 侧 `GET/POST /admin/api/llm`、
+    `GET/PUT/DELETE /admin/api/llm/{code}`、`POST .../toggle`；明文 Key
+    不回显（只有 `hasApiKey`）；仍被 Agent 引用的连接不能停用、不能删除。
+
+  **待迁**：`skills`、`mcp`、`workflows`（画布本阶段不重写，见阶段 D）。
 
 - [ ] **P1：阶段 C —— 访问控制页迁移**
   `access/pages`、`access/components`、`access/roles`、`access/mappings`、
@@ -31,10 +42,16 @@ Casbin 判定、审计、Argon2 口令全部留在 Python 侧。
   **硬约束**：前端只消费服务端下发的「可见页面/组件」，越权判定仍然只在
   Python 侧；前端不得出现第二份权限判断逻辑。
 
-- [ ] **P1：SvelteKit 与真实 admin-web 的端到端联调**
-  当前 `/admin/api/session` 与 `/admin/api/dashboard` 只有单元级验证，尚未
-  与真实 admin-web 容器一起跑通。需要覆盖：登录态建立与保持、`Set-Cookie`
-  在反向代理后的透传、写操作的 CSRF 头、未登录 302 到登录页、无权访问 404。
+- [x] **P1：SvelteKit 与真实 admin-web 的端到端联调**
+  已与真实 admin-web 联调跑通：登录页代理、`Set-Cookie` 透传、登录态保持、
+  概览页渲染、写操作的 CSRF 头、未登录 302 到登录页、旧 Ludic 页面回退，
+  全部在真实浏览器里验证过。
+
+  过程中发现并修掉一个**真实的部署级缺陷**：浏览器发的是公网 Origin，
+  Python 看到的是内部地址，代理过来的写请求一律被判成跨源，登录直接失败。
+  修法是**分层校验**而不是放行——SvelteKit 先校验浏览器的 Origin，不通过
+  就 403；通过后把 Origin 重写成 Python 自己的 origin，Python 的同源检查
+  因此照常通过。详见 [V4.10 的「Origin 的分层校验」](../../app/design/v4.10-sveltekit-admin-ui.md)。
 
 - [ ] **P1：部署接线**
   新增 `admin-ui` 容器（`services/admin_ui/Dockerfile`，node:24-alpine，

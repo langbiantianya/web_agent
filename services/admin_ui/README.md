@@ -25,11 +25,15 @@
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| A | 工程骨架、主题令牌、i18n 词典、会话装载、概览页 | 已就位 |
-| B | 资源页（agents / skills / mcp / llm / workflows） | 未开始 |
+| A | 工程骨架、主题令牌、i18n 词典、会话装载、概览页 | ✅ 已完成（含与真实 admin-web 的联调） |
+| B | 资源页（agents / skills / mcp / llm / workflows） | 🔄 进行中：agents、llm 已迁；skills / mcp / workflows 待迁 |
 | C | 访问控制页（pages / components / roles / mappings / platform-admins / preferences / audit） | 未开始 |
 | D | workflow 画布作为 island 接入（**不重写画布**） | 未开始 |
 | E | 下线 Ludic 视图层 | 未开始 |
+
+**新旧共存的仲裁点在 `src/hooks.server.ts`**：路径落在 Python 独占清单里就
+代理给 Python；没匹配到 SvelteKit 路由的路径也回退给 Python——所以没迁的
+页面仍然可用，某个页面删掉对应路由就自动切回旧实现。
 
 设计与取舍见 [V4.10：后台前端迁移到 SvelteKit](../../app/design/v4.10-sveltekit-admin-ui.md)，
 剩余阶段在 [TODO](../../docs/design/TODO.md) 里跟踪。

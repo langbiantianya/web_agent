@@ -29,6 +29,7 @@ from app.models.admin_control import SuperAdminAccount
 from app.models.admin_user import AdminUser
 from app.models.conversation import Conversation
 from app.models.run import Run
+from services.admin_web.api_support import api_route
 from services.admin_web.common import json_response_no_store, with_auth
 from services.admin_web.registry import (
     can_access_page,
@@ -64,6 +65,7 @@ def register(app: Any) -> None:
     """把管理面 JSON API 挂到 app 上。"""
 
     @app.get("/admin/api/session")
+    @api_route
     async def admin_api_session(request: Request):
         """当前管理员身份、界面偏好、可见页面与 CSRF 令牌。
 
@@ -104,6 +106,7 @@ def register(app: Any) -> None:
             await db.close()
 
     @app.get("/admin/api/dashboard")
+    @api_route
     async def admin_api_dashboard(request: Request):
         """概览页的指标与组件可见性。"""
         values = await with_auth(request)
