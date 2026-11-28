@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -82,17 +83,37 @@ app.mount("/admin/static", StaticFiles(directory=str(STATIC_DIR)), name="admin-s
 app.state.admin_password_sender = _notify_password
 
 
+#: 画布片段页的路径。它要能被**同源**的 SvelteKit 外壳以 iframe 承载，
+#: 所以这两条响应头与其它后台页面不同——见 ``security_headers``。
+CANVAS_FRAGMENT = re.compile(r"^/admin/workflows/[^/]+/canvas$")
+
+_CSP_BASE = (
+    "default-src 'self'; img-src 'self' data:; style-src 'self'; "
+    "script-src 'self'; connect-src 'self'; "
+)
+
+
 async def security_headers(request: Request, call_next):
-    """添加后台安全响应头。"""
+    """添加后台安全响应头。
+
+    **画布片段页是唯一的例外**：它要被 SvelteKit 的画布外壳用 ``<iframe>``
+    承载，因此允许被**同源**文档嵌入（``frame-ancestors 'self'``）。
+    跨源仍然拒绝——片段页里有 CSRF 令牌与画布状态，别的站点框住它没有好处。
+    """
     response: Response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "same-origin")
-    response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault(
-        "Content-Security-Policy",
-        "default-src 'self'; img-src 'self' data:; style-src 'self'; "
-        "script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
-    )
+    if CANVAS_FRAGMENT.match(request.url.path):
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["Content-Security-Policy"] = (
+            _CSP_BASE + "frame-ancestors 'self'"
+        )
+    else:
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            _CSP_BASE + "frame-ancestors 'none'",
+        )
     if response.headers.get("content-type", "").startswith("text/html"):
         response.headers.setdefault("Cache-Control", "no-store")
     elif request.url.path.startswith("/admin/static/"):

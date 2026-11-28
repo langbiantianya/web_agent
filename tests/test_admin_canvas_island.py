@@ -126,6 +126,13 @@ async def test_canvas_fragment_has_no_shell_but_keeps_island() -> None:
         # **没有**外壳：导航与顶栏归 SvelteKit 那一层
         assert 'class="sidebar"' not in text
         assert "nav-link" not in text
+
+        # 要能被同源的 SvelteKit 外壳用 iframe 承载：默认的 DENY 会让
+        # 浏览器直接拒绝渲染这一帧（表现为 iframe 里「拒绝连接」）。
+        assert response.headers.get("x-frame-options") == "SAMEORIGIN"
+        assert "frame-ancestors 'self'" in response.headers.get(
+            "content-security-policy", ""
+        )
     finally:
         async with AdminSessionLocal() as db:
             await workflow_repo.delete(db, code)
@@ -147,6 +154,8 @@ async def test_full_canvas_page_still_renders_shell() -> None:
         assert 'id="workflow-editor-canvas"' in text
         # 整页的落点是整页自己
         assert f'value="/admin/workflows/{code}"' in text
+        # 整页**不**允许被嵌入：它是完整的后台页面
+        assert response.headers.get("x-frame-options") == "DENY"
     finally:
         async with AdminSessionLocal() as db:
             await workflow_repo.delete(db, code)
