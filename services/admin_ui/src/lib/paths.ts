@@ -26,3 +26,23 @@ export function pythonPath(path: string): string {
 export function appPath(path: string): string {
 	return `${ADMIN_BASE}${path.startsWith('/') ? path : `/${path}`}`;
 }
+
+/**
+ * 仍由 Python **独占**的路径前缀（相对 base）。
+ *
+ * 这些路径不归 SvelteKit 管：登录、OAuth 回调、静态资源与登出走的是
+ * Python 的会话体系；`/workflows/validate` 是画布 island 的**实时校验协议**
+ * 端点。
+ *
+ * 最后一条尤其要留意：画布页是 `/admin/workflows/{code}`，SvelteKit 的
+ * 动态路由 `/admin/workflows/[code]` 会把 `/admin/workflows/validate`
+ * 一并吃掉——那正是画布提交校验请求的地址。撞上了，校验就会静默失败
+ * （画布上只剩一句「校验没完成」）。所以它必须显式列在这里。
+ */
+export const PYTHON_OWNED_PATHS = [
+	'/login',
+	'/auth',
+	'/static',
+	'/logout',
+	'/workflows/validate'
+];

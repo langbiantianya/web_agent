@@ -23,10 +23,10 @@ import type { Handle } from '@sveltejs/kit/hooks';
 import { loadOriginPolicy, loadSession } from '#lib/server/admin-api';
 import { adminApiBaseUrl } from '#lib/server/config';
 import { forwardOrigin, isOriginAllowed, pythonOrigin } from '#lib/server/origin';
-import { pythonPath } from '#lib/paths';
+import { PYTHON_OWNED_PATHS, pythonPath } from '#lib/paths';
 
 /** 仍由 Python 独占的路径前缀（相对 base）。 */
-const PYTHON_OWNED = ['/login', '/auth', '/static', '/logout'].map((path) => pythonPath(path));
+const PYTHON_OWNED = PYTHON_OWNED_PATHS.map((path) => pythonPath(path));
 
 /** 无需登录即可访问的路径（相对 base）。 */
 const PUBLIC_PATHS = [pythonPath('/health')];
