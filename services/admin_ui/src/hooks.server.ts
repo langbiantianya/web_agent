@@ -20,9 +20,9 @@
 
 import { redirect } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit/hooks';
-import { loadSession } from '#lib/server/admin-api';
+import { loadOriginPolicy, loadSession } from '#lib/server/admin-api';
 import { adminApiBaseUrl } from '#lib/server/config';
-import { isOriginAllowed, pythonOrigin } from '#lib/server/origin';
+import { forwardOrigin, isOriginAllowed, pythonOrigin } from '#lib/server/origin';
 import { pythonPath } from '#lib/paths';
 
 /** 仍由 Python 独占的路径前缀（相对 base）。 */
@@ -69,14 +69,21 @@ async function proxy(event: Parameters<Handle>[0]['event']): Promise<Response> {
 	const contentType = event.request.headers.get('content-type');
 	if (contentType) headers.set('content-type', contentType);
 
-	// Origin 重写：浏览器发的是公网地址，Python 看到的是内部地址，不改写
-	// 就会被判成跨源。改写前先在这里校验浏览器的 Origin（见 origin.ts）。
+	// Origin 处理：浏览器发的是公网地址，Python 看到的是内部地址。
+	// 先在这里校验浏览器的 Origin（不通过就 403），再按管理端当前的校验
+	// 策略决定转发时带哪个 Origin——两种策略的改写方向相反，见 origin.ts。
 	const origin = event.request.headers.get('origin');
 	if (origin) {
 		if (!isOriginAllowed(origin, event.url.origin)) {
 			return new Response('请求来源无效', { status: 403 });
 		}
-		headers.set('origin', pythonOrigin(adminApiBaseUrl()));
+		const policy = await loadOriginPolicy();
+		const forward = forwardOrigin(
+			origin,
+			policy,
+			pythonOrigin(adminApiBaseUrl())
+		);
+		if (forward) headers.set('origin', forward);
 	}
 
 	const body =

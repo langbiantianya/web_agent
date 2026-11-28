@@ -1,5 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { allowedOrigins, isOriginAllowed, pythonOrigin } from '#lib/server/origin';
+import {
+	allowedOrigins,
+	forwardOrigin,
+	isOriginAllowed,
+	pythonOrigin
+} from '#lib/server/origin';
 
 describe('isOriginAllowed', () => {
 	const original = process.env.ADMIN_ALLOWED_ORIGINS;
@@ -61,5 +66,43 @@ describe('pythonOrigin', () => {
 
 	it('地址写坏时退回空串', () => {
 		expect(pythonOrigin('not-a-url')).toBe('');
+	});
+});
+
+describe('forwardOrigin', () => {
+	it('白名单模式原样转发浏览器的 Origin', () => {
+		// 白名单里的都是管理端的公开地址；浏览器发来的就是它，原样转发
+		// 才能过 Python 的白名单校验。
+		expect(
+			forwardOrigin(
+				'http://192.168.5.16:8001',
+				{ mode: 'allowlist', origins: ['http://192.168.5.16:8001'] },
+				'http://admin-web:8001'
+			)
+		).toBe('http://192.168.5.16:8001');
+	});
+
+	it('Host 模式改写成管理端自己的 origin', () => {
+		// Python 拿 Origin 与自己看到的 scheme://Host 比，转发时它看到的是
+		// 内部地址，所以要改写成内部地址。
+		expect(
+			forwardOrigin(
+				'http://192.168.5.16:8001',
+				{ mode: 'host', origins: [] },
+				'http://admin-web:8001'
+			)
+		).toBe('http://admin-web:8001');
+	});
+
+	it('没有 Origin 头时不带 Origin', () => {
+		expect(
+			forwardOrigin(null, { mode: 'host', origins: [] }, 'http://admin-web:8001')
+		).toBeNull();
+	});
+
+	it('Host 模式但管理端地址写坏时退回浏览器 Origin', () => {
+		expect(
+			forwardOrigin('http://192.168.5.16:8001', { mode: 'host', origins: [] }, '')
+		).toBe('http://192.168.5.16:8001');
 	});
 });

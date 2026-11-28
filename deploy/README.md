@@ -40,8 +40,21 @@ studio 自身也会在 isolated 启动预算内重试，覆盖慢启动竞态。
 docker compose -f deploy/docker-compose.admin.yml up -d --build
 ```
 
-`admin-web` 默认只绑定 `127.0.0.1:8001`，所有 `/admin/*` 请求应由反向代理转发。
-容器默认限制为 768 MiB、1 CPU、256 PIDs。上线前需要：
+后台由**两个**容器组成：
+
+| 容器 | 职责 | 对外 |
+| --- | --- | --- |
+| `admin-ui` | SvelteKit 前端，接管 `/admin/*`：已迁的页面自己渲染，仍属 Python 的路径与**尚未迁完**的页面转发回 `admin-web` | `127.0.0.1:8001`（compose 网络内 `3000`） |
+| `admin-web` | Python/Ludic 管理端：鉴权、Casbin 判定、审计、还没迁走的页面 | 只在 compose 网络内可达，另留 `127.0.0.1:8011` 回环口供排查 |
+
+**对外端口归 `admin-ui`**：浏览器地址与反代规则都不用改。反向代理把
+`/admin/*` 指向 `8001` 即可——`admin-ui` 会按归属表自己转发。
+
+**回退**：把反代指回 `admin-web`（`8011`），或直接停掉 `admin-ui` 容器改回
+原来的端口映射即可。鉴权与授权始终在 Python 侧，回退不需要迁任何数据。
+
+容器默认限制为 768 MiB（admin-web）/ 512 MiB（admin-ui）、1 CPU、256 PIDs。
+上线前需要：
 
 - 运行迁移后首次启动 admin-web；服务会自动创建固定 owner，并在仅该次启动日志中
   输出随机密码。需要通知渠道时可在首次启动前手工运行
@@ -50,6 +63,24 @@ docker compose -f deploy/docker-compose.admin.yml up -d --build
 - 使用 HTTPS 并保持 `ADMIN_SESSION_COOKIE_SECURE=true`；
 - 为 admin 与客户端配置独立数据库账号，限制客户端读取超级管理员密码摘要；
 - 不在客户端镜像中安装 Ludic、Argon2 管理页或短信 SDK。
+
+## Origin 转发：两种模式方向相反
+
+后台前端（`admin-ui`）把浏览器请求转发给 `admin-web` 时，要带上 `Origin`
+头——而**带哪个**取决于管理端当前的同源校验模式：
+
+| 模式 | 触发条件 | `admin-web` 怎么判 | 网关该怎么转发 |
+| --- | --- | --- | --- |
+| 白名单 | 配了 `AUTH_ALLOWED_ORIGINS` | 只认白名单里的地址 | **原样转发**浏览器的 Origin |
+| Host | 没配 | 拿 Origin 与自己看到的 `scheme://Host` 比 | **改写成** `admin-web` 自己的 origin |
+
+方向搞反的后果一样：**所有写请求被拒，登录直接失败**。而且本地开发默认
+没配白名单（Host 模式），所以这个缺陷**只在生产拓扑下才会暴露**。
+
+网关通过 `GET /admin/api/origin-policy` 得知当前模式（响应
+`{"mode": "allowlist" | "host", "origins": [...]}`，不含用户数据，不需要
+登录），缓存 5 分钟。所以部署时**不需要**往 `AUTH_ALLOWED_ORIGINS` 里塞内部
+地址——那是把两种模式的语义搅在一起。
 
 ## 生产拓扑：PostgreSQL 单一数据源 + 双账号
 

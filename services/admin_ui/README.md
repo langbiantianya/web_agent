@@ -48,6 +48,27 @@ ADMIN_API_BASE_URL=http://127.0.0.1:8001 npm run dev
 打开 <http://127.0.0.1:5173/admin/>。未登录会被 302 到 Python 的登录页
 （`/admin/login`），由 SvelteKit 代理过去。
 
+## 部署
+
+镜像在 `services/admin_ui/Dockerfile`：两段构建——构建段装全量依赖跑
+`vite build`，运行段只留生产依赖与产物（非 root、只读 rootfs）。
+
+容器编排在 `deploy/docker-compose.stack.yml` 与
+`deploy/docker-compose.admin.yml`。**对外端口归本容器**（`8001` → 容器内
+`3000`）：它接管 `/admin/*`，已迁的页面自己渲染，仍属 Python 的路径与
+尚未迁完的页面转发回 `admin-web`；`admin-web` 只在 compose 网络内可达。
+
+两个环境变量：
+
+| 变量 | 作用 |
+| --- | --- |
+| `ADMIN_API_BASE_URL` | 管理端（Python）的**容器内**地址，如 `http://admin-web:8001` |
+| `PORT` / `HOST` | 监听地址与端口，默认 `3000` / `0.0.0.0` |
+
+**不要设 `ORIGIN`**：SvelteKit 会用请求的 Host 头推导自己的 origin，这样
+无论管理员用哪个地址访问，Origin 校验都对得上。放在 TLS 终止的反代后面时
+才需要设 `ORIGIN`（或 `PROTOCOL_HEADER` / `HOST_HEADER`）。
+
 ## 校验与测试
 
 ```bash

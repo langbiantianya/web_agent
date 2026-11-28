@@ -45,6 +45,7 @@ import type {
 	WorkflowListPayload
 } from '#lib/types';
 import { adminApiBaseUrl } from '#lib/server/config';
+import type { OriginPolicy } from '#lib/server/origin';
 
 
 
@@ -139,6 +140,30 @@ export async function adminFetch<T>(
 		throw new AdminApiError(response.status, message, code, fieldErrors);
 	}
 	return (await response.json()) as T;
+}
+
+/** 管理端同源策略的缓存。 */
+let originPolicyCache: { policy: OriginPolicy; at: number } | null = null;
+
+/**
+ * 读取管理端当前的同源校验策略。
+ *
+ * 结果缓存 5 分钟：策略是启动期配置，不会频繁变，而每个写请求都问一次
+ * 会给登录链路添一份不必要的往返。读不到时退回 Host 模式——那是本地开发
+ * 的默认形态，也是**更严**的一侧（白名单模式只认白名单里的地址）。
+ */
+export async function loadOriginPolicy(): Promise<OriginPolicy> {
+	const now = Date.now();
+	if (originPolicyCache && now - originPolicyCache.at < 300_000) {
+		return originPolicyCache.policy;
+	}
+	try {
+		const policy = await adminFetch<OriginPolicy>('/admin/api/origin-policy');
+		originPolicyCache = { policy, at: now };
+		return policy;
+	} catch {
+		return { mode: 'host', origins: [] };
+	}
 }
 
 /** 读取当前会话摘要；未登录时返回 null。 */

@@ -1,5 +1,36 @@
-# 独立 admin-web 容器。默认仅绑定本机回环，由反向代理把 /admin/* 转发过来。
+# 独立管理后台（admin-ui + admin-web）。默认仅绑定本机回环，由反向代理把
+# /admin/* 转发过来。
+#
+# **对外端口归 admin-ui**：它是后台前端（SvelteKit），接管 `/admin/*`——已迁的
+# 页面自己渲染，仍属 Python 的路径与尚未迁完的页面转发给 admin-web。
+# admin-web 只在 compose 网络内可达，排查时用 `127.0.0.1:8011` 直连。
 services:
+  admin-ui:
+    build:
+      context: ..
+      dockerfile: services/admin_ui/Dockerfile
+    image: webagent/admin-ui:0.1.0
+    container_name: webagent-admin-ui
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    ports:
+      - "127.0.0.1:8001:3000"
+    environment:
+      ADMIN_API_BASE_URL: "http://admin-web:8001"
+      PORT: "3000"
+      HOST: "0.0.0.0"
+    depends_on:
+      - admin-web
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
   admin-web:
     build:
       context: ..
@@ -14,7 +45,8 @@ services:
     cpus: 1.0
     pids_limit: 256
     ports:
-      - "127.0.0.1:8001:8001"
+      # 对外端口交给 admin-ui（见上）；这里只留一个回环口供排查与回退。
+      - "127.0.0.1:8011:8001"
     env_file:
       - ../.env
     environment:

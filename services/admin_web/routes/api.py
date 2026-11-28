@@ -25,6 +25,7 @@ import sqlalchemy as sa
 from ludic.web import Request
 from starlette.responses import JSONResponse
 
+from app.config.settings import settings
 from app.models.admin_control import SuperAdminAccount
 from app.models.admin_user import AdminUser
 from app.models.conversation import Conversation
@@ -63,6 +64,28 @@ def _page_payload(page: Any) -> dict[str, Any]:
 
 def register(app: Any) -> None:
     """把管理面 JSON API 挂到 app 上。"""
+
+    @app.get("/admin/api/origin-policy")
+    async def admin_api_origin_policy(request: Request):
+        """告诉网关转发写请求时该带哪个 Origin。
+
+        Python 的同源校验有**两种模式**：配了 ``AUTH_ALLOWED_ORIGINS`` 时按
+        白名单比对，没配时按请求自身的 ``scheme://Host`` 比对。SvelteKit
+        网关必须知道当前是哪种，否则改写 Origin 的方向会反：改写成网关看到
+        的内部地址，在白名单模式下会被拒（内部地址不在白名单里）；原样
+        转发浏览器的 Origin，在 Host 模式下又会被拒（浏览器地址与内部
+        Host 不同）。
+
+        这个端点不返回任何用户数据——白名单里的都是**公开地址**，浏览器
+        本来就带着它们——所以不需要登录。
+        """
+        allowed = [item.rstrip("/") for item in settings.auth_allowed_origins]
+        return json_response_no_store(
+            {
+                "mode": "allowlist" if allowed else "host",
+                "origins": allowed,
+            }
+        )
 
     @app.get("/admin/api/session")
     @api_route

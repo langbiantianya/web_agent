@@ -108,12 +108,25 @@ Casbin 判定、审计、Argon2 口令全部留在 Python 侧。
   就 403；通过后把 Origin 重写成 Python 自己的 origin，Python 的同源检查
   因此照常通过。详见 [V4.10 的「Origin 的分层校验」](../../app/design/v4.10-sveltekit-admin-ui.md)。
 
-- [ ] **P1：部署接线**
-  新增 `admin-ui` 容器（`services/admin_ui/Dockerfile`，node:24-alpine，
-  `PORT=8002`，`ADMIN_API_BASE_URL=http://admin-web:8001`），反向代理把
-  `/admin/*` 指向它；`admin-ui` 再把仍属 Python 的路径（`/login`、`/auth`、
-  `/logout`、`/static`）转发回 `admin-web`。部署前需在
-  `deploy/docker-compose.admin.yml` 补服务定义，并确认健康检查与日志约定。
+- [x] **P1：部署接线**
+  新增 `admin-ui` 容器（`services/admin_ui/Dockerfile`，node:24-alpine 两段
+  构建，`PORT=3000`，`ADMIN_API_BASE_URL=http://admin-web:8001`），接管
+  `/admin/*`；它再把仍属 Python 的路径（`/login`、`/auth`、`/logout`、
+  `/static`）与**尚未迁完**的页面（workflow 画布、OAuth provider）转发回
+  `admin-web`。对外端口归 `admin-ui`，浏览器地址不变；`admin-web` 只在
+  compose 网络内可达，另留 `127.0.0.1:8011` 回环口供排查与回退。
+
+  **已完成**：`services/admin_ui/Dockerfile`（构建段装全量依赖跑
+  `vite build`，运行段只留生产依赖与产物，非 root、只读 rootfs）；
+  `deploy/docker-compose.stack.yml` 与 `deploy/docker-compose.admin.yml`
+  补服务定义；`deploy/README.md` 写清端口归属与回退路径。
+
+  顺带修掉一个**只在生产拓扑下才会暴露的缺陷**：Python 的同源校验有
+  白名单与 Host 两种模式，两种模式下「转发给 Python 的 Origin」改写方向
+  **相反**。之前网关无条件改写成内部地址，在配了 `AUTH_ALLOWED_ORIGINS`
+  的生产环境里会把**所有写请求**拒掉——登录直接失败，而本地开发（没配
+  白名单）完全正常。现在新增 `GET /admin/api/origin-policy` 让网关知道
+  当前模式：白名单模式原样转发浏览器 Origin，Host 模式才改写成内部地址。
 
 - [ ] **P2：阶段 D —— workflow 画布 island 化**
   现有 `workflow-editor.js`（66 KB）+ `workflow-editor-core.js`（11 KB）作为

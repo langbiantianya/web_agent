@@ -76,6 +76,46 @@ services:
     mem_limit: 2g
     pids_limit: 512
 
+  # ---------------------------------------------------------------- 管理端前端
+  #
+  # SvelteKit 实现的后台前端（V4.10）。它接管 `/admin/*`：
+  # 已迁的页面由自己渲染，仍属 Python 的路径（`/login`、`/auth`、`/logout`、
+  # `/static`）与**尚未迁完**的页面（workflow 画布、OAuth provider）原样
+  # 转发给 admin-web。
+  #
+  # 因此宿主端口 8001 归它：对外入口不变，浏览器地址不用改。admin-web 只在
+  # compose 网络内可达，排查时用 `127.0.0.1:8011` 直连。
+  #
+  # **不设 ORIGIN**：SvelteKit 会用请求的 Host 头推导自己的 origin，这样
+  # 无论管理员用哪个地址访问，Origin 校验都对得上。放在 TLS 终止的反代后面
+  # 时才需要设 ORIGIN（或 PROTOCOL_HEADER / HOST_HEADER）。
+  admin-ui:
+    build:
+      context: ..
+      dockerfile: services/admin_ui/Dockerfile
+    image: webagent/admin-ui:0.1.0
+    container_name: webagent-admin-ui
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:8001:3000"
+    environment:
+      # 容器网络内的服务名；写 IP 反而会被 NAT 绕回宿主机。
+      ADMIN_API_BASE_URL: "http://admin-web:8001"
+      PORT: "3000"
+      HOST: "0.0.0.0"
+    depends_on:
+      - admin-web
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
   # ---------------------------------------------------------------- 管理端
   #
   # 只读 rootfs：任何需要写盘的东西都必须落到 /tmp 的 tmpfs 或挂载卷。
@@ -92,7 +132,8 @@ services:
     cpus: 1.0
     pids_limit: 256
     ports:
-      - "0.0.0.0:8001:8001"
+      # 对外端口交给 admin-ui（见上）；这里只留一个回环口供排查与回退。
+      - "127.0.0.1:8011:8001"
     env_file:
       - ../.env
     environment:

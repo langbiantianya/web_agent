@@ -461,6 +461,14 @@
       "GET",
       "HEAD"
     ],
+    "name": "admin_api_origin_policy",
+    "path": "/admin/api/origin-policy"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
     "name": "admin_api_session",
     "path": "/admin/api/session"
   },

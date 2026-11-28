@@ -43,6 +43,40 @@ export function isOriginAllowed(origin: string | null, selfOrigin: string): bool
 }
 
 /**
+ * 管理端当前的同源校验策略。
+ *
+ * - ``allowlist``：Python 按 ``AUTH_ALLOWED_ORIGINS`` 白名单比对；
+ * - ``host``：Python 按请求自身的 ``scheme://Host`` 比对。
+ */
+export interface OriginPolicy {
+	mode: 'allowlist' | 'host';
+	origins: string[];
+}
+
+/**
+ * 决定转发给 Python 时该带哪个 Origin。
+ *
+ * **两种模式的改写方向是相反的**：白名单模式下 Python 只认白名单里的
+ * 地址，而浏览器的 Origin 正是管理端的公开地址（管理员能登录，就说明它
+ * 在白名单里），所以**原样转发**；Host 模式下 Python 拿 Origin 与自己看到
+ * 的 ``scheme://Host`` 比，而转发时它看到的是内部地址，所以要**改写成内部
+ * 地址**。方向搞反，两种模式下都会把写请求全部拒掉。
+ *
+ * @param browserOrigin 浏览器发来的 Origin（可能为空）。
+ * @param policy 管理端当前的校验策略。
+ * @param python 管理端自己的 origin（内部地址）。
+ */
+export function forwardOrigin(
+	browserOrigin: string | null,
+	policy: OriginPolicy,
+	python: string
+): string | null {
+	if (!browserOrigin) return null;
+	if (policy.mode === 'allowlist') return browserOrigin;
+	return python || browserOrigin;
+}
+
+/**
  * 取转发给 Python 时应使用的 Origin。
  *
  * 用管理端自己的 origin，让 Python 的 `origin_ok()` 比较相等。
