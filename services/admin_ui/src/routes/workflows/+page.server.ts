@@ -6,8 +6,9 @@
 		createWorkflow,
 		deleteWorkflow,
 		loadWorkflows,
-		toggleWorkflow
-	} from '#lib/server/admin-api';
+		toggleWorkflow,
+		undoDelete
+} from '#lib/server/admin-api';
 	import type { WorkflowInput } from '#lib/types';
 
 	/** 表单错误载荷的形状。 */
@@ -51,7 +52,10 @@
 				page: Number(url.searchParams.get('page') ?? '1') || 1,
 				size: Number(url.searchParams.get('size') ?? '20') || 20
 			});
-			return { payload };
+			return {
+				payload,
+				undoId: url.searchParams.get('undo') ?? ''
+			};
 		} catch (cause) {
 			if (cause instanceof AdminApiError) error(cause.status, cause.message);
 			throw cause;
@@ -99,11 +103,29 @@
 			if (!session) error(401, '请先登录管理后台');
 			const form = await request.formData();
 			const code = String(form.get('code') ?? '');
+			let undoId: number | null = null;
 			try {
-				await deleteWorkflow(
+				undoId = await deleteWorkflow(
 					request.headers.get('cookie') ?? '',
 					session.csrfToken,
 					code
+				);
+			} catch (cause) {
+				return toFailure(cause);
+			}
+			redirect(303, '/admin/workflows' + (undoId ? `?undo=${undoId}` : ''));
+		},
+
+		undo: async ({ request, locals }) => {
+			const session = locals.session;
+			if (!session) error(401, '请先登录管理后台');
+			const form = await request.formData();
+			const undoId = Number(form.get('undoId') ?? '0');
+			try {
+				await undoDelete(
+					request.headers.get('cookie') ?? '',
+					session.csrfToken,
+					undoId
 				);
 			} catch (cause) {
 				return toFailure(cause);

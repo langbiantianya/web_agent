@@ -27,7 +27,7 @@
 | --- | --- | --- |
 | A | 工程骨架、主题令牌、i18n 词典、会话装载、概览页 | ✅ 已完成（含与真实 admin-web 的联调） |
 | B | 资源页（agents / skills / mcp / llm / workflows） | ✅ 已完成（五页全部迁移） |
-| C | 访问控制页（pages / components / roles / mappings / platform-admins / preferences / audit） | 未开始 |
+| C | 访问控制页（pages / components / roles / mappings / platform-admins / preferences / audit） | ✅ 已完成（七页全部迁移，含浏览器实测） |
 | D | workflow 画布作为 island 接入（**不重写画布**） | 未开始 |
 | E | 下线 Ludic 视图层 | 未开始 |
 
@@ -71,6 +71,16 @@ src/
     ├── +layout.server.ts      # 会话 + 语言
     ├── +layout.svelte         # 壳层（侧栏 + 顶栏）
     ├── +page.svelte           # 概览
+    ├── agents/ skills/ mcp/ llm/ workflows/   # 资源页
+    ├── access/pages|components|roles|mappings/  # 访问控制
+    ├── platform-admins/ preferences/ audit/     # 其余三页
     ├── locale/+server.ts      # 语言切换
     └── ...
 ```
+
+## 删除后能撤销
+
+Agent、LLM 端点、MCP 服务器、工作流与平台超级管理员的删除是**硬删除**，但
+删除前会留快照：删除响应带回 `undoId`，前端把它放进 `?undo=<id>` 并显示
+「撤销删除」条。撤销端点是 `POST /admin/api/undo/{entry_id}`，它按**资源
+类型**判定写权限——撤销一个 LLM 端点不该要求 Agent 编辑权。

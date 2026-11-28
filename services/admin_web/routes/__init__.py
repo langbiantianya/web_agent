@@ -30,6 +30,14 @@ def register_all(app: Any) -> None:
         api_skills,
         api_mcp,
         api_workflows,
+        api_access,
+        api_access_components,
+        api_access_roles,
+        api_access_mappings,
+        api_platform_admins,
+        api_preferences,
+        api_audit,
+        api_undo,
         access_components,
         access_mappings,
         access_roles,
@@ -82,5 +90,15 @@ def register_all(app: Any) -> None:
         api_skills,
         api_mcp,
         api_workflows,
+        api_access,
+        api_access_components,
+        api_access_roles,
+        api_access_mappings,
+        api_platform_admins,
+        api_preferences,
+        api_audit,
+        api_undo,
     ):
         module.register(app)
+
+

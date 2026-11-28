@@ -233,3 +233,160 @@ export interface WorkflowInput {
 	agentCode: string;
 	enabled: boolean;
 }
+
+/* ------------------------------------------------------------------ */
+/* 访问控制：页面权限、组件权限、角色与 OAuth 映射                        */
+/* ------------------------------------------------------------------ */
+
+/** 权限目录里的一项。 */
+export interface PermissionOption {
+	id: string;
+	object: string;
+	action: string;
+	description: string;
+}
+
+/** 某个租户范围下的权限绑定。 */
+export interface PermissionBinding {
+	tenantId: string | null;
+	permissions: string[];
+}
+
+/** 页面权限矩阵里的一行。 */
+export interface AccessPageItem {
+	code: string;
+	title: string;
+	navGroup: string;
+	navOrder: number;
+	enabled: boolean;
+	accessMode: string;
+	critical: boolean;
+	recommended: string[];
+	bindings: PermissionBinding[];
+}
+
+/** 页面权限矩阵响应。 */
+export interface AccessPagesPayload {
+	items: AccessPageItem[];
+	permissionOptions: PermissionOption[];
+	tenantOptions: string[];
+}
+
+/** 组件权限矩阵里的一行。 */
+export interface AccessComponentItem {
+	pageCode: string;
+	pageTitle: string;
+	componentCode: string;
+	label: string;
+	kind: string;
+	accessMode: string;
+	enabled: boolean;
+	sortOrder: number;
+	recommended: string[];
+	bindings: PermissionBinding[];
+}
+
+/** 组件权限矩阵响应。 */
+export interface AccessComponentsPayload {
+	items: AccessComponentItem[];
+	permissionOptions: PermissionOption[];
+	tenantOptions: string[];
+}
+
+/** 一个 Casbin 角色在某个域名下的投影。 */
+export interface RoleItem {
+	code: string;
+	domain: string;
+	permissions: string[];
+	parents: string[];
+	memberCount: number;
+	mappingCount: number;
+	childCount: number;
+	builtin: boolean;
+	canDelete: boolean;
+}
+
+/** 角色列表响应。 */
+export interface RoleListPayload {
+	items: RoleItem[];
+	total: number;
+	page: ListPage;
+	permissionOptions: PermissionOption[];
+	domains: string[];
+	/** 每个域名下的全部角色编码（不受列表分页影响）。 */
+	rolesByDomain: Record<string, string[]>;
+}
+
+/** OAuth 外部角色映射。 */
+export interface MappingItem {
+	id: number;
+	providerId: number;
+	providerCode: string;
+	providerName: string;
+	tenantId: string | null;
+	claimName: string;
+	externalValue: string;
+	roleCode: string;
+	enabled: boolean;
+}
+
+/** OAuth 角色映射响应。 */
+export interface MappingListPayload {
+	items: MappingItem[];
+	providers: { id: number; code: string; name: string; tenantId: string | null }[];
+	roleCodes: string[];
+}
+
+/* ------------------------------------------------------------------ */
+/* 平台超级管理员、外观偏好与工具审计                                     */
+/* ------------------------------------------------------------------ */
+
+/** 平台超级管理员账号。 */
+export interface PlatformAdminItem {
+	id: number;
+	username: string;
+	email: string | null;
+	phone: string | null;
+	status: string;
+	ownerSlot: string | null;
+	createdAt: string | null;
+	updatedAt: string | null;
+}
+
+/** 平台超级管理员列表响应。 */
+export interface PlatformAdminListPayload {
+	items: PlatformAdminItem[];
+	total: number;
+	page: ListPage;
+}
+
+/** 外观偏好响应。 */
+export interface PreferencesPayload {
+	theme: string;
+	colorMode: string;
+	density: string;
+	options: { themes: string[]; colorModes: string[]; densities: string[] };
+}
+
+/** 一条工具审计记录。 */
+export interface AuditItem {
+	id: number;
+	runId: number;
+	nodeId: string;
+	toolName: string;
+	source: string;
+	server: string | null;
+	ok: boolean;
+	failureType: string | null;
+	durationMs: number;
+	createdAt: string | null;
+}
+
+/** 工具审计查询响应。 */
+export interface AuditListPayload {
+	items: AuditItem[];
+	total: number;
+	page: ListPage;
+	filters: { runId: string; toolName: string; source: string; ok: string };
+	sources: string[];
+}

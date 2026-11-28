@@ -126,7 +126,10 @@ async def authorize(
         if not origin_ok(request):
             raise ApiError("invalid_origin", "请求来源无效", status_code=403)
         if write:
-            if not await can_edit_resource(
+            # ``page_code`` 为空表示「权限要在知道资源类型之后才能判定」
+            # （撤销删除就是这样：先看快照是什么资源，再决定按哪张表的
+            # 写权限放行）。CSRF 仍然要校验——它与权限无关。
+            if page_code and not await can_edit_resource(
                 db, principal, page_code=page_code, component_code=component_code
             ):
                 raise ApiError("not_found", "页面不可用", status_code=404)

@@ -39,6 +39,21 @@
 		</p>
 	{/if}
 
+	{#if data.undoId}
+		<form
+			class="flex items-center gap-3 rounded-card border border-line bg-surface px-3 py-2 text-sm"
+			method="POST"
+			action="?/undo"
+			use:enhance
+		>
+			<input type="hidden" name="undoId" value={data.undoId} />
+			<span class="text-ink-muted">{t(locale, 'common.undoHint')}</span>
+			<button class="rounded-card border border-line px-2 py-1 text-xs" type="submit">
+				{t(locale, 'common.undo')}
+			</button>
+		</form>
+	{/if}
+
 	<Panel>
 		<Toolbar
 			q={payload.page.q}

@@ -7,11 +7,11 @@
 
 截至 V4.10 设计，OAuth/OIDC 主链路、独立 admin-web 业务页、workflow 可视化编排器
 和 Agent JSON 输出契约已经落地，旧管理员 API Key 管理栈已退役；后台前端正在
-迁移到 SvelteKit：阶段 A（骨架 + 概览页）、阶段 B（五个资源页）与端到端联调
-均已完成，访问控制页与画布 island 化仍待推进。尚未完成的 **P1** 共三项：
-真实 IdP 联调（含登录限频、过期 attempt 清理、provider 故障监控）、存量会话
-归属处理，以及 SvelteKit 迁移的部署接线；其余 13 项均为 P2，涵盖成本账本、
-容器预热、MCP 能力边界与构建依赖。
+迁移到 SvelteKit：阶段 A（骨架 + 概览页）、阶段 B（五个资源页）、阶段 C
+（七个访问控制页）与端到端联调均已完成，画布 island 化与部署接线仍待推进。
+尚未完成的 **P1** 共三项：真实 IdP 联调（含登录限频、过期 attempt 清理、
+provider 故障监控）、存量会话归属处理，以及 SvelteKit 迁移的部署接线；
+其余 13 项均为 P2，涵盖成本账本、容器预热、MCP 能力边界与构建依赖。
 
 ## 后台前端迁移（SvelteKit）
 
@@ -49,11 +49,53 @@ Casbin 判定、审计、Argon2 口令全部留在 Python 侧。
     PUT 只改名称与描述，传入的 `definition` 被忽略；画布仍由 Python 渲染，
     通过「未匹配路由回退」接入（阶段 D 的落地方式）。
 
-- [ ] **P1：阶段 C —— 访问控制页迁移**
+- [x] **P1：阶段 C —— 访问控制页迁移（七页全部完成）**
   `access/pages`、`access/components`、`access/roles`、`access/mappings`、
   `platform-admins`、`preferences`、`audit` 迁到 SvelteKit。
   **硬约束**：前端只消费服务端下发的「可见页面/组件」，越权判定仍然只在
   Python 侧；前端不得出现第二份权限判断逻辑。
+
+  **已完成**：
+  - `access/pages`（`/admin/access/pages`）：Python 侧
+    `GET /admin/api/access/pages`、`PUT /admin/api/access/pages/{page_code}`。
+    绑定是**整组替换**（先删该「页面 × 租户范围」下的旧绑定，再写新的）；
+    平台超级管理员可写全局与任一租户，租户管理员只能写自己的租户（跨租户
+    一律 403）；**关键页面不能被清空**，否则管理员会把自己关在门外。
+  - `access/components`（`/admin/access/components`）：
+    `GET /admin/api/access/components`、
+    `PUT /admin/api/access/components/{page_code}/{component_code}`，语义与
+    页面权限一致，只是绑定对象换成组件。
+  - `access/roles`（`/admin/access/roles`）：
+    `GET/POST /admin/api/access/roles`、`PUT/DELETE
+    /admin/api/access/roles/{role_code}`、`PUT .../inheritance`。拒绝重复
+    角色（409）、跨域继承、未知父角色与**循环继承**；被映射或子角色引用的
+    角色不能删（409 `in_use`）；内置角色（viewer / operator / tenant_admin）
+    受保护。
+  - `access/mappings`（`/admin/access/mappings`）：
+    `GET/POST /admin/api/access/mappings`、`PUT/DELETE
+    /admin/api/access/mappings/{mapping_id}`。同一供应商下
+    （供应商 + 声明字段 + 外部值）重复即 409；目标角色必须在该供应商租户下
+    存在。
+  - `platform-admins`（`/admin/platform-admins`）：
+    `GET/POST /admin/api/platform-admins`、`DELETE .../{account_id}`、
+    `POST .../{account_id}/reset-password`。**只有 owner 能进这个页面**——
+    平台超级管理员会绕过 Casbin，所以接口里显式判 `is_owner`，非 owner
+    一律 404；owner 账号本身受保护，删不掉。
+  - `preferences`（`/admin/preferences`）：`GET/PUT
+    /admin/api/preferences`，主题 / 色温 / 密度按管理员分别保存；取值不在
+    白名单里一律 400，不静默存进去。
+  - `audit`（`/admin/audit`）：`GET /admin/api/audit`，按当前租户与
+    「运行 ID / 工具名 / 来源 / 结果」筛选；脏值（如 `ok=maybe`）归一成
+    「不限」，不当成有效条件传下去。
+
+  另外补上了**撤销删除**这条此前缺失的链路：删除响应带回 `undoId`，
+  `POST /admin/api/undo/{entry_id}` 按**资源类型**判定写权限后原样恢复
+  （撤销一个 LLM 端点不该要求 Agent 编辑权）。Agent / LLM / MCP / 工作流 /
+  平台超级管理员五个页面都已接上「撤销删除」条。
+
+  浏览器实测：七页全部渲染正常；页面权限矩阵可读可存；角色可创建、改权限、
+  改继承、删除；偏好切换后 `<html data-admin-theme>` 立即生效；删除后撤销
+  能把记录恢复回来。
 
 - [x] **P1：SvelteKit 与真实 admin-web 的端到端联调**
   已与真实 admin-web 联调跑通：登录页代理、`Set-Cookie` 透传、登录态保持、
@@ -84,8 +126,9 @@ Casbin 判定、审计、Argon2 口令全部留在 Python 侧。
   同步删除。删除后回退方式是按 tag 重建镜像。
 
 - [ ] **P2：页面级 Playwright 覆盖补全**
-  当前只有概览页的冒烟用例。阶段 B/C 每迁一页就补一条，长尾的表单项
-  （LLM 端点探测、OAuth provider、审计筛选）需要单独的用例。
+  阶段 B/C 的每页一条用例目前是**手工浏览器实测**，还没有固化成 Playwright
+  用例。长尾的表单项（LLM 端点探测、OAuth provider、审计筛选）需要单独的
+  用例。
 ## 隔离执行与成本
 
 - [ ] **P2：预启动 sandbox 容器池**

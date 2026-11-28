@@ -60,19 +60,32 @@ services/admin_web/
 
 资源域的管理面 API 按域拆成独立模块（`routes/api_agents.py`、
 `routes/api_agents_write.py`、`routes/api_llm.py`、`routes/api_skills.py`、
-`routes/api_mcp.py`、`routes/api_mcp_write.py`、`routes/api_workflows.py`），共用
-`services/admin_web/api_support.py` 里的四个动作：**认证、CSRF、权限、错误
-形状**。写操作的 CSRF 令牌从 `X-CSRF-Token` 头取——服务端持有会话 Cookie 与
-令牌，浏览器全程不参与。
+`routes/api_mcp.py`、`routes/api_mcp_write.py`、`routes/api_workflows.py`），
+访问控制域另有一组（`routes/api_access.py`、`api_access_components.py`、
+`api_access_roles.py`、`api_access_roles_write.py`、`api_access_mappings.py`、
+`api_platform_admins.py`、`api_preferences.py`、`api_audit.py`、
+`api_undo.py`），共用 `services/admin_web/api_support.py` 里的四个动作：
+**认证、CSRF、权限、错误形状**。写操作的 CSRF 令牌从 `X-CSRF-Token` 头取
+——服务端持有会话 Cookie 与令牌，浏览器全程不参与。
+
+访问控制那组还共用 `services/admin_web/access_api.py`：租户范围解析、权限值
+解析、权限目录投影。四组端点各写一遍解析逻辑，迟早会在「跨租户」这条线上
+出现不一致——而漂移方向通常是放行。
 
 失败一律是 JSON：`{"code": "<机器码>", "message": "<给人看的话>",
 "fieldErrors": {...}}`。机器码稳定（`unauthorized` / `invalid_csrf` /
 `not_found` / `duplicate` / `missing` / `invalid_input` / `agent_in_use` /
-`endpoint_in_use`），前端据此决定提示、重试还是跳登录页，**不去解析文案**。
+`endpoint_in_use` / `in_use`），前端据此决定提示、重试还是跳登录页，
+**不去解析文案**。
+
+**删除是硬删除，但可以撤销。** Agent、LLM 端点、MCP 服务器、工作流与平台
+超级管理员在删除前会留快照，删除响应带回 `undoId`；`POST /admin/api/undo/
+{entry_id}` 按**资源类型**判定写权限后原样恢复——撤销一个 LLM 端点不该要求
+Agent 编辑权。
 
 **路由注册顺序是行为的一部分。** Starlette 首个匹配 path 的路由胜出，所以
 顺序固化在 `routes/__init__.py` 的 `register_all` 里，并由
-`tests/snapshots/admin/routes.json`（95 条路由条目 / 71 个唯一路径，含 `/admin/static` 挂载）保序比对。
+`tests/snapshots/admin/routes.json`（116 条路由条目 / 86 个唯一路径，含 `/admin/static` 挂载）保序比对。
 往 `register_all` 里加域时，插在正确的位置比追加到末尾更重要。
 
 **回归保护有两层：**

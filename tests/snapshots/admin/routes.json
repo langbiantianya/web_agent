@@ -691,5 +691,159 @@
     ],
     "name": "api_workflows_delete",
     "path": "/admin/api/workflows/{code}"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_access_pages_list",
+    "path": "/admin/api/access/pages"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_access_pages_save",
+    "path": "/admin/api/access/pages/{page_code}"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_access_components_list",
+    "path": "/admin/api/access/components"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_access_components_save",
+    "path": "/admin/api/access/components/{page_code}/{component_code}"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_access_roles_create",
+    "path": "/admin/api/access/roles"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_access_roles_update",
+    "path": "/admin/api/access/roles/{role_code}"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_access_roles_inheritance",
+    "path": "/admin/api/access/roles/{role_code}/inheritance"
+  },
+  {
+    "methods": [
+      "DELETE"
+    ],
+    "name": "api_access_roles_delete",
+    "path": "/admin/api/access/roles/{role_code}"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_access_roles_list",
+    "path": "/admin/api/access/roles"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_access_mappings_list",
+    "path": "/admin/api/access/mappings"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_access_mappings_create",
+    "path": "/admin/api/access/mappings"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_access_mappings_update",
+    "path": "/admin/api/access/mappings/{mapping_id}"
+  },
+  {
+    "methods": [
+      "DELETE"
+    ],
+    "name": "api_access_mappings_delete",
+    "path": "/admin/api/access/mappings/{mapping_id}"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_platform_admins_list",
+    "path": "/admin/api/platform-admins"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_platform_admins_create",
+    "path": "/admin/api/platform-admins"
+  },
+  {
+    "methods": [
+      "DELETE"
+    ],
+    "name": "api_platform_admins_delete",
+    "path": "/admin/api/platform-admins/{account_id}"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_platform_admins_reset",
+    "path": "/admin/api/platform-admins/{account_id}/reset-password"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_preferences_get",
+    "path": "/admin/api/preferences"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_preferences_update",
+    "path": "/admin/api/preferences"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_audit_list",
+    "path": "/admin/api/audit"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_undo",
+    "path": "/admin/api/undo/{entry_id}"
   }
 ]

@@ -8,8 +8,9 @@
 		loadMcpServers,
 		refreshMcpCatalog,
 		toggleMcpServer,
-		updateMcpServer
-	} from '#lib/server/admin-api';
+		updateMcpServer,
+		undoDelete
+} from '#lib/server/admin-api';
 	import type { McpInput } from '#lib/types';
 
 	/** 表单错误载荷的形状。 */
@@ -55,7 +56,11 @@
 				page: Number(url.searchParams.get('page') ?? '1') || 1,
 				size: Number(url.searchParams.get('size') ?? '20') || 20
 			});
-			return { payload, editing: url.searchParams.get('edit') ?? '' };
+			return {
+				payload,
+				editing: url.searchParams.get('edit') ?? '',
+				undoId: url.searchParams.get('undo') ?? ''
+			};
 		} catch (cause) {
 			if (cause instanceof AdminApiError) error(cause.status, cause.message);
 			throw cause;
@@ -138,11 +143,29 @@
 			if (!session) error(401, '请先登录管理后台');
 			const form = await request.formData();
 			const code = String(form.get('code') ?? '');
+			let undoId: number | null = null;
 			try {
-				await deleteMcpServer(
+				undoId = await deleteMcpServer(
 					request.headers.get('cookie') ?? '',
 					session.csrfToken,
 					code
+				);
+			} catch (cause) {
+				return toFailure(cause);
+			}
+			redirect(303, '/admin/mcp' + (undoId ? `?undo=${undoId}` : ''));
+		},
+
+		undo: async ({ request, locals }) => {
+			const session = locals.session;
+			if (!session) error(401, '请先登录管理后台');
+			const form = await request.formData();
+			const undoId = Number(form.get('undoId') ?? '0');
+			try {
+				await undoDelete(
+					request.headers.get('cookie') ?? '',
+					session.csrfToken,
+					undoId
 				);
 			} catch (cause) {
 				return toFailure(cause);

@@ -160,7 +160,106 @@ export type MessageKey =
 	| 'workflows.field.enabled'
 	| 'workflows.sort.default'
 	| 'workflows.sort.name'
-	| 'workflows.sort.code';
+	| 'workflows.sort.code'
+	| 'common.reset'
+	| 'common.undo'
+	| 'common.undoHint'
+	| 'common.resetPassword'
+	| 'common.tenant'
+	| 'common.scope'
+	| 'common.permissions'
+	| 'common.recommended'
+	| 'common.description'
+	| 'common.domain'
+	| 'common.parents'
+	| 'common.members'
+	| 'common.references'
+	| 'common.builtin'
+	| 'common.claim'
+	| 'common.externalValue'
+	| 'common.role'
+	| 'common.provider'
+	| 'common.globalScope'
+	| 'common.deleteHint'
+	| 'access.pages.title'
+	| 'access.pages.description'
+	| 'access.pages.column.permissions'
+	| 'access.pages.column.scope'
+	| 'access.pages.critical'
+	| 'access.components.title'
+	| 'access.components.description'
+	| 'access.components.column.page'
+	| 'access.components.column.component'
+	| 'access.components.column.permissions'
+	| 'access.components.column.kind'
+	| 'access.roles.title'
+	| 'access.roles.description'
+	| 'access.roles.column.domain'
+	| 'access.roles.column.permissions'
+	| 'access.roles.column.parents'
+	| 'access.roles.column.references'
+	| 'access.roles.field.code'
+	| 'access.roles.field.domain'
+	| 'access.roles.field.permissions'
+	| 'access.roles.field.parents'
+	| 'access.roles.builtin'
+	| 'access.roles.create'
+	| 'access.roles.edit'
+	| 'access.roles.inheritance'
+	| 'access.mappings.title'
+	| 'access.mappings.description'
+	| 'access.mappings.column.provider'
+	| 'access.mappings.column.claim'
+	| 'access.mappings.column.externalValue'
+	| 'access.mappings.column.role'
+	| 'access.mappings.field.provider'
+	| 'access.mappings.field.claim'
+	| 'access.mappings.field.externalValue'
+	| 'access.mappings.field.role'
+	| 'platformAdmins.title'
+	| 'platformAdmins.description'
+	| 'platformAdmins.column.username'
+	| 'platformAdmins.column.contact'
+	| 'platformAdmins.column.status'
+	| 'platformAdmins.field.username'
+	| 'platformAdmins.field.email'
+	| 'platformAdmins.field.phone'
+	| 'platformAdmins.create'
+	| 'platformAdmins.protected'
+	| 'platformAdmins.resetDone'
+	| 'preferences.title'
+	| 'preferences.description'
+	| 'preferences.field.theme'
+	| 'preferences.field.colorMode'
+	| 'preferences.field.density'
+	| 'preferences.theme.fluent'
+	| 'preferences.theme.cloudscape'
+	| 'preferences.theme.material'
+	| 'preferences.colorMode.light'
+	| 'preferences.colorMode.dark'
+	| 'preferences.colorMode.system'
+	| 'preferences.density.comfortable'
+	| 'preferences.density.compact'
+	| 'audit.title'
+	| 'audit.description'
+	| 'audit.column.tool'
+	| 'audit.column.run'
+	| 'audit.column.source'
+	| 'audit.column.result'
+	| 'audit.column.duration'
+	| 'audit.column.time'
+	| 'audit.field.runId'
+	| 'audit.field.toolName'
+	| 'audit.field.source'
+	| 'audit.field.result'
+	| 'audit.result.ok'
+	| 'audit.result.failed'
+	| 'audit.source.builtin'
+	| 'audit.source.skill'
+	| 'audit.source.mcp'
+	| 'access.roles.sort.default'
+	| 'access.roles.sort.code'
+	| 'access.roles.sort.domain';
 
 const EN: Record<MessageKey, string> = {
 	'app.title': 'web_agent',
@@ -263,7 +362,8 @@ const EN: Record<MessageKey, string> = {
 	'workflows.field.enabled': 'Enabled',
 	'workflows.sort.default': 'Default',
 	'workflows.sort.name': 'Name',
-	'workflows.sort.code': 'Code',	'common.search': 'Search',
+	'workflows.sort.code': 'Code',
+	'common.search': 'Search',
 	'common.sort': 'Sort by',
 	'common.apply': 'Apply',
 	'common.prev': 'Previous',
@@ -305,7 +405,107 @@ const EN: Record<MessageKey, string> = {
 	'agents.sort.default': 'Default',
 	'agents.sort.name': 'Name',
 	'agents.sort.code': 'Code',
-	'agents.sort.created': 'Newest'
+	'agents.sort.created': 'Newest',
+
+	'common.reset': 'Reset',
+	'common.undo': 'Undo delete',
+	'common.undoHint': 'The last deleted record can be restored within the undo window.',
+	'common.resetPassword': 'Reset password',
+	'common.tenant': 'Tenant',
+	'common.scope': 'Scope',
+	'common.permissions': 'Permissions',
+	'common.recommended': 'Recommended',
+	'common.description': 'Description',
+	'common.domain': 'Domain',
+	'common.parents': 'Inherits',
+	'common.members': 'Members',
+	'common.references': 'References',
+	'common.builtin': 'Built-in',
+	'common.claim': 'Claim',
+	'common.externalValue': 'External value',
+	'common.role': 'Role',
+	'common.provider': 'Provider',
+	'common.globalScope': 'Global',
+	'common.deleteHint': 'Confirm deleting this record?',
+	'access.pages.title': 'Page permissions',
+	'access.pages.description': 'Bind Casbin permissions to admin pages, per tenant scope.',
+	'access.pages.column.permissions': 'Permissions',
+	'access.pages.column.scope': 'Scope',
+	'access.pages.critical': 'Critical page',
+	'access.components.title': 'Component permissions',
+	'access.components.description': 'Bind Casbin permissions to the components inside each page.',
+	'access.components.column.page': 'Page',
+	'access.components.column.component': 'Component',
+	'access.components.column.permissions': 'Permissions',
+	'access.components.column.kind': 'Kind',
+	'access.roles.title': 'Roles & permissions',
+	'access.roles.description': 'Casbin roles, their permission sets and inheritance.',
+	'access.roles.column.domain': 'Domain',
+	'access.roles.column.permissions': 'Permissions',
+	'access.roles.column.parents': 'Inherits',
+	'access.roles.column.references': 'References',
+	'access.roles.field.code': 'Role code',
+	'access.roles.field.domain': 'Domain',
+	'access.roles.field.permissions': 'Permissions',
+	'access.roles.field.parents': 'Inherits',
+	'access.roles.builtin': 'Built-in role',
+	'access.roles.create': 'Create role',
+	'access.roles.edit': 'Edit role',
+	'access.roles.inheritance': 'Inheritance',
+	'access.mappings.title': 'OAuth role mappings',
+	'access.mappings.description': 'Map external IdP role values onto Casbin roles.',
+	'access.mappings.column.provider': 'Provider',
+	'access.mappings.column.claim': 'Claim',
+	'access.mappings.column.externalValue': 'External value',
+	'access.mappings.column.role': 'Role',
+	'access.mappings.field.provider': 'Provider',
+	'access.mappings.field.claim': 'Claim',
+	'access.mappings.field.externalValue': 'External value',
+	'access.mappings.field.role': 'Role',
+	'platformAdmins.title': 'Platform super admins',
+	'platformAdmins.description': 'Only the owner account can manage platform super admins.',
+	'platformAdmins.column.username': 'Username',
+	'platformAdmins.column.contact': 'Contact',
+	'platformAdmins.column.status': 'Status',
+	'platformAdmins.field.username': 'Username',
+	'platformAdmins.field.email': 'Email',
+	'platformAdmins.field.phone': 'Phone',
+	'platformAdmins.create': 'Create super admin',
+	'platformAdmins.protected': 'The owner account cannot be deleted.',
+	'platformAdmins.resetDone': 'A new password has been sent to the registered channel.',
+	'preferences.title': 'Appearance',
+	'preferences.description': 'Theme, colour mode and density are stored per administrator.',
+	'preferences.field.theme': 'Theme',
+	'preferences.field.colorMode': 'Colour mode',
+	'preferences.field.density': 'Density',
+	'preferences.theme.fluent': 'Fluent',
+	'preferences.theme.cloudscape': 'Cloudscape',
+	'preferences.theme.material': 'Material',
+	'preferences.colorMode.light': 'Light',
+	'preferences.colorMode.dark': 'Dark',
+	'preferences.colorMode.system': 'Follow system',
+	'preferences.density.comfortable': 'Comfortable',
+	'preferences.density.compact': 'Compact',
+	'audit.title': 'Tool audit',
+	'audit.description': 'Every tool execution is recorded with its outcome.',
+	'audit.column.tool': 'Tool',
+	'audit.column.run': 'Run',
+	'audit.column.source': 'Source',
+	'audit.column.result': 'Result',
+	'audit.column.duration': 'Duration',
+	'audit.column.time': 'Time',
+	'audit.field.runId': 'Run ID',
+	'audit.field.toolName': 'Tool name',
+	'audit.field.source': 'Source',
+	'audit.field.result': 'Result',
+	'audit.result.ok': 'Succeeded',
+	'audit.result.failed': 'Failed',
+	'audit.source.builtin': 'Built-in',
+	'audit.source.skill': 'Skill',
+	'audit.source.mcp': 'MCP',
+	'access.roles.sort.default': 'Default',
+	'access.roles.sort.code': 'Role code',
+	'access.roles.sort.domain': 'Domain'
 };
 
 const ZH_CN: Record<MessageKey, string> = {
@@ -407,7 +607,8 @@ const ZH_CN: Record<MessageKey, string> = {
 	'workflows.field.enabled': '启用',
 	'workflows.sort.default': '默认',
 	'workflows.sort.name': '名称',
-	'workflows.sort.code': '编码',	'common.search': '搜索',
+	'workflows.sort.code': '编码',
+	'common.search': '搜索',
 	'common.sort': '排序方式',
 	'common.apply': '应用',
 	'common.prev': '上一页',
@@ -448,7 +649,107 @@ const ZH_CN: Record<MessageKey, string> = {
 	'agents.sort.default': '默认',
 	'agents.sort.name': '名称',
 	'agents.sort.code': '编码',
-	'agents.sort.created': '最新'
+	'agents.sort.created': '最新',
+
+	'common.reset': '重置',
+	'common.undo': '撤销删除',
+	'common.undoHint': '最近一次删除的记录可以在撤销窗口内原样恢复。',
+	'common.resetPassword': '重置密码',
+	'common.tenant': '租户',
+	'common.scope': '生效范围',
+	'common.permissions': '权限',
+	'common.recommended': '推荐权限',
+	'common.description': '描述',
+	'common.domain': '域名',
+	'common.parents': '继承',
+	'common.members': '成员数',
+	'common.references': '引用数',
+	'common.builtin': '内置',
+	'common.claim': '声明字段',
+	'common.externalValue': '外部值',
+	'common.role': '角色',
+	'common.provider': '供应商',
+	'common.globalScope': '全局',
+	'common.deleteHint': '确认删除这条记录？',
+	'access.pages.title': '页面权限',
+	'access.pages.description': '按租户范围给后台页面绑定 Casbin 权限。',
+	'access.pages.column.permissions': '权限',
+	'access.pages.column.scope': '生效范围',
+	'access.pages.critical': '关键页面',
+	'access.components.title': '组件权限',
+	'access.components.description': '按租户范围给页面内的组件绑定 Casbin 权限。',
+	'access.components.column.page': '页面',
+	'access.components.column.component': '组件',
+	'access.components.column.permissions': '权限',
+	'access.components.column.kind': '类型',
+	'access.roles.title': '角色与权限',
+	'access.roles.description': 'Casbin 角色、权限集合与继承关系。',
+	'access.roles.column.domain': '域名',
+	'access.roles.column.permissions': '权限',
+	'access.roles.column.parents': '继承',
+	'access.roles.column.references': '引用数',
+	'access.roles.field.code': '角色编码',
+	'access.roles.field.domain': '域名',
+	'access.roles.field.permissions': '权限',
+	'access.roles.field.parents': '继承角色',
+	'access.roles.builtin': '内置角色',
+	'access.roles.create': '新建角色',
+	'access.roles.edit': '编辑角色',
+	'access.roles.inheritance': '继承关系',
+	'access.mappings.title': 'OAuth 角色映射',
+	'access.mappings.description': '把外部 IdP 的角色值映射到 Casbin 角色。',
+	'access.mappings.column.provider': '供应商',
+	'access.mappings.column.claim': '声明字段',
+	'access.mappings.column.externalValue': '外部值',
+	'access.mappings.column.role': '角色',
+	'access.mappings.field.provider': '供应商',
+	'access.mappings.field.claim': '声明字段',
+	'access.mappings.field.externalValue': '外部值',
+	'access.mappings.field.role': '角色',
+	'platformAdmins.title': '平台超级管理员',
+	'platformAdmins.description': '只有 owner 账号可以管理平台超级管理员。',
+	'platformAdmins.column.username': '用户名',
+	'platformAdmins.column.contact': '联系方式',
+	'platformAdmins.column.status': '状态',
+	'platformAdmins.field.username': '用户名',
+	'platformAdmins.field.email': '邮箱',
+	'platformAdmins.field.phone': '手机号',
+	'platformAdmins.create': '新建超级管理员',
+	'platformAdmins.protected': 'owner 账号不能删除。',
+	'platformAdmins.resetDone': '新的随机密码已发送到登记渠道。',
+	'preferences.title': '外观偏好',
+	'preferences.description': '主题、色温与密度按管理员分别保存。',
+	'preferences.field.theme': '主题',
+	'preferences.field.colorMode': '色温',
+	'preferences.field.density': '密度',
+	'preferences.theme.fluent': 'Fluent',
+	'preferences.theme.cloudscape': 'Cloudscape',
+	'preferences.theme.material': 'Material',
+	'preferences.colorMode.light': '浅色',
+	'preferences.colorMode.dark': '深色',
+	'preferences.colorMode.system': '跟随系统',
+	'preferences.density.comfortable': '宽松',
+	'preferences.density.compact': '紧凑',
+	'audit.title': '工具审计',
+	'audit.description': '每次工具执行都会连同结果一起记录。',
+	'audit.column.tool': '工具',
+	'audit.column.run': '运行',
+	'audit.column.source': '来源',
+	'audit.column.result': '结果',
+	'audit.column.duration': '耗时',
+	'audit.column.time': '时间',
+	'audit.field.runId': '运行 ID',
+	'audit.field.toolName': '工具名',
+	'audit.field.source': '来源',
+	'audit.field.result': '结果',
+	'audit.result.ok': '成功',
+	'audit.result.failed': '失败',
+	'audit.source.builtin': '内置',
+	'audit.source.skill': '技能',
+	'audit.source.mcp': 'MCP',
+	'access.roles.sort.default': '默认',
+	'access.roles.sort.code': '角色编码',
+	'access.roles.sort.domain': '域名'
 };
 
 /** 各语言的词典。 */

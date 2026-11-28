@@ -13,19 +13,32 @@
  */
 
 import type {
+	AccessComponentItem,
+	AccessComponentsPayload,
+	AccessPageItem,
+	AccessPagesPayload,
 	AdminAgent,
 	AdminSession,
 	AdminSkill,
 	AdminWorkflow,
 	AgentInput,
 	AgentListPayload,
+	AuditItem,
+	AuditListPayload,
 	DashboardPayload,
 	LlmEndpoint,
 	LlmInput,
 	LlmListPayload,
+	MappingItem,
+	MappingListPayload,
 	McpInput,
 	McpListPayload,
 	McpServer,
+	PlatformAdminItem,
+	PlatformAdminListPayload,
+	PreferencesPayload,
+	RoleItem,
+	RoleListPayload,
 	SkillInput,
 	SkillListPayload,
 	WorkflowInput,
@@ -40,17 +53,41 @@ export class AdminApiError extends Error {
 	/** HTTP 状态码。 */
 	readonly status: number;
 
+	/** 稳定的机器码（``unauthorized`` / ``not_found`` / ``duplicate`` …）。 */
+	readonly code: string;
+
+	/** 字段级错误：字段名 → 可直接展示的说明。 */
+	readonly fieldErrors: Record<string, string>;
+
 	/**
 	 * 构造错误。
 	 *
 	 * @param status HTTP 状态码。
 	 * @param message 可直接展示给管理员的错误说明。
+	 * @param code 机器码；缺省时按状态码推断一个粗粒度的码。
+	 * @param fieldErrors 字段级错误。
 	 */
-	constructor(status: number, message: string) {
+	constructor(
+		status: number,
+		message: string,
+		code = '',
+		fieldErrors: Record<string, string> = {}
+	) {
 		super(message);
 		this.name = 'AdminApiError';
 		this.status = status;
+		this.code = code || inferCode(status);
+		this.fieldErrors = fieldErrors;
 	}
+}
+
+/** 按状态码推断一个粗粒度机器码。 */
+function inferCode(status: number): string {
+	if (status === 401) return 'unauthorized';
+	if (status === 403) return 'forbidden';
+	if (status === 404) return 'not_found';
+	if (status === 409) return 'conflict';
+	return 'error';
 }
 
 /** 一次转发的输入。 */
@@ -85,13 +122,21 @@ export async function adminFetch<T>(
 	});
 	if (!response.ok) {
 		let message = `管理端接口返回 ${response.status}`;
+		let code = '';
+		let fieldErrors: Record<string, string> = {};
 		try {
-			const payload = (await response.json()) as { message?: string };
+			const payload = (await response.json()) as {
+				message?: string;
+				code?: string;
+				fieldErrors?: Record<string, string>;
+			};
 			if (payload?.message) message = payload.message;
+			if (payload?.code) code = payload.code;
+			if (payload?.fieldErrors) fieldErrors = payload.fieldErrors;
 		} catch {
 			// 响应体不是 JSON：用状态码兜底，不把原文透给前端。
 		}
-		throw new AdminApiError(response.status, message);
+		throw new AdminApiError(response.status, message, code, fieldErrors);
 	}
 	return (await response.json()) as T;
 }
@@ -183,12 +228,13 @@ export async function deleteAgent(
 	cookie: string,
 	csrfToken: string,
 	code: string
-): Promise<void> {
-	await adminFetch<{ ok: boolean }>(`/admin/api/agents/${encodeURIComponent(code)}`, {
+): Promise<number | null> {
+	const result = await adminFetch<{ ok: boolean; undoId?: number }>(`/admin/api/agents/${encodeURIComponent(code)}`, {
 		method: 'DELETE',
 		cookie,
 		csrfToken
 	});
+	return result.undoId ?? null;
 }
 
 /** 读取 LLM 端点列表。 */
@@ -263,12 +309,13 @@ export async function deleteLlmEndpoint(
 	cookie: string,
 	csrfToken: string,
 	code: string
-): Promise<void> {
-	await adminFetch<{ ok: boolean }>(`/admin/api/llm/${encodeURIComponent(code)}`, {
+): Promise<number | null> {
+	const result = await adminFetch<{ ok: boolean; undoId?: number }>(`/admin/api/llm/${encodeURIComponent(code)}`, {
 		method: 'DELETE',
 		cookie,
 		csrfToken
 	});
+	return result.undoId ?? null;
 }
 /** 把查询参数拼成列表接口的查询串。 */
 function listQuery(
@@ -416,12 +463,13 @@ export async function deleteMcpServer(
 	cookie: string,
 	csrfToken: string,
 	code: string
-): Promise<void> {
-	await adminFetch<{ ok: boolean }>(`/admin/api/mcp/${encodeURIComponent(code)}`, {
+): Promise<number | null> {
+	const result = await adminFetch<{ ok: boolean; undoId?: number }>(`/admin/api/mcp/${encodeURIComponent(code)}`, {
 		method: 'DELETE',
 		cookie,
 		csrfToken
 	});
+	return result.undoId ?? null;
 }
 
 /** 读取工作流列表。 */
@@ -492,10 +540,317 @@ export async function deleteWorkflow(
 	cookie: string,
 	csrfToken: string,
 	code: string
-): Promise<void> {
-	await adminFetch<{ ok: boolean }>(`/admin/api/workflows/${encodeURIComponent(code)}`, {
+): Promise<number | null> {
+	const result = await adminFetch<{ ok: boolean; undoId?: number }>(`/admin/api/workflows/${encodeURIComponent(code)}`, {
 		method: 'DELETE',
 		cookie,
 		csrfToken
+	});
+	return result.undoId ?? null;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* 访问控制：页面权限 / 组件权限 / 角色 / OAuth 映射                        */
+/* ------------------------------------------------------------------ */
+
+/** 读取页面权限矩阵。 */
+export async function loadAccessPages(cookie: string): Promise<AccessPagesPayload> {
+	return await adminFetch<AccessPagesPayload>('/admin/api/access/pages', { cookie });
+}
+
+/** 保存某个租户范围下的页面权限绑定。 */
+export async function saveAccessPage(
+	cookie: string,
+	csrfToken: string,
+	pageCode: string,
+	input: { tenantId: string | null; permissions: string[]; operation?: string }
+): Promise<void> {
+	await adminFetch(`/admin/api/access/pages/${encodeURIComponent(pageCode)}`, {
+		method: 'PUT',
+		cookie,
+		csrfToken,
+		body: JSON.stringify(input)
+	});
+}
+
+/** 读取组件权限矩阵。 */
+export async function loadAccessComponents(
+	cookie: string
+): Promise<AccessComponentsPayload> {
+	return await adminFetch<AccessComponentsPayload>('/admin/api/access/components', { cookie });
+}
+
+/** 保存某个租户范围下的组件权限绑定。 */
+export async function saveAccessComponent(
+	cookie: string,
+	csrfToken: string,
+	pageCode: string,
+	componentCode: string,
+	input: { tenantId: string | null; permissions: string[]; operation?: string }
+): Promise<void> {
+	await adminFetch(
+		`/admin/api/access/components/${encodeURIComponent(pageCode)}/${encodeURIComponent(componentCode)}`,
+		{
+			method: 'PUT',
+			cookie,
+			csrfToken,
+			body: JSON.stringify(input)
+		}
+	);
+}
+
+/** 读取角色列表。 */
+export async function loadRoles(
+	cookie: string,
+	query: { q?: string; sort?: string; page?: number; size?: number } = {}
+): Promise<RoleListPayload> {
+	const params = new URLSearchParams();
+	if (query.q) params.set('q', query.q);
+	if (query.sort) params.set('sort', query.sort);
+	if (query.page) params.set('page', String(query.page));
+	if (query.size) params.set('size', String(query.size));
+	const suffix = params.toString() ? `?${params.toString()}` : '';
+	return await adminFetch<RoleListPayload>(`/admin/api/access/roles${suffix}`, { cookie });
+}
+
+/** 创建角色。 */
+export async function createRole(
+	cookie: string,
+	csrfToken: string,
+	input: { code: string; domain: string; permissions: string[] }
+): Promise<RoleItem> {
+	const result = await adminFetch<{ item: RoleItem }>('/admin/api/access/roles', {
+		method: 'POST',
+		cookie,
+		csrfToken,
+		body: JSON.stringify(input)
+	});
+	return result.item;
+}
+
+/** 替换角色的权限集合。 */
+export async function updateRole(
+	cookie: string,
+	csrfToken: string,
+	roleCode: string,
+	input: { domain: string; permissions: string[] }
+): Promise<RoleItem> {
+	const result = await adminFetch<{ item: RoleItem }>(
+		`/admin/api/access/roles/${encodeURIComponent(roleCode)}`,
+		{
+			method: 'PUT',
+			cookie,
+			csrfToken,
+			body: JSON.stringify(input)
+		}
+	);
+	return result.item;
+}
+
+/** 替换角色的父角色。 */
+export async function updateRoleInheritance(
+	cookie: string,
+	csrfToken: string,
+	roleCode: string,
+	input: { domain: string; parents: string[] }
+): Promise<RoleItem> {
+	const result = await adminFetch<{ item: RoleItem }>(
+		`/admin/api/access/roles/${encodeURIComponent(roleCode)}/inheritance`,
+		{
+			method: 'PUT',
+			cookie,
+			csrfToken,
+			body: JSON.stringify(input)
+		}
+	);
+	return result.item;
+}
+
+/** 删除角色。 */
+export async function deleteRole(
+	cookie: string,
+	csrfToken: string,
+	roleCode: string,
+	domain: string
+): Promise<void> {
+	await adminFetch(
+		`/admin/api/access/roles/${encodeURIComponent(roleCode)}?domain=${encodeURIComponent(domain)}`,
+		{ method: 'DELETE', cookie, csrfToken }
+	);
+}
+
+/** 读取 OAuth 角色映射。 */
+export async function loadMappings(cookie: string): Promise<MappingListPayload> {
+	return await adminFetch<MappingListPayload>('/admin/api/access/mappings', { cookie });
+}
+
+/** 新增 OAuth 角色映射。 */
+export async function createMapping(
+	cookie: string,
+	csrfToken: string,
+	input: {
+		providerId: number;
+		claimName: string;
+		externalValue: string;
+		roleCode: string;
+	}
+): Promise<MappingItem> {
+	const result = await adminFetch<{ item: MappingItem }>('/admin/api/access/mappings', {
+		method: 'POST',
+		cookie,
+		csrfToken,
+		body: JSON.stringify(input)
+	});
+	return result.item;
+}
+
+/** 修改 OAuth 角色映射。 */
+export async function updateMapping(
+	cookie: string,
+	csrfToken: string,
+	mappingId: number,
+	input: { roleCode: string; enabled: boolean }
+): Promise<MappingItem> {
+	const result = await adminFetch<{ item: MappingItem }>(
+		`/admin/api/access/mappings/${mappingId}`,
+		{
+			method: 'PUT',
+			cookie,
+			csrfToken,
+			body: JSON.stringify(input)
+		}
+	);
+	return result.item;
+}
+
+/** 删除 OAuth 角色映射。 */
+export async function deleteMapping(
+	cookie: string,
+	csrfToken: string,
+	mappingId: number
+): Promise<void> {
+	await adminFetch(`/admin/api/access/mappings/${mappingId}`, {
+		method: 'DELETE',
+		cookie,
+		csrfToken
+	});
+}
+
+/* ------------------------------------------------------------------ */
+/* 平台超级管理员、外观偏好、工具审计与撤销删除                             */
+/* ------------------------------------------------------------------ */
+
+/** 读取平台超级管理员列表。 */
+export async function loadPlatformAdmins(
+	cookie: string,
+	query: { q?: string; page?: number; size?: number } = {}
+): Promise<PlatformAdminListPayload> {
+	const params = new URLSearchParams();
+	if (query.q) params.set('q', query.q);
+	if (query.page) params.set('page', String(query.page));
+	if (query.size) params.set('size', String(query.size));
+	const suffix = params.toString() ? `?${params.toString()}` : '';
+	return await adminFetch<PlatformAdminListPayload>(
+		`/admin/api/platform-admins${suffix}`,
+		{ cookie }
+	);
+}
+
+/** 创建平台超级管理员。 */
+export async function createPlatformAdmin(
+	cookie: string,
+	csrfToken: string,
+	input: { username: string; email: string; phone: string }
+): Promise<PlatformAdminItem> {
+	const result = await adminFetch<{ item: PlatformAdminItem }>('/admin/api/platform-admins', {
+		method: 'POST',
+		cookie,
+		csrfToken,
+		body: JSON.stringify(input)
+	});
+	return result.item;
+}
+
+/** 删除平台超级管理员，返回可撤销的快照编号。 */
+export async function deletePlatformAdmin(
+	cookie: string,
+	csrfToken: string,
+	accountId: number
+): Promise<number | null> {
+	const result = await adminFetch<{ ok?: boolean; undoId?: number }>(
+		`/admin/api/platform-admins/${accountId}`,
+		{ method: 'DELETE', cookie, csrfToken }
+	);
+	return result.undoId ?? null;
+}
+
+/** 重置平台超级管理员的密码。 */
+export async function resetPlatformAdminPassword(
+	cookie: string,
+	csrfToken: string,
+	accountId: number
+): Promise<void> {
+	await adminFetch(`/admin/api/platform-admins/${accountId}/reset-password`, {
+		method: 'POST',
+		cookie,
+		csrfToken,
+		body: JSON.stringify({})
+	});
+}
+
+/** 读取外观偏好。 */
+export async function loadPreferences(cookie: string): Promise<PreferencesPayload> {
+	return await adminFetch<PreferencesPayload>('/admin/api/preferences', { cookie });
+}
+
+/** 保存外观偏好。 */
+export async function savePreferences(
+	cookie: string,
+	csrfToken: string,
+	input: { theme: string; colorMode: string; density: string }
+): Promise<PreferencesPayload> {
+	return await adminFetch<PreferencesPayload>('/admin/api/preferences', {
+		method: 'PUT',
+		cookie,
+		csrfToken,
+		body: JSON.stringify(input)
+	});
+}
+
+/** 查询工具审计记录。 */
+export async function loadAudit(
+	cookie: string,
+	query: {
+		runId?: string;
+		toolName?: string;
+		source?: string;
+		ok?: string;
+		page?: number;
+		size?: number;
+	} = {}
+): Promise<AuditListPayload> {
+	const params = new URLSearchParams();
+	if (query.runId) params.set('runId', query.runId);
+	if (query.toolName) params.set('toolName', query.toolName);
+	if (query.source) params.set('source', query.source);
+	if (query.ok) params.set('ok', query.ok);
+	if (query.page) params.set('page', String(query.page));
+	if (query.size) params.set('size', String(query.size));
+	const suffix = params.toString() ? `?${params.toString()}` : '';
+	return await adminFetch<AuditListPayload>(`/admin/api/audit${suffix}`, { cookie });
+}
+
+/** 撤销一次删除。 */
+export async function undoDelete(
+	cookie: string,
+	csrfToken: string,
+	undoId: number
+): Promise<void> {
+	await adminFetch(`/admin/api/undo/${undoId}`, {
+		method: 'POST',
+		cookie,
+		csrfToken,
+		body: JSON.stringify({})
 	});
 }

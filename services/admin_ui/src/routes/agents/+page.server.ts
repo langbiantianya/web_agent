@@ -7,6 +7,7 @@ import {
 	deleteAgent,
 	loadAgents,
 	toggleAgent,
+	undoDelete,
 	updateAgent
 } from '#lib/server/admin-api';
 import type { AgentInput } from '#lib/types';
@@ -69,7 +70,11 @@ export const load: PageServerLoad = async ({ locals, request, url }) => {
 			page: Number(url.searchParams.get('page') ?? '1') || 1,
 			size: Number(url.searchParams.get('size') ?? '20') || 20
 		});
-		return { payload, editing: url.searchParams.get('edit') ?? '' };
+		return {
+			payload,
+			editing: url.searchParams.get('edit') ?? '',
+			undoId: url.searchParams.get('undo') ?? ''
+		};
 	} catch (cause) {
 		if (cause instanceof AdminApiError) error(cause.status, cause.message);
 		throw cause;
@@ -132,8 +137,26 @@ export const actions: Actions = {
 		if (!session) error(401, '请先登录管理后台');
 		const form = await request.formData();
 		const code = String(form.get('code') ?? '');
+		let undoId: number | null = null;
 		try {
-			await deleteAgent(request.headers.get('cookie') ?? '', session.csrfToken, code);
+			undoId = await deleteAgent(request.headers.get('cookie') ?? '', session.csrfToken, code);
+		} catch (cause) {
+			return toFailure(cause);
+		}
+		redirect(303, '/admin/agents' + (undoId ? `?undo=${undoId}` : ''));
+	},
+
+	undo: async ({ request, locals }) => {
+		const session = locals.session;
+		if (!session) error(401, '请先登录管理后台');
+		const form = await request.formData();
+		const undoId = Number(form.get('undoId') ?? '0');
+		try {
+			await undoDelete(
+				request.headers.get('cookie') ?? '',
+				session.csrfToken,
+				undoId
+			);
 		} catch (cause) {
 			return toFailure(cause);
 		}
