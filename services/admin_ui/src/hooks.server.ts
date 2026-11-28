@@ -68,6 +68,12 @@ async function proxy(event: Parameters<Handle>[0]['event']): Promise<Response> {
 	if (cookie) headers.set('cookie', cookie);
 	const contentType = event.request.headers.get('content-type');
 	if (contentType) headers.set('content-type', contentType);
+	// Accept 必须转发：Python 侧有一批端点按它分流——同一个提交，
+	// `Accept: application/json` 返回 JSON（画布 island 靠这个读错误），
+	// 不带就返回 303 跳转。少了这个头，岛会拿到 HTML 却按 JSON 解析，
+	// 于是把一次**成功**的保存报成「保存失败」。
+	const accept = event.request.headers.get('accept');
+	if (accept) headers.set('accept', accept);
 
 	// Origin 处理：浏览器发的是公网地址，Python 看到的是内部地址。
 	// 先在这里校验浏览器的 Origin（不通过就 403），再按管理端当前的校验
