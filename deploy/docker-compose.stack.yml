@@ -101,6 +101,12 @@ services:
     environment:
       # 容器网络内的服务名；写 IP 反而会被 NAT 绕回宿主机。
       ADMIN_API_BASE_URL: "http://admin-web:8001"
+      # SvelteKit 用它推导自己的 origin。**必须设**：adapter-node 在没有
+      # PROTOCOL_HEADER 时默认按 https 推导，而我们这里是 http 直连——
+      # 推导出来的 origin 与浏览器发来的对不上，SvelteKit 自带的 CSRF 校验
+      # 会把所有表单 POST 拒掉（"Cross-site POST form submissions are
+      # forbidden"），登录直接失败。
+      ORIGIN: ${ADMIN_PUBLIC_BASE_URL:-http://127.0.0.1:8001}
       PORT: "3000"
       HOST: "0.0.0.0"
     depends_on:

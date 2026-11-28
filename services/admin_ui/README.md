@@ -65,9 +65,12 @@ ADMIN_API_BASE_URL=http://127.0.0.1:8001 npm run dev
 | `ADMIN_API_BASE_URL` | 管理端（Python）的**容器内**地址，如 `http://admin-web:8001` |
 | `PORT` / `HOST` | 监听地址与端口，默认 `3000` / `0.0.0.0` |
 
-**不要设 `ORIGIN`**：SvelteKit 会用请求的 Host 头推导自己的 origin，这样
-无论管理员用哪个地址访问，Origin 校验都对得上。放在 TLS 终止的反代后面时
-才需要设 `ORIGIN`（或 `PROTOCOL_HEADER` / `HOST_HEADER`）。
+**必须设 `ORIGIN`**（填管理端的公开地址，如 `http://192.168.5.16:8001`）：
+`adapter-node` 在没有 `PROTOCOL_HEADER` 时**默认按 https 推导** origin，
+而直连部署是 http——推导出来的 origin 与浏览器发来的对不上，SvelteKit
+自带的 CSRF 校验会把所有表单 POST 拒掉（`Cross-site POST form submissions
+are forbidden`），登录直接失败。放在 TLS 终止的反代后面时改成设
+`ORIGIN` 为 https 的公开地址即可。
 
 ## 校验与测试
 
