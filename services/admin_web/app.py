@@ -32,6 +32,25 @@ logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).with_name("static")
 
 
+def _ensure_app_logging() -> None:
+    """让应用自己的 INFO 日志进容器日志。
+
+    uvicorn 的默认日志配置**只配 uvicorn 自己的 logger**，根 logger 留在
+    WARNING——于是应用里的 INFO 全部被丢掉。管理端容器一直如此：日志里只看得到
+    uvicorn 的访问日志、alembic 的迁移日志，以及应用自己的 WARNING。
+
+    这对「provider 登录失败率巡检」这类观测是致命的：失败率的 INFO 汇总看不见，
+    只剩超阈值的 WARNING。修法是在 **lifespan 里**补一次 basicConfig——
+    lifespan 跑在 uvicorn 的日志配置**之后**，所以这次配置不会再被 dictConfig
+    清掉（容器入口里提前配是会被清掉的）。
+    """
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(level=logging.INFO)
+    if root.level > logging.INFO:
+        root.setLevel(logging.INFO)
+
+
 async def _rotation_loop() -> None:
     """每小时执行一次 30 天超级管理员密码轮换。"""
     while True:
@@ -50,6 +69,7 @@ async def _rotation_loop() -> None:
 @asynccontextmanager
 async def lifespan(_: LudicApp):
     """初始化 owner、registry/Casbin，并启动密码轮换任务。"""
+    _ensure_app_logging()
     async with AdminSessionLocal() as db:
         initial_password = await ensure_owner_super_admin(db)
         if initial_password is not None:
