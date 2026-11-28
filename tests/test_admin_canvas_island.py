@@ -6,8 +6,8 @@
    导航、顶栏由 SvelteKit 那一层负责，画布自己带齐样式与脚本；
 2. 画布的**写路径没变**：保存表单仍然指向 ``/admin/workflows/{code}/update``，
    但落点回到片段页（否则 iframe 里会跳进整页）；
-3. 整页版本 ``/admin/workflows/{code}`` 仍然是**回退路径**：SvelteKit
-   容器关掉后管理端照样能用，所以它必须继续带外壳。
+3. 整页版本 ``/admin/workflows/{code}`` 随 Ludic 视图层一起退休：
+   画布只剩片段页这一条入口。
 """
 
 from __future__ import annotations
@@ -142,20 +142,21 @@ async def test_canvas_fragment_has_no_shell_but_keeps_island() -> None:
 
 
 @pytest.mark.asyncio
-async def test_full_canvas_page_still_renders_shell() -> None:
-    """整页画布是回退路径：外壳必须还在。"""
+async def test_only_the_fragment_route_is_left() -> None:
+    """Ludic 视图层下线后，画布只剩片段页这一条入口。
+
+    整页画布（``/admin/workflows/{code}``）随视图层一起退休：页面由
+    SvelteKit 渲染，外壳归它管，Python 侧不再提供整页。
+    """
     client = await _client()
     code, agent_code = await _seed_workflow(client)
     try:
-        response = await client.get(f"/admin/workflows/{code}")
-        assert response.status_code == 200, response.text
-        text = response.text
-        assert 'class="sidebar"' in text
-        assert 'id="workflow-editor-canvas"' in text
-        # 整页的落点是整页自己
-        assert f'value="/admin/workflows/{code}"' in text
-        # 整页**不**允许被嵌入：它是完整的后台页面
-        assert response.headers.get("x-frame-options") == "DENY"
+        fragment = await client.get(f"/admin/workflows/{code}/canvas")
+        assert fragment.status_code == 200, fragment.text
+        assert 'id="workflow-editor-canvas"' in fragment.text
+
+        page = await client.get(f"/admin/workflows/{code}")
+        assert page.status_code == 404, page.text
     finally:
         async with AdminSessionLocal() as db:
             await workflow_repo.delete(db, code)

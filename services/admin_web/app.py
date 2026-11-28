@@ -128,10 +128,12 @@ app.add_middleware(BaseHTTPMiddleware, dispatch=security_headers)
 
 from services.admin_web import routes
 
-# 既有测试从本模块导入这两个纯函数；它们已随工作流域搬到 workflows 模块，
-# 这里保留导入点，避免既有调用方失效。
-from services.admin_web.routes.workflows import (  # noqa: F401
+# 既有测试从本模块导入这两个纯函数；它们随工作流域搬到 workflow_canvas
+# 与 workflow_validation 模块，这里保留导入点，避免既有调用方失效。
+from services.admin_web.routes.workflow_canvas import (  # noqa: F401
     _definition_errors,
+)
+from services.admin_web.workflow_validation import (  # noqa: F401
     _pydantic_message,
 )
 

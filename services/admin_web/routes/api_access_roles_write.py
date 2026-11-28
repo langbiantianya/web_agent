@@ -33,8 +33,8 @@ from services.admin_web.api_support import (
 )
 from services.admin_web.audit import audit_principal_action
 from services.admin_web.rbac import casbin_service
-from services.admin_web.routes.access import _may_bind_permissions
-from services.admin_web.routes.access_roles import _role_exists
+from services.admin_web.access_api import may_bind_permissions
+from services.admin_web.access_api import role_exists
 
 PAGE_CODE = "access_roles"
 COMPONENT_CODE = "policy_list"
@@ -71,11 +71,11 @@ def register(app: Any) -> None:
             permissions = parse_api_permissions(body.get("permissions"))
             if not permissions:
                 raise ApiError("invalid_input", "角色至少要有一项权限", status_code=400)
-            if not await _may_bind_permissions(db, principal, permissions):
+            if not await may_bind_permissions(db, principal, permissions):
                 raise ApiError(
                     "invalid_input", "不能绑定超出自身范围的权限", status_code=400
                 )
-            if await _role_exists(db, role_code, domain):
+            if await role_exists(db, role_code, domain):
                 raise ApiError("duplicate", "角色已存在", status_code=409)
             for object_name, action in permissions:
                 db.add(
@@ -122,11 +122,11 @@ def register(app: Any) -> None:
             body = await read_json_body(request)
             domain = _resolve_domain(principal, body.get("domain"))
             permissions = parse_api_permissions(body.get("permissions"))
-            if not await _role_exists(db, role_code, domain):
+            if not await role_exists(db, role_code, domain):
                 raise ApiError("not_found", "角色不存在", status_code=404)
             if not permissions:
                 raise ApiError("invalid_input", "角色至少要有一项权限", status_code=400)
-            if not await _may_bind_permissions(db, principal, permissions):
+            if not await may_bind_permissions(db, principal, permissions):
                 raise ApiError(
                     "invalid_input", "不能绑定超出自身范围的权限", status_code=400
                 )
@@ -202,7 +202,7 @@ def register(app: Any) -> None:
         try:
             body = await read_json_body(request)
             domain = _resolve_domain(principal, body.get("domain"))
-            if not await _role_exists(db, role_code, domain):
+            if not await role_exists(db, role_code, domain):
                 raise ApiError("not_found", "角色不存在", status_code=404)
             raw_parents = body.get("parents") or []
             if not isinstance(raw_parents, list):
@@ -213,7 +213,7 @@ def register(app: Any) -> None:
             ):
                 raise ApiError("invalid_input", "父角色不合法", status_code=400)
             for parent in parents:
-                if not await _role_exists(db, parent, domain):
+                if not await role_exists(db, parent, domain):
                     raise ApiError(
                         "invalid_input", "父角色在该域名下不存在", status_code=400
                     )
@@ -277,7 +277,7 @@ def register(app: Any) -> None:
             domain = _resolve_domain(principal, request.query_params.get("domain"))
             if role_code in BUILTIN_ROLES:
                 raise ApiError("in_use", "内置角色不可删除", status_code=409)
-            if not await _role_exists(db, role_code, domain):
+            if not await role_exists(db, role_code, domain):
                 raise ApiError("not_found", "角色不存在", status_code=404)
             reference_statement = (
                 sa.select(sa.func.count())

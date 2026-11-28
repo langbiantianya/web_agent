@@ -1,4 +1,20 @@
-"""工作流的写操作路由：校验、创建、更新、启停与删除。"""
+"""Workflow 画布 island 的三个端点（V4.10 阶段 E）。
+
+Ludic 视图层下线后，Python 侧**不再渲染任何业务页面**——页面全在
+SvelteKit。画布是唯一的例外：它仍然是原来那套 `workflow-editor.js`，
+由 SvelteKit 的画布外壳用 `<iframe>` 承载。
+
+所以这一模块只留画布**必需**的三个端点：
+
+| 端点 | 用途 |
+| --- | --- |
+| `GET /admin/workflows/{code}/canvas` | 画布片段页（不带外壳） |
+| `POST /admin/workflows/validate` | 画布的实时校验协议 |
+| `POST /admin/workflows/{code}/update` | 画布的保存协议 |
+
+列表、创建、启停、删除这些**管理面操作**已经全部由 JSON API 承担
+（`/admin/api/workflows*`），页面表单那一套随之退休。
+"""
 
 from __future__ import annotations
 
@@ -8,23 +24,73 @@ from typing import Any
 from ludic.web import Request
 from starlette.responses import JSONResponse, RedirectResponse
 
+from app.repo.agent_repo import agent_repo
 from app.repo.workflow_repo import workflow_repo
 from services.admin_web.audit import audit_principal_action
-from services.admin_web.deletion import record_deletion
 from services.admin_web.common import (
-    as_bool, business_redirect, can_edit_resource, json_response_no_store,
-    not_found, operation_authorized, origin_ok, require_csrf, safe_next,
-    tenant_id_of, unauthorized, with_auth,
+    business_redirect,
+    can_edit_resource,
+    json_response_no_store,
+    not_found,
+    operation_authorized,
+    origin_ok,
+    require_csrf,
+    safe_next,
+    tenant_id_of,
+    unauthorized,
+    with_auth,
 )
-from services.admin_web.workflow_save import (
-    prepare_workflow_create,
-    prepare_workflow_update,
+from services.admin_web.registry import can_access_page
+from services.admin_web.views import workflow_editor_page
+from services.admin_web.workflow_save import prepare_workflow_update
+from services.admin_web.workflow_validation import (
+    _definition_errors,
+    _pydantic_message,
 )
-from services.admin_web.workflow_validation import _definition_errors
 
 
 def register(app: Any) -> None:
-    """把工作流的写操作路由挂到 app 上。"""
+    """把画布 island 的三个端点挂到 app 上。"""
+
+    @app.get("/admin/workflows/{code}/canvas")
+    async def workflow_canvas_get(code: str, request: Request):
+        """渲染画布片段页（不带后台外壳）。
+
+        SvelteKit 的工作流页用 ``<iframe>`` 承载这一段：导航、顶栏、主题
+        由 SvelteKit 负责，画布与它的脚本一行不改地留在这里。
+        """
+        values = await with_auth(request)
+        if values is None:
+            return unauthorized()
+        db, principal, pref, csrf = values
+        try:
+            if not await can_access_page(db, principal, "workflows"):
+                return not_found()
+            row = await workflow_repo.get_by_code(db, code)
+            if row is None:
+                return not_found()
+            agents = await agent_repo.list(
+                db,
+                only_enabled=True,
+                limit=500,
+                tenant_id=tenant_id_of(principal),
+            )
+            return workflow_editor_page(
+                csrf=csrf,
+                workflow=row,
+                agents=agents,
+                theme=pref.theme,
+                color_mode=pref.color_mode,
+                density=pref.density,
+                can_write=await can_edit_resource(
+                    db,
+                    principal,
+                    page_code="workflows",
+                    component_code="workflow_editor",
+                ),
+            )
+        finally:
+            await db.close()
 
     @app.post("/admin/workflows/validate")
     async def workflows_validate(request: Request):
@@ -107,66 +173,12 @@ def register(app: Any) -> None:
         finally:
             await db.close()
 
-    @app.post("/admin/workflows")
-    async def workflows_post(request: Request):
-        """通过共享 Workflow 仓储创建编排。
-
-        新表单只收一个「初始 Agent code」，服务端据此生成单节点骨架 definition，
-        剩下的图交给编排页画。老的 ``definition`` JSON 表单字段仍然接受，
-        避免既有调用方（含既有测试）突然失效。
-        """
-        values = await with_auth(request)
-        if values is None:
-            return unauthorized()
-        db, principal, _, _ = values
-        try:
-            form = await request.form()
-            if not await operation_authorized(
-                request,
-                db,
-                principal,
-                page_code="workflows",
-                component_code="workflow_editor",
-                form=form,
-            ):
-                return not_found()
-            payload, error = await prepare_workflow_create(
-                db, form, tenant_id=tenant_id_of(principal)
-            )
-            if payload is None:
-                return business_redirect("/admin/workflows", error=error)
-            if await workflow_repo.get_by_code(db, payload.code):
-                return business_redirect("/admin/workflows", error="duplicate")
-            row = await workflow_repo.create(
-                db,
-                code=payload.code,
-                name=payload.name,
-                description=payload.description,
-                definition=payload.definition.model_dump(
-                    by_alias=True, exclude_none=True
-                ),
-                enabled=1 if payload.enabled else 0,
-            )
-            await audit_principal_action(
-                db,
-                principal,
-                action="workflow.create",
-                target_type="workflow",
-                target_id=row.code,
-                tenant_id=principal.tenant_id,
-            )
-            await db.commit()
-            # 建完之后直接进编排页，并带上 notice 让页面给出可见反馈。
-            return business_redirect(f"/admin/workflows/{row.code}", notice="created")
-        finally:
-            await db.close()
-
     @app.post("/admin/workflows/{code}/update")
     async def workflows_update(code: str, request: Request):
         """更新 Workflow 名称、启用状态或图定义。
 
-        表单可以带一个可选的 ``next`` 指回保存后的落点（编排页会带上自己），
-        只接受 ``/admin/`` 内部路径，避免开放重定向。
+        表单可以带一个可选的 ``next`` 指回保存后的落点（画布片段页会带上
+        自己），只接受 ``/admin/`` 内部路径，避免开放重定向。
         """
         values = await with_auth(request)
         if values is None:
@@ -224,94 +236,8 @@ def register(app: Any) -> None:
             if wants_json:
                 return json_response_no_store({"ok": True, "code": code})
             next_url = safe_next(str(form.get("next") or "/admin/workflows"))
-            # 编排页与列表页都要能看到「已保存」的反馈。
+            # 画布片段页要能看到「已保存」的反馈。
             separator = "&" if "?" in next_url else "?"
             return RedirectResponse(f"{next_url}{separator}notice=updated", status_code=303)
-        finally:
-            await db.close()
-
-    @app.post("/admin/workflows/{code}/toggle")
-    async def workflows_toggle(code: str, request: Request):
-        """切换 Workflow 启用状态。"""
-        values = await with_auth(request)
-        if values is None:
-            return unauthorized()
-        db, principal, _, _ = values
-        try:
-            form = await request.form()
-            if not await operation_authorized(
-                request,
-                db,
-                principal,
-                page_code="workflows",
-                component_code="workflow_editor",
-                form=form,
-            ):
-                return not_found()
-            row = await workflow_repo.update(
-                db,
-                code,
-                {"enabled": 1 if as_bool(form.get("enabled")) else 0},
-            )
-            if row is None:
-                return business_redirect("/admin/workflows", error="missing")
-            await audit_principal_action(
-                db,
-                principal,
-                action="workflow.toggle",
-                target_type="workflow",
-                target_id=code,
-                tenant_id=principal.tenant_id,
-                detail={"enabled": bool(row.enabled)},
-            )
-            await db.commit()
-            return business_redirect("/admin/workflows", notice="toggled")
-        finally:
-            await db.close()
-
-    @app.post("/admin/workflows/{code}/delete")
-    async def workflows_delete(code: str, request: Request):
-        """永久删除 Workflow。"""
-        values = await with_auth(request)
-        if values is None:
-            return unauthorized()
-        db, principal, _, _ = values
-        try:
-            form = await request.form()
-            if not await operation_authorized(
-                request,
-                db,
-                principal,
-                page_code="workflows",
-                component_code="workflow_editor",
-                form=form,
-            ):
-                return not_found()
-            existing = await workflow_repo.get_by_code(db, code)
-            if existing is None:
-                return business_redirect("/admin/workflows", error="missing")
-            # 删除前留快照：误删能在撤销窗口内原样恢复（UX-01）。
-            entry = await record_deletion(
-                db,
-                resource_type="workflow",
-                row=existing,
-                actor_id=principal.principal_id,
-                actor_username=principal.username,
-            )
-            if not await workflow_repo.delete(db, code):
-                return business_redirect("/admin/workflows", error="missing")
-            await audit_principal_action(
-                db,
-                principal,
-                action="workflow.delete",
-                target_type="workflow",
-                target_id=code,
-                tenant_id=principal.tenant_id,
-            )
-            await db.commit()
-            return RedirectResponse(
-                f"/admin/workflows?notice=deleted&undo={entry.id}",
-                status_code=303,
-            )
         finally:
             await db.close()

@@ -29,7 +29,7 @@
 | B | 资源页（agents / skills / mcp / llm / workflows） | ✅ 已完成（五页全部迁移） |
 | C | 访问控制页（pages / components / roles / mappings / platform-admins / preferences / audit） | ✅ 已完成（七页全部迁移，含浏览器实测） |
 | D | workflow 画布作为 island 接入（**不重写画布**） | ✅ 已完成（`/admin/workflows/{code}` 外壳 + `<iframe>` 承载 Python 的画布片段页） |
-| E | 下线 Ludic 视图层 | 未开始 |
+| E | 下线 Ludic 视图层 | ✅ 已完成（`admin-web` 收敛为纯 JSON API + 登录页 + 画布 island） |
 
 **新旧共存的仲裁点在 `src/hooks.server.ts`**：路径落在 Python 独占清单里就
 代理给 Python；没匹配到 SvelteKit 路由的路径也回退给 Python——所以没迁的

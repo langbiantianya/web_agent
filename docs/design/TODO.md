@@ -8,8 +8,8 @@
 截至 V4.10 设计，OAuth/OIDC 主链路、独立 admin-web 业务页、workflow 可视化编排器
 和 Agent JSON 输出契约已经落地，旧管理员 API Key 管理栈已退役；后台前端正在
 迁移到 SvelteKit：阶段 A（骨架 + 概览页）、阶段 B（五个资源页）、阶段 C
-（七个访问控制页）、阶段 D（画布 island 化）、部署接线与端到端联调均已完成，
-只剩阶段 E（下线 Ludic 视图层）待推进。
+（七个访问控制页）、阶段 D（画布 island 化）、阶段 E（下线 Ludic 视图层）、
+部署接线与端到端联调**均已完成**——后台前端迁移到此收尾。
 尚未完成的 **P1** 共两项：真实 IdP 联调（含登录限频、过期 attempt 清理、
 provider 故障监控）与存量会话归属处理；
 其余均为 P2，涵盖成本账本、容器预热、MCP 能力边界与构建依赖。
@@ -157,10 +157,33 @@ Casbin 判定、审计、Argon2 口令全部留在 Python 侧。
   转发 `Accept` 头（否则 Python 返回 303 而不是 JSON，画布把成功的保存报成
   「保存失败」）。
 
-- [ ] **P2：阶段 E —— 下线 Ludic 视图层**
-  删除 `services/admin_web/views/` 的页面渲染与 `admin-ui.js`，`admin-web`
-  收敛为纯 JSON API + 登录页。删除前打 tag；对应的 Python 页面快照基线
-  同步删除。删除后回退方式是按 tag 重建镜像。
+- [x] **P2：阶段 E —— 下线 Ludic 视图层**
+  删除 `services/admin_web/views/` 的页面渲染与页面路由，`admin-web`
+  收敛为**纯 JSON API + 登录页 + 画布 island**。删除前打 tag；对应的
+  Python 页面快照基线同步删除。删除后回退方式是按 tag 重建镜像。
+
+  **已完成**：
+  - `views/` 从 17 个模块收缩到 **3 个**：`shell`（登录页与错误页的片段）、
+    `login`（登录页）、`workflow_editor`（画布 island 的片段页）；
+  - `routes/` 只剩 **管理面 JSON API + `auth`（登录/登出）+ `workflow_canvas`
+    （画布的三个端点）**；原来 20 个页面路由模块（`agents` / `llm` / `mcp` /
+    `skills` / `access*` / `oauth_providers` / `platform_admins` /
+    `preferences` / `undo` / `dashboard` / `audit` / `workflows` …）整体删除；
+  - 页面路由与 API 共用的判定（`may_bind_permissions`、`available_tenants`、
+    `mapping_counts` …）从页面模块搬到 `services/admin_web/access_api.py`，
+    偏好白名单搬到 `services/admin_web/preference_values.py`——**判定只有一份**；
+  - `admin-ui.js`（68 KB）**保留**：登录页还要用它做「账号密码登录」展开与
+    语言切换；它是登录页唯一的脚本，不是死代码；
+  - 页面快照基线从 34 份收缩到 5 份（登录页、错误页、画布片段页 × 空/非空
+    数据集），**路由表快照保留**——它现在是「admin-web 暴露了哪些端点」的守卫；
+  - 约 100 个只测旧页面的用例随页面一起删除；**行为没丢**：能迁到 API 的
+    改写成 API 用例（撤销权限按资源类型判定、Agent schema 清空、画布保存
+    落库与落点、实时校验的中文错误），新增 `tests/test_admin_workflow_canvas.py`
+    钉住画布协议；
+  - 回退 tag：`v4.10-pre-stage-e`（回退方式：按该 tag 重建镜像）。
+
+  **验证**：Python 全量 **1106 passed / 30 skipped**（删除前是 1296 —— 少的
+  是随旧页面一起退休的页面级用例）。
 
 - [ ] **P2：页面级 Playwright 覆盖补全**
   阶段 B/C 的每页一条用例目前是**手工浏览器实测**，还没有固化成 Playwright

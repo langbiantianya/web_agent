@@ -41,15 +41,25 @@ Casbin 策略，浏览器不是权限边界。
 services/admin_web/
   app.py          应用装配：创建 app、lifespan、中间件、静态挂载、注册路由
   common.py       跨业务域共用的请求处理辅助（21 个公开名）
-  routes/         12 个业务域的路由模块 + 8 个管理面 API 模块（31 个文件），每个暴露 register(app)
-  views/          17 个模块：13 个业务域页面 + shell / components / fields / 画布片段页
+  routes/         管理面 JSON API（18 个模块）+ auth + workflow_canvas（20 个文件），每个暴露 register(app)
+  views/          3 个模块：shell（片段）/ login（登录页）/ workflow_editor（画布片段页）
 ```
 
-`routes/` 的文件比业务域多两个：工作流域的写操作在 `workflows_write.py`、
-访问控制路由按职责拆分：`access.py` 管页面权限，`access_components.py` 管组件权限，
-`access_roles.py` / `access_roles_write.py` 管角色矩阵与写操作，
-`access_mappings.py` 管 OAuth 外部角色映射。拆分后单个文件仍遵守 350 行上限。
-权限目录、角色投影和继承环检测集中在 `access_policy.py`。
+**Ludic 视图层已下线（V4.10 阶段 E）**：业务页面全部由 SvelteKit 渲染，
+`admin-web` 收敛为**纯 JSON API + 登录页 + 画布 island**。页面路由
+（`agents` / `llm` / `mcp` / `skills` / `access*` / `oauth_providers` /
+`platform_admins` / `preferences` / `undo` / `dashboard` / `audit` /
+`workflows` …）整体删除，只留下：
+
+- `routes/auth.py`——登录、登出、OAuth 回调（会话与 CSRF 都在 Python 侧）；
+- `routes/workflow_canvas.py`——画布 island 的三个端点：片段页、实时校验、
+  保存（图定义的**唯一**写路径）；
+- `routes/api*.py`——管理面 JSON API。
+
+页面路由与 API 共用的判定（`may_bind_permissions`、`available_tenants`、
+`mapping_counts` …）搬到了 `services/admin_web/access_api.py`，偏好白名单搬到
+`services/admin_web/preference_values.py`——**判定只有一份**。
+单个文件仍遵守 350 行上限。
 
 `routes/api.py` 是**给 SvelteKit 前端用的管理面 JSON API**（V4.10）：
 `GET /admin/api/session` 返回身份、界面偏好、可见页面与 CSRF 令牌，
@@ -80,9 +90,13 @@ services/admin_web/
 
 **画布的 island 片段页**：`GET /admin/workflows/{code}/canvas` 返回的是
 **不带外壳**的画布片段（画布 DOM + `workflow-editor.css` + 两份画布脚本 +
-`admin.css`），供 SvelteKit 阶段 D 用 `<iframe>` 承载。整页版本
-`/admin/workflows/{code}` 保留着——它是**回退路径**：SvelteKit 容器关掉后
-管理端照样能用。画布的校验与保存请求仍然同源，经网关转发到本服务。
+`admin.css`），供 SvelteKit 用 `<iframe>` 承载。整页版本
+`/admin/workflows/{code}` 随视图层一起退休。画布的校验与保存请求仍然同源，
+经网关转发到本服务。
+
+**`admin-ui.js` 为什么还在**：68 KB 的旧前端脚本里，登录页还要用它的
+「账号密码登录」展开与语言切换。它是**登录页唯一的脚本**，不是死代码；
+其余绑定（导航、行内编辑、LLM 探针、MCP 传输方式…）都已随页面退休。
 
 **删除是硬删除，但可以撤销。** Agent、LLM 端点、MCP 服务器、工作流与平台
 超级管理员在删除前会留快照，删除响应带回 `undoId`；`POST /admin/api/undo/
@@ -96,7 +110,8 @@ Agent 编辑权。
 
 **回归保护有两层：**
 
-- `tests/snapshots/admin/` 下的元素树快照（17 个空数据集页面 + 16 个非空数据集
+- `tests/snapshots/admin/` 下的元素树快照（登录页、错误页与画布片段页，
+  空/非空两套数据集）
   页面）锁住页面渲染，比的是 `html_name` + `aliased_attrs` + children + 文本 +
   class 值——**children 顺序变了也算差异**；
 - `tests/test_admin_structure.py` 锁住结构契约：模块清单、`views` 的导出面、

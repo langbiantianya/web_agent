@@ -23,11 +23,11 @@ from services.admin_web.api_support import (
 )
 from services.admin_web.audit import audit_principal_action
 from services.admin_web.rbac import casbin_service
-from services.admin_web.routes.access_mappings import (
-    _available_role_codes,
-    _mapping_provider,
-    _provider_visible,
-    _role_exists_for_tenant,
+from services.admin_web.access_api import (
+    available_role_codes,
+    mapping_provider,
+    provider_visible,
+    role_exists_for_tenant,
 )
 
 PAGE_CODE = "access_mappings"
@@ -93,7 +93,7 @@ def register(app: Any) -> None:
                         }
                         for provider in providers
                     ],
-                    "roleCodes": await _available_role_codes(db, principal),
+                    "roleCodes": await available_role_codes(db, principal),
                 }
             )
         finally:
@@ -117,7 +117,7 @@ def register(app: Any) -> None:
             provider = await db.get(OAuthProvider, provider_id)
             if (
                 provider is None
-                or not _provider_visible(principal, provider)
+                or not provider_visible(principal, provider)
                 or provider.admin_login_enabled != 1
             ):
                 raise ApiError("not_found", "供应商不存在", status_code=404)
@@ -128,7 +128,7 @@ def register(app: Any) -> None:
                 raise ApiError(
                     "invalid_input", "外部值与目标角色不能为空", status_code=400
                 )
-            if not await _role_exists_for_tenant(db, role_code, provider.tenant_id):
+            if not await role_exists_for_tenant(db, role_code, provider.tenant_id):
                 raise ApiError(
                     "invalid_input", "目标角色在该租户下不存在", status_code=400
                 )
@@ -173,11 +173,11 @@ def register(app: Any) -> None:
             mapping = await db.get(OAuthRoleMapping, mapping_id)
             if mapping is None:
                 raise ApiError("not_found", "映射不存在", status_code=404)
-            provider = await _mapping_provider(db, principal, mapping)
+            provider = await mapping_provider(db, principal, mapping)
             if provider is None:
                 raise ApiError("not_found", "映射不存在", status_code=404)
             role_code = str(body.get("roleCode") or "").strip()
-            if not await _role_exists_for_tenant(db, role_code, provider.tenant_id):
+            if not await role_exists_for_tenant(db, role_code, provider.tenant_id):
                 raise ApiError(
                     "invalid_input", "目标角色在该租户下不存在", status_code=400
                 )
@@ -219,7 +219,7 @@ def register(app: Any) -> None:
             mapping = await db.get(OAuthRoleMapping, mapping_id)
             if mapping is None:
                 raise ApiError("not_found", "映射不存在", status_code=404)
-            provider = await _mapping_provider(db, principal, mapping)
+            provider = await mapping_provider(db, principal, mapping)
             if provider is None:
                 raise ApiError("not_found", "映射不存在", status_code=404)
             await audit_principal_action(

@@ -20,7 +20,7 @@ from services.admin_web.api_support import (
 )
 from services.admin_web.audit import audit_principal_action
 from services.admin_web.common import preference_of
-from services.admin_web.routes.preferences import (
+from services.admin_web.preference_values import (
     ALLOWED_COLOR_MODES,
     ALLOWED_DENSITIES,
     ALLOWED_THEMES,

@@ -54,30 +54,6 @@
       "GET",
       "HEAD"
     ],
-    "name": "dashboard_get",
-    "path": "/admin/"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "workflows_get",
-    "path": "/admin/workflows"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "workflow_editor_get",
-    "path": "/admin/workflows/{code}"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
     "name": "workflow_canvas_get",
     "path": "/admin/workflows/{code}/canvas"
   },
@@ -92,377 +68,8 @@
     "methods": [
       "POST"
     ],
-    "name": "workflows_post",
-    "path": "/admin/workflows"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
     "name": "workflows_update",
     "path": "/admin/workflows/{code}/update"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "workflows_toggle",
-    "path": "/admin/workflows/{code}/toggle"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "workflows_delete",
-    "path": "/admin/workflows/{code}/delete"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "agents_get",
-    "path": "/admin/agents"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "agents_post",
-    "path": "/admin/agents"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "agents_update",
-    "path": "/admin/agents/{code}/update"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "agents_toggle",
-    "path": "/admin/agents/{code}/toggle"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "agents_delete",
-    "path": "/admin/agents/{code}/delete"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "skills_get",
-    "path": "/admin/skills"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "skills_post",
-    "path": "/admin/skills"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "skills_update",
-    "path": "/admin/skills/{code}/update"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "skills_archive",
-    "path": "/admin/skills/{code}/archive"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "mcp_get",
-    "path": "/admin/mcp"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "mcp_post",
-    "path": "/admin/mcp"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "mcp_update",
-    "path": "/admin/mcp/{code}/update"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "mcp_toggle",
-    "path": "/admin/mcp/{code}/toggle"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "mcp_delete",
-    "path": "/admin/mcp/{code}/delete"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "mcp_refresh",
-    "path": "/admin/mcp/{code}/refresh"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "llm_get",
-    "path": "/admin/llm"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "llm_post",
-    "path": "/admin/llm"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "llm_update",
-    "path": "/admin/llm/{code}/update"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "llm_probe",
-    "path": "/admin/llm/probe"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "llm_toggle",
-    "path": "/admin/llm/{code}/toggle"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "llm_delete",
-    "path": "/admin/llm/{code}/delete"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "audit_get",
-    "path": "/admin/audit"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "oauth_providers_get",
-    "path": "/admin/oauth-providers"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "oauth_providers_post",
-    "path": "/admin/oauth-providers"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "oauth_providers_update",
-    "path": "/admin/oauth-providers/{code}/update"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "oauth_providers_toggle",
-    "path": "/admin/oauth-providers/{code}/toggle"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "oauth_providers_delete",
-    "path": "/admin/oauth-providers/{code}/delete"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "access_pages_get",
-    "path": "/admin/access/pages"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "access_page_permissions_post",
-    "path": "/admin/access/pages/{page_code}/permissions"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "access_components_get",
-    "path": "/admin/access/components"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "access_component_permissions_post",
-    "path": "/admin/access/components/{page_code}/{component_code}/permissions"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "access_roles_get",
-    "path": "/admin/access/roles"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "access_roles_create",
-    "path": "/admin/access/roles"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "access_role_permissions",
-    "path": "/admin/access/roles/{role_code}/permissions"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "access_role_inheritance",
-    "path": "/admin/access/roles/{role_code}/inheritance"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "access_role_delete",
-    "path": "/admin/access/roles/{role_code}/delete"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "access_mappings_get",
-    "path": "/admin/access/mappings"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "access_mappings_create",
-    "path": "/admin/access/mappings"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "access_mappings_update",
-    "path": "/admin/access/mappings/{mapping_id}/update"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "access_mappings_delete",
-    "path": "/admin/access/mappings/{mapping_id}/delete"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "platform_admins_get",
-    "path": "/admin/platform-admins"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "platform_admins_post",
-    "path": "/admin/platform-admins"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "platform_admins_delete",
-    "path": "/admin/platform-admins/{account_id}/delete"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "forgot_password",
-    "path": "/admin/super-admin/forgot-password"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "reset_my_password",
-    "path": "/admin/super-admin/reset-my-password"
-  },
-  {
-    "methods": [
-      "GET",
-      "HEAD"
-    ],
-    "name": "preferences_get",
-    "path": "/admin/preferences"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "preferences_post",
-    "path": "/admin/preferences"
-  },
-  {
-    "methods": [
-      "POST"
-    ],
-    "name": "undo",
-    "path": "/admin/undo/{entry_id}"
   },
   {
     "methods": [
@@ -809,6 +416,34 @@
     ],
     "name": "api_access_roles_list",
     "path": "/admin/api/access/roles"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_access_roles_create",
+    "path": "/admin/api/access/roles"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_access_roles_update",
+    "path": "/admin/api/access/roles/{role_code}"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_access_roles_inheritance",
+    "path": "/admin/api/access/roles/{role_code}/inheritance"
+  },
+  {
+    "methods": [
+      "DELETE"
+    ],
+    "name": "api_access_roles_delete",
+    "path": "/admin/api/access/roles/{role_code}"
   },
   {
     "methods": [

@@ -32,10 +32,10 @@ from services.admin_web.api_support import (
 )
 from services.admin_web.audit import audit_principal_action
 from services.admin_web.registry import page_spec
-from services.admin_web.routes.access import (
-    _available_tenants,
-    _bindable_permissions,
-    _may_bind_permissions,
+from services.admin_web.access_api import (
+    available_tenants,
+    bindable_permissions,
+    may_bind_permissions,
 )
 
 PAGE_CODE = "access_components"
@@ -133,7 +133,7 @@ def register(app: Any) -> None:
                         grouped[key] = tenant_scopes
             page_rows = list(await db.scalars(sa.select(AdminPageDefinition)))
             page_titles = {row.code: row.title for row in page_rows}
-            bindable = await _bindable_permissions(db, principal)
+            bindable = await bindable_permissions(db, principal)
             items = [
                 _component_payload(
                     definition,
@@ -146,7 +146,7 @@ def register(app: Any) -> None:
                 {
                     "items": items,
                     "permissionOptions": permission_catalog(bindable),
-                    "tenantOptions": await _available_tenants(db, principal, rows),
+                    "tenantOptions": await available_tenants(db, principal, rows),
                 }
             )
         finally:
@@ -212,7 +212,7 @@ def register(app: Any) -> None:
                 raise ApiError(
                     "invalid_input", "租户级绑定不能为空", status_code=400
                 )
-            if not await _may_bind_permissions(db, principal, permissions):
+            if not await may_bind_permissions(db, principal, permissions):
                 raise ApiError(
                     "forbidden", "不能绑定超出自身范围的权限", status_code=403
                 )

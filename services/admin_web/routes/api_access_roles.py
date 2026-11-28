@@ -25,7 +25,7 @@ from services.admin_web.api_support import (
 )
 from services.admin_web.listing import parse_list_params
 from services.admin_web.rbac import casbin_service
-from services.admin_web.routes.access_roles import _mapping_counts
+from services.admin_web.access_api import mapping_counts
 from services.admin_web.routes import api_access_roles_write
 
 PAGE_CODE = "access_roles"
@@ -53,7 +53,7 @@ def register(app: Any) -> None:
                 ),
             )
             summaries = role_summary_rows(
-                rules, mapping_counts=await _mapping_counts(db, principal)
+                rules, mapping_counts=await mapping_counts(db, principal)
             )
             params = parse_list_params(
                 request, allowed_sorts=("code", "domain")

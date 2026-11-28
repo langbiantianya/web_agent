@@ -45,13 +45,15 @@ docker compose -f deploy/docker-compose.admin.yml up -d --build
 | 容器 | 职责 | 对外 |
 | --- | --- | --- |
 | `admin-ui` | SvelteKit 前端，接管 `/admin/*`：已迁的页面自己渲染，仍属 Python 的路径与**尚未迁完**的页面转发回 `admin-web` | `127.0.0.1:8001`（compose 网络内 `3000`） |
-| `admin-web` | Python/Ludic 管理端：鉴权、Casbin 判定、审计、还没迁走的页面 | 只在 compose 网络内可达，另留 `127.0.0.1:8011` 回环口供排查 |
+| `admin-web` | Python 管理端：鉴权、Casbin 判定、审计、管理面 JSON API、登录页、画布 island | 只在 compose 网络内可达，另留 `127.0.0.1:8011` 回环口供排查 |
 
 **对外端口归 `admin-ui`**：浏览器地址与反代规则都不用改。反向代理把
 `/admin/*` 指向 `8001` 即可——`admin-ui` 会按归属表自己转发。
 
-**回退**：把反代指回 `admin-web`（`8011`），或直接停掉 `admin-ui` 容器改回
-原来的端口映射即可。鉴权与授权始终在 Python 侧，回退不需要迁任何数据。
+**回退**：Ludic 视图层下线后（V4.10 阶段 E），`admin-web` **不再渲染业务
+页面**，所以「把反代指回 `admin-web`」不再是可用的回退路径。回退方式改为
+**按 tag 重建镜像**（`v4.10-pre-stage-e` 是阶段 E 之前的基线）。鉴权与授权
+始终在 Python 侧，回退不需要迁任何数据。
 
 容器默认限制为 768 MiB（admin-web）/ 512 MiB（admin-ui）、1 CPU、256 PIDs。
 上线前需要：

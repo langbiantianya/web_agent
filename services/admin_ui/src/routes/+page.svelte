@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { pythonPath } from '#lib/paths';
+	import { appPath } from '#lib/paths';
 	import MetricCard from '../lib/components/MetricCard.svelte';
 	import { t, type Locale } from '#lib/i18n';
 	import type { PageProps } from './$types';
@@ -30,13 +30,13 @@
 		<section class="rounded-card bg-surface p-5 shadow-sm">
 			<h2 class="mb-3 text-lg font-medium">{t(locale, 'dashboard.quickActions')}</h2>
 			<div class="flex flex-wrap gap-3">
-				<a class="rounded-card border border-line px-3 py-2 text-sm" href={pythonPath('/access/pages')}>
+				<a class="rounded-card border border-line px-3 py-2 text-sm" href={appPath('/access/pages')}>
 					{t(locale, 'dashboard.editPagePermissions')}
 				</a>
-				<a class="rounded-card border border-line px-3 py-2 text-sm" href={pythonPath('/access/components')}>
+				<a class="rounded-card border border-line px-3 py-2 text-sm" href={appPath('/access/components')}>
 					{t(locale, 'dashboard.editComponentPermissions')}
 				</a>
-				<a class="rounded-card border border-line px-3 py-2 text-sm" href={pythonPath('/access/roles')}>
+				<a class="rounded-card border border-line px-3 py-2 text-sm" href={appPath('/access/roles')}>
 					{t(locale, 'dashboard.reviewCasbinRoles')}
 				</a>
 			</div>

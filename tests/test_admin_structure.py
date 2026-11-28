@@ -16,38 +16,34 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 ADMIN = ROOT / "services" / "admin_web"
 
+#: Ludic 视图层下线后（V4.10 阶段 E），Python 侧只剩三样渲染物：
+#: 后台片段（``shell``）、登录页（``login``）与画布 island（``workflow_editor``）。
 VIEW_MODULES = (
     "shell",
-    "components",
-    "fields",
     "login",
-    "dashboard",
-    "workflows",
-    "agents",
-    "skills",
-    "mcp",
-    "llm",
-    "audit",
-    "oauth_providers",
-    "access",
-    "roles",
-    "platform_admins",
-    "preferences",
+    "workflow_editor",
 )
 
+#: 路由模块：管理面 JSON API + 登录/登出 + 画布 island 的三个端点。
 ROUTE_MODULES = (
     "auth",
-    "dashboard",
-    "workflows",
-    "agents",
-    "skills",
-    "mcp",
-    "llm",
-    "audit",
-    "oauth_providers",
-    "access",
-    "platform_admins",
-    "preferences",
+    "workflow_canvas",
+    "api",
+    "api_agents",
+    "api_llm",
+    "api_skills",
+    "api_mcp",
+    "api_workflows",
+    "api_oauth_providers",
+    "api_access",
+    "api_access_components",
+    "api_access_roles",
+    "api_access_roles_write",
+    "api_access_mappings",
+    "api_platform_admins",
+    "api_preferences",
+    "api_audit",
+    "api_undo",
 )
 
 # 单文件行数上限。设计文档的目标是「任何单文件不超过 350 行」。
@@ -83,23 +79,8 @@ def test_views_package_still_exports_every_page() -> None:
 
     for name in (
         "login_page",
-        "dashboard",
-        "workflows_page",
         "workflow_editor_page",
-        "agents_page",
-        "skills_page",
-        "mcp_page",
-        "llm_page",
-        "audit_page",
-        "access_pages_page",
-        "access_components_page",
-        "roles_page",
-        "mappings_page",
-        "oauth_providers_page",
-        "platform_admins_page",
-        "preferences_page",
         "error_page",
-        "shell",
     ):
         assert callable(getattr(views, name, None)), name
 
