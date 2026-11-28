@@ -189,6 +189,17 @@ Casbin 判定、审计、Argon2 口令全部留在 Python 侧。
   阶段 B/C 的每页一条用例目前是**手工浏览器实测**，还没有固化成 Playwright
   用例。长尾的表单项（LLM 端点探测、OAuth provider、审计筛选）需要单独的
   用例。
+
+- [ ] **P2：管理面 API 的错误文案要改成「机器码 + 前端词典」**
+  Python 侧的校验失败目前直接返回**中文文案**（如「初始 Agent 不存在或已停用」
+  「存在未知权限」），SvelteKit 前端原样显示。结果是默认英文界面里中英
+  混排，切换语言对错误提示无效。同一段文案还在页面顶部横幅和字段下方**重复
+  出现两次**。
+  修法：`ApiError` 返回稳定的错误码（如 `agent_not_enabled`、
+  `unknown_permission`）与字段级码（`field_errors: {agentCode: "agent_not_enabled"}`），
+  文案交给前端词典按当前语言渲染；确实无法枚举的兜底文案再留在服务端，但要走
+  `detail` 字段而不是 `message`，避免和机器码混用。**这条只影响文案，不动鉴权判定。**
+
 ## 隔离执行与成本
 
 - [ ] **P2：预启动 sandbox 容器池**
