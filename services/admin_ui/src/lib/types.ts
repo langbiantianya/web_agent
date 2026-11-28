@@ -227,6 +227,40 @@ export interface AdminWorkflowDetail extends AdminWorkflow {
 	definition: Record<string, unknown>;
 }
 
+/**
+ * 一个 OAuth / OIDC 供应商。
+ *
+ * **密钥只写不回显**：这里只有 `hasClientSecret` 一个布尔值，明文密钥
+ * 永远不下发给浏览器。
+ */
+export interface AdminOAuthProvider {
+	code: string;
+	displayName: string;
+	issuer: string;
+	discoveryUrl: string;
+	authorizationEndpoint: string;
+	tokenEndpoint: string;
+	jwksUri: string;
+	clientId: string;
+	hasClientSecret: boolean;
+	tokenAuthMethod: string;
+	scopes: string[];
+	usernameClaim: string;
+	roleClaim: string;
+	roleClaimRequired: boolean;
+	roleSyncMaxAgeSeconds: number;
+	autoCreate: boolean;
+	clientLoginEnabled: boolean;
+	adminLoginEnabled: boolean;
+	enabled: boolean;
+}
+
+/** 供应商列表响应。 */
+export interface OAuthProviderListPayload {
+	items: AdminOAuthProvider[];
+	total: number;
+}
+
 /** 工作流列表响应。 */
 export interface WorkflowListPayload {
 	items: AdminWorkflow[];

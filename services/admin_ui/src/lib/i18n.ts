@@ -151,6 +151,37 @@ export type MessageKey =
 	| 'mcp.sort.code'
 	| 'mcp.sort.created'
 	| 'common.back'
+	| 'oauth.title'
+	| 'oauth.description'
+	| 'oauth.column.issuer'
+	| 'oauth.column.loginScopes'
+	| 'oauth.column.roleSync'
+	| 'oauth.column.state'
+	| 'oauth.field.code'
+	| 'oauth.field.displayName'
+	| 'oauth.field.issuer'
+	| 'oauth.field.clientId'
+	| 'oauth.field.clientSecret'
+	| 'oauth.field.discoveryUrl'
+	| 'oauth.field.authorizationEndpoint'
+	| 'oauth.field.tokenEndpoint'
+	| 'oauth.field.jwksUri'
+	| 'oauth.field.tokenAuthMethod'
+	| 'oauth.field.scopes'
+	| 'oauth.field.usernameClaim'
+	| 'oauth.field.roleClaim'
+	| 'oauth.field.roleSyncMaxAge'
+	| 'oauth.field.clientLogin'
+	| 'oauth.field.adminLogin'
+	| 'oauth.field.roleClaimRequired'
+	| 'oauth.field.autoCreate'
+	| 'oauth.field.enabled'
+	| 'oauth.secret.configured'
+	| 'oauth.secret.missing'
+	| 'oauth.secret.hint'
+	| 'oauth.secret.clear'
+	| 'oauth.tokenAuth.basic'
+	| 'oauth.tokenAuth.post'
 	| 'workflows.title'
 	| 'workflows.canvas.title'
 	| 'workflows.description'
@@ -357,6 +388,37 @@ const EN: Record<MessageKey, string> = {
 	'common.back': 'Back',
 	'workflows.title': 'Workflows',
 	'workflows.canvas.title': 'Workflow canvas',
+	'oauth.title': 'OAuth providers',
+	'oauth.description': 'Configure each OIDC provider once, then decide who may sign in with it. Client secrets are write-only.',
+	'oauth.column.issuer': 'Issuer',
+	'oauth.column.loginScopes': 'Login scopes',
+	'oauth.column.roleSync': 'Role sync',
+	'oauth.column.state': 'State',
+	'oauth.field.code': 'Provider code',
+	'oauth.field.displayName': 'Display name',
+	'oauth.field.issuer': 'Issuer',
+	'oauth.field.clientId': 'Client ID',
+	'oauth.field.clientSecret': 'Client secret',
+	'oauth.field.discoveryUrl': 'Discovery URL',
+	'oauth.field.authorizationEndpoint': 'Authorization endpoint',
+	'oauth.field.tokenEndpoint': 'Token endpoint',
+	'oauth.field.jwksUri': 'JWKS URI',
+	'oauth.field.tokenAuthMethod': 'Token auth method',
+	'oauth.field.scopes': 'Scopes',
+	'oauth.field.usernameClaim': 'Username claim',
+	'oauth.field.roleClaim': 'Role claim',
+	'oauth.field.roleSyncMaxAge': 'Role sync max age (seconds)',
+	'oauth.field.clientLogin': 'Client login',
+	'oauth.field.adminLogin': 'Admin login',
+	'oauth.field.roleClaimRequired': 'Role claim required',
+	'oauth.field.autoCreate': 'Auto create client users',
+	'oauth.field.enabled': 'Provider enabled',
+	'oauth.secret.configured': 'Secret configured',
+	'oauth.secret.missing': 'No client secret',
+	'oauth.secret.hint': 'Write-only: leave blank to keep the current secret.',
+	'oauth.secret.clear': 'Clear the stored secret',
+	'oauth.tokenAuth.basic': 'Client secret basic',
+	'oauth.tokenAuth.post': 'Client secret post',
 	'workflows.description': 'Workflow graphs are edited on the canvas; this page manages their metadata.',
 	'workflows.column.nodes': 'Nodes',
 	'workflows.field.code': 'Code',
@@ -604,6 +666,37 @@ const ZH_CN: Record<MessageKey, string> = {
 	'common.back': '返回',
 	'workflows.title': '工作流',
 	'workflows.canvas.title': '工作流画布',
+	'oauth.title': 'OAuth 身份提供方',
+	'oauth.description': '每个 OIDC 提供方只配一次，再决定谁能用它登录。客户端密钥只写不回显。',
+	'oauth.column.issuer': 'Issuer',
+	'oauth.column.loginScopes': '登录范围',
+	'oauth.column.roleSync': '角色同步',
+	'oauth.column.state': '状态',
+	'oauth.field.code': '提供方编码',
+	'oauth.field.displayName': '显示名称',
+	'oauth.field.issuer': 'Issuer',
+	'oauth.field.clientId': '客户端 ID',
+	'oauth.field.clientSecret': '客户端密钥',
+	'oauth.field.discoveryUrl': '发现地址',
+	'oauth.field.authorizationEndpoint': '授权端点',
+	'oauth.field.tokenEndpoint': '令牌端点',
+	'oauth.field.jwksUri': 'JWKS 地址',
+	'oauth.field.tokenAuthMethod': '令牌认证方式',
+	'oauth.field.scopes': '授权范围',
+	'oauth.field.usernameClaim': '用户名声明字段',
+	'oauth.field.roleClaim': '角色声明字段',
+	'oauth.field.roleSyncMaxAge': '角色同步最长间隔（秒）',
+	'oauth.field.clientLogin': '允许客户端登录',
+	'oauth.field.adminLogin': '允许管理员登录',
+	'oauth.field.roleClaimRequired': '必须带角色声明',
+	'oauth.field.autoCreate': '自动创建客户端用户',
+	'oauth.field.enabled': '启用该提供方',
+	'oauth.secret.configured': '密钥已配置',
+	'oauth.secret.missing': '未配置密钥',
+	'oauth.secret.hint': '只写字段：留空表示保持当前密钥。',
+	'oauth.secret.clear': '清除已保存的密钥',
+	'oauth.tokenAuth.basic': '客户端密钥（basic）',
+	'oauth.tokenAuth.post': '客户端密钥（post）',
 	'workflows.description': '工作流图在画布上编排；这一页只管理它的元信息。',
 	'workflows.column.nodes': '节点数',
 	'workflows.field.code': '编码',

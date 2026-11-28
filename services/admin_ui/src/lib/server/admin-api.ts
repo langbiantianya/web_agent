@@ -20,6 +20,7 @@ import type {
 	AdminAgent,
 	AdminSession,
 	AdminSkill,
+	AdminOAuthProvider,
 	AdminWorkflow,
 	AdminWorkflowDetail,
 	AgentInput,
@@ -31,6 +32,7 @@ import type {
 	LlmInput,
 	LlmListPayload,
 	MappingItem,
+	OAuthProviderListPayload,
 	MappingListPayload,
 	McpInput,
 	McpListPayload,
@@ -506,6 +508,89 @@ export async function loadWorkflows(
 	return await adminFetch<WorkflowListPayload>(`/admin/api/workflows${listQuery(query)}`, {
 		cookie
 	});
+}
+
+/**
+ * 列出 OAuth 供应商。
+ */
+export async function loadOAuthProviders(
+	cookie: string
+): Promise<OAuthProviderListPayload> {
+	return await adminFetch<OAuthProviderListPayload>('/admin/api/oauth-providers', {
+		cookie
+	});
+}
+
+/** 新建一个 OAuth 供应商。 */
+export async function createOAuthProvider(
+	cookie: string,
+	csrfToken: string,
+	input: Record<string, unknown>
+): Promise<AdminOAuthProvider> {
+	const result = await adminFetch<{ item: AdminOAuthProvider }>(
+		'/admin/api/oauth-providers',
+		{
+			method: 'POST',
+			cookie,
+			csrfToken,
+			body: JSON.stringify(input)
+		}
+	);
+	return result.item;
+}
+
+/**
+ * 局部更新一个 OAuth 供应商。
+ *
+ * `clientSecret` 不传表示保持原值，传空串表示清除。
+ */
+export async function updateOAuthProvider(
+	cookie: string,
+	csrfToken: string,
+	code: string,
+	input: Record<string, unknown>
+): Promise<AdminOAuthProvider> {
+	const result = await adminFetch<{ item: AdminOAuthProvider }>(
+		`/admin/api/oauth-providers/${encodeURIComponent(code)}`,
+		{
+			method: 'PUT',
+			cookie,
+			csrfToken,
+			body: JSON.stringify(input)
+		}
+	);
+	return result.item;
+}
+
+/** 切换供应商的总开关。 */
+export async function toggleOAuthProvider(
+	cookie: string,
+	csrfToken: string,
+	code: string,
+	enabled: boolean
+): Promise<AdminOAuthProvider> {
+	const result = await adminFetch<{ item: AdminOAuthProvider }>(
+		`/admin/api/oauth-providers/${encodeURIComponent(code)}/toggle`,
+		{
+			method: 'POST',
+			cookie,
+			csrfToken,
+			body: JSON.stringify({ enabled })
+		}
+	);
+	return result.item;
+}
+
+/** 删除一个供应商。 */
+export async function deleteOAuthProvider(
+	cookie: string,
+	csrfToken: string,
+	code: string
+): Promise<void> {
+	await adminFetch<{ ok: boolean }>(
+		`/admin/api/oauth-providers/${encodeURIComponent(code)}`,
+		{ method: 'DELETE', cookie, csrfToken }
+	);
 }
 
 /**

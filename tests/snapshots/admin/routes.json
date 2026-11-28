@@ -713,6 +713,42 @@
       "GET",
       "HEAD"
     ],
+    "name": "api_oauth_providers_list",
+    "path": "/admin/api/oauth-providers"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_oauth_providers_create",
+    "path": "/admin/api/oauth-providers"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_oauth_providers_update",
+    "path": "/admin/api/oauth-providers/{code}"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_oauth_providers_toggle",
+    "path": "/admin/api/oauth-providers/{code}/toggle"
+  },
+  {
+    "methods": [
+      "DELETE"
+    ],
+    "name": "api_oauth_providers_delete",
+    "path": "/admin/api/oauth-providers/{code}"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
     "name": "api_access_pages_list",
     "path": "/admin/api/access/pages"
   },
