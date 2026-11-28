@@ -136,3 +136,100 @@ export interface LlmInput {
 	priority: number;
 	enabled: boolean;
 }
+/** 技能。 */
+export interface AdminSkill {
+	code: string;
+	name: string;
+	description: string;
+	allowedTools: string[];
+	body: string;
+	status: 'published' | 'draft';
+	enabled: boolean;
+	origin: string;
+	version: number;
+	contentHash: string;
+	usedBy: string[];
+	createdAt: string | null;
+	updatedAt: string | null;
+}
+
+/** 技能列表响应。 */
+export interface SkillListPayload {
+	items: AdminSkill[];
+	total: number;
+	page: ListPage;
+}
+
+/** 写入技能时提交的字段。 */
+export interface SkillInput {
+	code?: string;
+	description: string;
+	allowedTools: string[];
+	body: string;
+	status: 'published' | 'draft';
+	enabled: boolean;
+}
+
+/** MCP 服务器。 */
+export interface McpServer {
+	code: string;
+	name: string;
+	transport: 'stdio' | 'http';
+	command: string;
+	url: string;
+	envKeys: string[];
+	headerKeys: string[];
+	timeoutSec: number;
+	enabled: boolean;
+	toolCount: number;
+	usedBy: string[];
+	createdAt: string | null;
+	updatedAt: string | null;
+}
+
+/** MCP 服务器列表响应。 */
+export interface McpListPayload {
+	items: McpServer[];
+	total: number;
+	page: ListPage;
+}
+
+/** 写入 MCP 服务器时提交的字段。 */
+export interface McpInput {
+	code?: string;
+	name: string;
+	transport: 'stdio' | 'http';
+	url: string;
+	command: string;
+	timeoutSec: number;
+	enabled: boolean;
+}
+
+/** 工作流。 */
+export interface AdminWorkflow {
+	code: string;
+	name: string;
+	description: string;
+	enabled: boolean;
+	version: number;
+	nodeCount: number;
+	createdAt: string | null;
+	updatedAt: string | null;
+}
+
+/** 工作流列表响应。 */
+export interface WorkflowListPayload {
+	items: AdminWorkflow[];
+	total: number;
+	page: ListPage;
+	options: { agents: { code: string; name: string }[] };
+}
+
+/** 写入工作流时提交的字段。 */
+export interface WorkflowInput {
+	code?: string;
+	name: string;
+	description: string;
+	agentCode: string;
+	enabled: boolean;
+}

@@ -15,12 +15,21 @@
 import type {
 	AdminAgent,
 	AdminSession,
+	AdminSkill,
+	AdminWorkflow,
 	AgentInput,
 	AgentListPayload,
 	DashboardPayload,
 	LlmEndpoint,
 	LlmInput,
-	LlmListPayload
+	LlmListPayload,
+	McpInput,
+	McpListPayload,
+	McpServer,
+	SkillInput,
+	SkillListPayload,
+	WorkflowInput,
+	WorkflowListPayload
 } from '#lib/types';
 import { adminApiBaseUrl } from '#lib/server/config';
 
@@ -256,6 +265,235 @@ export async function deleteLlmEndpoint(
 	code: string
 ): Promise<void> {
 	await adminFetch<{ ok: boolean }>(`/admin/api/llm/${encodeURIComponent(code)}`, {
+		method: 'DELETE',
+		cookie,
+		csrfToken
+	});
+}
+/** 把查询参数拼成列表接口的查询串。 */
+function listQuery(
+	query: { q?: string; sort?: string; page?: number; size?: number } = {}
+): string {
+	const params = new URLSearchParams();
+	if (query.q) params.set('q', query.q);
+	if (query.sort) params.set('sort', query.sort);
+	if (query.page) params.set('page', String(query.page));
+	if (query.size) params.set('size', String(query.size));
+	return params.toString() ? `?${params.toString()}` : '';
+}
+
+/** 读取技能列表。 */
+export async function loadSkills(
+	cookie: string,
+	query: { q?: string; sort?: string; page?: number; size?: number } = {}
+): Promise<SkillListPayload> {
+	return await adminFetch<SkillListPayload>(`/admin/api/skills${listQuery(query)}`, { cookie });
+}
+
+/** 创建技能。 */
+export async function createSkill(
+	cookie: string,
+	csrfToken: string,
+	input: SkillInput
+): Promise<AdminSkill> {
+	const result = await adminFetch<{ item: AdminSkill }>('/admin/api/skills', {
+		method: 'POST',
+		cookie,
+		csrfToken,
+		body: JSON.stringify(input)
+	});
+	return result.item;
+}
+
+/** 更新技能。 */
+export async function updateSkill(
+	cookie: string,
+	csrfToken: string,
+	code: string,
+	input: SkillInput
+): Promise<AdminSkill> {
+	const result = await adminFetch<{ item: AdminSkill }>(
+		`/admin/api/skills/${encodeURIComponent(code)}`,
+		{
+			method: 'PUT',
+			cookie,
+			csrfToken,
+			body: JSON.stringify(input)
+		}
+	);
+	return result.item;
+}
+
+/** 归档技能。 */
+export async function archiveSkill(
+	cookie: string,
+	csrfToken: string,
+	code: string
+): Promise<void> {
+	await adminFetch<{ ok: boolean }>(`/admin/api/skills/${encodeURIComponent(code)}/archive`, {
+		method: 'POST',
+		cookie,
+		csrfToken
+	});
+}
+
+/** 读取 MCP 服务器列表。 */
+export async function loadMcpServers(
+	cookie: string,
+	query: { q?: string; sort?: string; page?: number; size?: number } = {}
+): Promise<McpListPayload> {
+	return await adminFetch<McpListPayload>(`/admin/api/mcp${listQuery(query)}`, { cookie });
+}
+
+/** 注册 MCP 服务器。 */
+export async function createMcpServer(
+	cookie: string,
+	csrfToken: string,
+	input: McpInput
+): Promise<McpServer> {
+	const result = await adminFetch<{ item: McpServer }>('/admin/api/mcp', {
+		method: 'POST',
+		cookie,
+		csrfToken,
+		body: JSON.stringify(input)
+	});
+	return result.item;
+}
+
+/** 更新 MCP 服务器。 */
+export async function updateMcpServer(
+	cookie: string,
+	csrfToken: string,
+	code: string,
+	input: McpInput
+): Promise<McpServer> {
+	const result = await adminFetch<{ item: McpServer }>(
+		`/admin/api/mcp/${encodeURIComponent(code)}`,
+		{
+			method: 'PUT',
+			cookie,
+			csrfToken,
+			body: JSON.stringify(input)
+		}
+	);
+	return result.item;
+}
+
+/** 切换 MCP 服务器的启用状态。 */
+export async function toggleMcpServer(
+	cookie: string,
+	csrfToken: string,
+	code: string,
+	enabled: boolean
+): Promise<McpServer> {
+	const result = await adminFetch<{ item: McpServer }>(
+		`/admin/api/mcp/${encodeURIComponent(code)}/toggle`,
+		{
+			method: 'POST',
+			cookie,
+			csrfToken,
+			body: JSON.stringify({ enabled })
+		}
+	);
+	return result.item;
+}
+
+/** 刷新 MCP 工具目录。 */
+export async function refreshMcpCatalog(
+	cookie: string,
+	csrfToken: string,
+	code: string
+): Promise<string[]> {
+	const result = await adminFetch<{ ok: boolean; imported: string[] }>(
+		`/admin/api/mcp/${encodeURIComponent(code)}/refresh`,
+		{ method: 'POST', cookie, csrfToken }
+	);
+	return result.imported;
+}
+
+/** 删除 MCP 服务器。 */
+export async function deleteMcpServer(
+	cookie: string,
+	csrfToken: string,
+	code: string
+): Promise<void> {
+	await adminFetch<{ ok: boolean }>(`/admin/api/mcp/${encodeURIComponent(code)}`, {
+		method: 'DELETE',
+		cookie,
+		csrfToken
+	});
+}
+
+/** 读取工作流列表。 */
+export async function loadWorkflows(
+	cookie: string,
+	query: { q?: string; sort?: string; page?: number; size?: number } = {}
+): Promise<WorkflowListPayload> {
+	return await adminFetch<WorkflowListPayload>(`/admin/api/workflows${listQuery(query)}`, {
+		cookie
+	});
+}
+
+/** 新建工作流。 */
+export async function createWorkflow(
+	cookie: string,
+	csrfToken: string,
+	input: WorkflowInput
+): Promise<AdminWorkflow> {
+	const result = await adminFetch<{ item: AdminWorkflow }>('/admin/api/workflows', {
+		method: 'POST',
+		cookie,
+		csrfToken,
+		body: JSON.stringify(input)
+	});
+	return result.item;
+}
+
+/** 更新工作流元信息。 */
+export async function updateWorkflow(
+	cookie: string,
+	csrfToken: string,
+	code: string,
+	input: WorkflowInput
+): Promise<AdminWorkflow> {
+	const result = await adminFetch<{ item: AdminWorkflow }>(
+		`/admin/api/workflows/${encodeURIComponent(code)}`,
+		{
+			method: 'PUT',
+			cookie,
+			csrfToken,
+			body: JSON.stringify(input)
+		}
+	);
+	return result.item;
+}
+
+/** 切换工作流的启用状态。 */
+export async function toggleWorkflow(
+	cookie: string,
+	csrfToken: string,
+	code: string,
+	enabled: boolean
+): Promise<AdminWorkflow> {
+	const result = await adminFetch<{ item: AdminWorkflow }>(
+		`/admin/api/workflows/${encodeURIComponent(code)}/toggle`,
+		{
+			method: 'POST',
+			cookie,
+			csrfToken,
+			body: JSON.stringify({ enabled })
+		}
+	);
+	return result.item;
+}
+
+/** 删除工作流。 */
+export async function deleteWorkflow(
+	cookie: string,
+	csrfToken: string,
+	code: string
+): Promise<void> {
+	await adminFetch<{ ok: boolean }>(`/admin/api/workflows/${encodeURIComponent(code)}`, {
 		method: 'DELETE',
 		cookie,
 		csrfToken

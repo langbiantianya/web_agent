@@ -7,11 +7,11 @@
 
 截至 V4.10 设计，OAuth/OIDC 主链路、独立 admin-web 业务页、workflow 可视化编排器
 和 Agent JSON 输出契约已经落地，旧管理员 API Key 管理栈已退役；后台前端正在
-迁移到 SvelteKit：阶段 A（骨架 + 概览页）与端到端联调已完成，阶段 B 的智能体
-与 LLM 端点两页已迁，其余资源页仍走旧 Ludic 页面。尚未完成的 **P1** 共四项：
+迁移到 SvelteKit：阶段 A（骨架 + 概览页）、阶段 B（五个资源页）与端到端联调
+均已完成，访问控制页与画布 island 化仍待推进。尚未完成的 **P1** 共三项：
 真实 IdP 联调（含登录限频、过期 attempt 清理、provider 故障监控）、存量会话
-归属处理，以及 SvelteKit 迁移的阶段 B 剩余资源页与部署接线；其余 13 项均为
-P2，涵盖成本账本、容器预热、MCP 能力边界与构建依赖。
+归属处理，以及 SvelteKit 迁移的部署接线；其余 13 项均为 P2，涵盖成本账本、
+容器预热、MCP 能力边界与构建依赖。
 
 ## 后台前端迁移（SvelteKit）
 
@@ -20,7 +20,7 @@ P2，涵盖成本账本、容器预热、MCP 能力边界与构建依赖。
 反向代理直指 `admin-web` 即可）。鉴权与授权**不重写**：会话 Cookie、CSRF、
 Casbin 判定、审计、Argon2 口令全部留在 Python 侧。
 
-- [ ] **P1：阶段 B —— 资源页迁移（agents / llm 已迁，其余待迁）**
+- [x] **P1：阶段 B —— 资源页迁移（五页全部完成）**
   `agents` / `skills` / `mcp` / `llm` / `workflows` 五个列表页及其表单迁到
   SvelteKit。每页至少一条 Playwright 用例（读一条 + 写一条），失败信息要能
   指到具体组件，而不是只报「页面没渲染出来」。
@@ -34,7 +34,20 @@ Casbin 判定、审计、Argon2 口令全部留在 Python 侧。
     `GET/PUT/DELETE /admin/api/llm/{code}`、`POST .../toggle`；明文 Key
     不回显（只有 `hasApiKey`）；仍被 Agent 引用的连接不能停用、不能删除。
 
-  **待迁**：`skills`、`mcp`、`workflows`（画布本阶段不重写，见阶段 D）。
+  - `skills`（`/admin/skills`）：Python 侧 `GET/POST /admin/api/skills`、
+    `GET/PUT /admin/api/skills/{code}`、`POST .../archive`；更新会先写
+    **修订快照**（旧正文可回滚），正文变了要重算 `content_hash`；仍被智能体
+    引用时不能停用、不能归档。
+  - `mcp`（`/admin/mcp`）：Python 侧 `GET/POST /admin/api/mcp`、
+    `GET/PUT/DELETE /admin/api/mcp/{code}`、`POST .../toggle`、
+    `POST .../refresh`；**凭据字段只写不回显**（只回显 `envKeys` /
+    `headerKeys`）；stdio 不许带 URL、http 不许带命令；刷新工具目录用**另一个
+    组件权限** `mcp_refresh`。
+  - `workflows`（`/admin/workflows`）：Python 侧 `GET/POST
+    /admin/api/workflows`、`GET/PUT /admin/api/workflows/{code}`、
+    `POST .../toggle`、`DELETE .../{code}`。**图定义只有画布这一条写路径**——
+    PUT 只改名称与描述，传入的 `definition` 被忽略；画布仍由 Python 渲染，
+    通过「未匹配路由回退」接入（阶段 D 的落地方式）。
 
 - [ ] **P1：阶段 C —— 访问控制页迁移**
   `access/pages`、`access/components`、`access/roles`、`access/mappings`、

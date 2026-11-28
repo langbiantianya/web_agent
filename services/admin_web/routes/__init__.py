@@ -27,6 +27,9 @@ def register_all(app: Any) -> None:
         api,
         api_agents,
         api_llm,
+        api_skills,
+        api_mcp,
+        api_workflows,
         access_components,
         access_mappings,
         access_roles,
@@ -76,5 +79,8 @@ def register_all(app: Any) -> None:
         api,
         api_agents,
         api_llm,
+        api_skills,
+        api_mcp,
+        api_workflows,
     ):
         module.register(app)

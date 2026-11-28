@@ -559,5 +559,137 @@
     ],
     "name": "api_llm_delete",
     "path": "/admin/api/llm/{code}"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_skills_list",
+    "path": "/admin/api/skills"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_skills_get",
+    "path": "/admin/api/skills/{code}"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_skills_create",
+    "path": "/admin/api/skills"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_skills_update",
+    "path": "/admin/api/skills/{code}"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_skills_archive",
+    "path": "/admin/api/skills/{code}/archive"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_mcp_create",
+    "path": "/admin/api/mcp"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_mcp_update",
+    "path": "/admin/api/mcp/{code}"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_mcp_toggle",
+    "path": "/admin/api/mcp/{code}/toggle"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_mcp_refresh",
+    "path": "/admin/api/mcp/{code}/refresh"
+  },
+  {
+    "methods": [
+      "DELETE"
+    ],
+    "name": "api_mcp_delete",
+    "path": "/admin/api/mcp/{code}"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_mcp_list",
+    "path": "/admin/api/mcp"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_mcp_get",
+    "path": "/admin/api/mcp/{code}"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_workflows_list",
+    "path": "/admin/api/workflows"
+  },
+  {
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "api_workflows_get",
+    "path": "/admin/api/workflows/{code}"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_workflows_create",
+    "path": "/admin/api/workflows"
+  },
+  {
+    "methods": [
+      "PUT"
+    ],
+    "name": "api_workflows_update",
+    "path": "/admin/api/workflows/{code}"
+  },
+  {
+    "methods": [
+      "POST"
+    ],
+    "name": "api_workflows_toggle",
+    "path": "/admin/api/workflows/{code}/toggle"
+  },
+  {
+    "methods": [
+      "DELETE"
+    ],
+    "name": "api_workflows_delete",
+    "path": "/admin/api/workflows/{code}"
   }
 ]

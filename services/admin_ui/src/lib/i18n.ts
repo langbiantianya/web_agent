@@ -113,7 +113,54 @@ export type MessageKey =
 	| 'llm.sort.name'
 	| 'llm.sort.code'
 	| 'llm.sort.priority'
-	| 'llm.sort.created';
+	| 'llm.sort.created'
+	| 'common.archive'
+	| 'common.refresh'
+	| 'common.usedBy'
+	| 'common.status'
+	| 'skills.title'
+	| 'skills.description'
+	| 'skills.column.status'
+	| 'skills.field.code'
+	| 'skills.field.description'
+	| 'skills.field.allowedTools'
+	| 'skills.field.body'
+	| 'skills.field.status'
+	| 'skills.field.enabled'
+	| 'skills.status.published'
+	| 'skills.status.draft'
+	| 'skills.sort.default'
+	| 'skills.sort.name'
+	| 'skills.sort.code'
+	| 'skills.sort.created'
+	| 'mcp.title'
+	| 'mcp.description'
+	| 'mcp.column.transport'
+	| 'mcp.column.tools'
+	| 'mcp.field.code'
+	| 'mcp.field.name'
+	| 'mcp.field.transport'
+	| 'mcp.field.url'
+	| 'mcp.field.command'
+	| 'mcp.field.timeout'
+	| 'mcp.field.enabled'
+	| 'mcp.transport.stdio'
+	| 'mcp.transport.http'
+	| 'mcp.sort.default'
+	| 'mcp.sort.name'
+	| 'mcp.sort.code'
+	| 'mcp.sort.created'
+	| 'workflows.title'
+	| 'workflows.description'
+	| 'workflows.column.nodes'
+	| 'workflows.field.code'
+	| 'workflows.field.name'
+	| 'workflows.field.description'
+	| 'workflows.field.agent'
+	| 'workflows.field.enabled'
+	| 'workflows.sort.default'
+	| 'workflows.sort.name'
+	| 'workflows.sort.code';
 
 const EN: Record<MessageKey, string> = {
 	'app.title': 'web_agent',
@@ -169,7 +216,54 @@ const EN: Record<MessageKey, string> = {
 	'llm.sort.name': 'Name',
 	'llm.sort.code': 'Code',
 	'llm.sort.priority': 'Priority',
-	'llm.sort.created': 'Newest',	'common.search': 'Search',
+	'llm.sort.created': 'Newest',
+	'common.archive': 'Archive',
+	'common.refresh': 'Refresh tools',
+	'common.usedBy': 'Used by',
+	'common.status': 'Status',
+	'skills.title': 'Skills',
+	'skills.description': 'Skill packs contribute instructions only; tool access still comes from the agent\'s tool list.',
+	'skills.column.status': 'Status',
+	'skills.field.code': 'Code',
+	'skills.field.description': 'Description',
+	'skills.field.allowedTools': 'Allowed tools',
+	'skills.field.body': 'Instruction body',
+	'skills.field.status': 'Status',
+	'skills.field.enabled': 'Enabled',
+	'skills.status.published': 'Published',
+	'skills.status.draft': 'Draft',
+	'skills.sort.default': 'Default',
+	'skills.sort.name': 'Name',
+	'skills.sort.code': 'Code',
+	'skills.sort.created': 'Newest',
+	'mcp.title': 'MCP servers',
+	'mcp.description': 'Register MCP servers and refresh their tool catalog.',
+	'mcp.column.transport': 'Transport',
+	'mcp.column.tools': 'Tools',
+	'mcp.field.code': 'Code',
+	'mcp.field.name': 'Name',
+	'mcp.field.transport': 'Transport',
+	'mcp.field.url': 'URL',
+	'mcp.field.command': 'Command',
+	'mcp.field.timeout': 'Timeout (seconds)',
+	'mcp.field.enabled': 'Enabled',
+	'mcp.transport.stdio': 'stdio',
+	'mcp.transport.http': 'HTTP',
+	'mcp.sort.default': 'Default',
+	'mcp.sort.name': 'Name',
+	'mcp.sort.code': 'Code',
+	'mcp.sort.created': 'Newest',
+	'workflows.title': 'Workflows',
+	'workflows.description': 'Workflow graphs are edited on the canvas; this page manages their metadata.',
+	'workflows.column.nodes': 'Nodes',
+	'workflows.field.code': 'Code',
+	'workflows.field.name': 'Name',
+	'workflows.field.description': 'Description',
+	'workflows.field.agent': 'Initial agent',
+	'workflows.field.enabled': 'Enabled',
+	'workflows.sort.default': 'Default',
+	'workflows.sort.name': 'Name',
+	'workflows.sort.code': 'Code',	'common.search': 'Search',
 	'common.sort': 'Sort by',
 	'common.apply': 'Apply',
 	'common.prev': 'Previous',
@@ -266,7 +360,54 @@ const ZH_CN: Record<MessageKey, string> = {
 	'llm.sort.name': '名称',
 	'llm.sort.code': '编码',
 	'llm.sort.priority': '优先级',
-	'llm.sort.created': '最新',	'common.search': '搜索',
+	'llm.sort.created': '最新',
+	'common.archive': '归档',
+	'common.refresh': '刷新工具目录',
+	'common.usedBy': '被引用',
+	'common.status': '状态',
+	'skills.title': '技能',
+	'skills.description': '技能只贡献指令正文；工具权限仍然只看智能体勾选的工具清单。',
+	'skills.column.status': '状态',
+	'skills.field.code': '编码',
+	'skills.field.description': '描述',
+	'skills.field.allowedTools': '允许的工具',
+	'skills.field.body': '指令正文',
+	'skills.field.status': '状态',
+	'skills.field.enabled': '启用',
+	'skills.status.published': '已发布',
+	'skills.status.draft': '草稿',
+	'skills.sort.default': '默认',
+	'skills.sort.name': '名称',
+	'skills.sort.code': '编码',
+	'skills.sort.created': '最新',
+	'mcp.title': 'MCP 服务器',
+	'mcp.description': '注册 MCP 服务器并刷新它的工具目录。',
+	'mcp.column.transport': '传输方式',
+	'mcp.column.tools': '工具',
+	'mcp.field.code': '编码',
+	'mcp.field.name': '名称',
+	'mcp.field.transport': '传输方式',
+	'mcp.field.url': '地址',
+	'mcp.field.command': '命令',
+	'mcp.field.timeout': '超时（秒）',
+	'mcp.field.enabled': '启用',
+	'mcp.transport.stdio': 'stdio',
+	'mcp.transport.http': 'HTTP',
+	'mcp.sort.default': '默认',
+	'mcp.sort.name': '名称',
+	'mcp.sort.code': '编码',
+	'mcp.sort.created': '最新',
+	'workflows.title': '工作流',
+	'workflows.description': '工作流图在画布上编排；这一页只管理它的元信息。',
+	'workflows.column.nodes': '节点数',
+	'workflows.field.code': '编码',
+	'workflows.field.name': '名称',
+	'workflows.field.description': '描述',
+	'workflows.field.agent': '初始智能体',
+	'workflows.field.enabled': '启用',
+	'workflows.sort.default': '默认',
+	'workflows.sort.name': '名称',
+	'workflows.sort.code': '编码',	'common.search': '搜索',
 	'common.sort': '排序方式',
 	'common.apply': '应用',
 	'common.prev': '上一页',

@@ -7,7 +7,7 @@
 | 项 | 当前版本 | 状态 |
 | --- | --- | --- |
 | web_agent 主服务 | V4.10 | 基础实现完成 |
-| 后台前端迁移（SvelteKit） | V4.10 | SvelteKit 3 + Svelte 5 骨架、Python 侧管理面 JSON API、主题令牌与 i18n 词典已就位；页面迁移按 A–E 阶段推进，鉴权与授权仍只在 Python 侧 |
+| 后台前端迁移（SvelteKit） | V4.10 | 阶段 A（骨架 + 概览页）与阶段 B（agents / skills / mcp / llm / workflows 五页）已完成并通过真实联调；旧 Ludic 页面通过「未匹配路由回退」共存；鉴权与授权仍只在 Python 侧 |
 | Agent JSON 输出契约 | V4.9 | 输出格式配置、JSON Schema、提示词层约束与服务端解析校验已落地 |
 | 用户 OAuth 与会话历史归属 | V4.6 | OIDC、会话与所有权隔离已通过真 PostgreSQL 验证；真实 IdP/存量迁移待完成 |
 | Workflow 可视化编排 | V4.8 | 拖拽画布、属性检查器、实时校验端点、撤销重做与自动布局已落地 |

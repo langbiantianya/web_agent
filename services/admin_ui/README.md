@@ -26,7 +26,7 @@
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | A | 工程骨架、主题令牌、i18n 词典、会话装载、概览页 | ✅ 已完成（含与真实 admin-web 的联调） |
-| B | 资源页（agents / skills / mcp / llm / workflows） | 🔄 进行中：agents、llm 已迁；skills / mcp / workflows 待迁 |
+| B | 资源页（agents / skills / mcp / llm / workflows） | ✅ 已完成（五页全部迁移） |
 | C | 访问控制页（pages / components / roles / mappings / platform-admins / preferences / audit） | 未开始 |
 | D | workflow 画布作为 island 接入（**不重写画布**） | 未开始 |
 | E | 下线 Ludic 视图层 | 未开始 |
