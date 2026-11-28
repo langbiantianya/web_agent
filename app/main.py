@@ -37,6 +37,11 @@ from app.core.checkpoint import (
 from app.core.errors import AppError
 from app.core.mcp.manager import mcp_manager
 from app.core.orchestrator import get_orchestrator, recover_stale_runs
+from app.core.oauth_login_guard import (
+    cleanup_expired_oauth_attempts,
+    start_attempt_cleanup,
+    stop_attempt_cleanup,
+)
 from app.core.redis_client import (
     connect_redis,
     disconnect_redis,
@@ -190,6 +195,13 @@ async def lifespan(app: FastAPI):
         except Exception:  # pragma: no cover - 清理失败不阻塞启动
             logger.exception("启动时清理过期工具审计失败")
         start_tool_audit_cleanup()
+        # OAuth 登录事务：既是限频的计数来源，也是 provider 故障监控的原始数据。
+        # 不清理就会一直涨——既是数据泄漏，也是计数漂移到「所有人都被限」。
+        try:
+            await cleanup_expired_oauth_attempts()
+        except Exception:  # pragma: no cover - 清理失败不阻塞启动
+            logger.exception("启动时清理过期 OAuth 登录事务失败")
+        start_attempt_cleanup()
 
         # studio 脚本执行（V4，§22.8.6）。配了地址但连不上 → **启动失败**：
         # studio 是部署的一个组成部分，它挂了说明部署不完整，让问题在部署时暴露，
@@ -268,6 +280,7 @@ async def _close_resources() -> None:
         ("审批暂停点", close_checkpointer),
         ("审批超时巡检", stop_approval_timeout_monitor),
         ("工具审计清理", stop_tool_audit_cleanup),
+        ("OAuth 登录事务清理", stop_attempt_cleanup),
         ("Redis 连接", disconnect_redis),
         ("数据库连接池", dispose_engine),
     )

@@ -64,6 +64,32 @@ class Settings(BaseSettings):
     # 测试或内网 IdP 可以显式放行；生产保持 false，防 SSRF。
     oauth_allow_private_networks: bool = False
 
+    # ---- OAuth 登录限频与登录事务清理（V4.10 加固）----
+    #
+    # 登录链路原先是**裸**的：start / callback 都没有限频，攻击者可以无限次
+    # 拉起 authorization-code 流程去撞库或打 IdP。下面三个参数是两道闸：
+    #   * start 闸：限制单个 IP 在窗口内能拉起多少次登录事务；
+    #   * callback 闸：限制单个 IP 在窗口内能失败多少次。
+    # 两道闸都按「IP × 供应商」计数，互不影响。
+    oauth_login_rate_limit_enabled: bool = True
+    oauth_start_rate_limit_max: int = 10
+    oauth_start_rate_limit_window_sec: int = 300
+    oauth_callback_failure_limit_max: int = 10
+    oauth_callback_failure_limit_window_sec: int = 900
+    # 是否信任 X-Forwarded-For 取真实客户端 IP。**默认 false**：这个头由客户端
+    # 自由填写，认它等于让攻击者自己挑限频的分组键。只有确定前面有可信反代
+    # 并且反代会覆盖该头时才打开。
+    oauth_trusted_proxy_headers: bool = False
+    # 登录事务（oauth_login_attempt）的保留期与清理周期。过期行必须删，
+    # 否则这张表只增不减——它同时也是限频的计数来源。
+    oauth_attempt_retention_days: int = 7
+    oauth_attempt_cleanup_enabled: bool = True
+    oauth_attempt_cleanup_interval_sec: float = 3600.0
+    oauth_attempt_cleanup_scan_limit: int = 1000
+    # provider 故障监控：窗口内失败率超过阈值且失败数达到下限时告警。
+    oauth_provider_failure_alert_window_sec: int = 900
+    oauth_provider_failure_alert_ratio: float = 0.5
+    oauth_provider_failure_alert_min_count: int = 5
     # ---- 独立 admin-web（V4.7）----
     admin_database_url: str = ""
     admin_public_base_url: str = ""

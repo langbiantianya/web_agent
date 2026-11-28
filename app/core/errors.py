@@ -114,6 +114,17 @@ class GoneError(AppError):
     code = "gone"
 
 
+class TooManyRequestsError(AppError):
+    """请求过于频繁（限频）。
+
+    语义上既不是「参数不对」（400）也不是「没身份」（401/403），而是
+    **服务端暂时不接**——客户端应当退避后重试，所以单列 429。
+    """
+
+    status_code = 429
+    code = "rate_limited"
+
+
 class SensitiveContentError(AppError):
     """提示词被敏感词前置过滤拦下。
 

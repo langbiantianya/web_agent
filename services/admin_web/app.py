@@ -18,6 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
 
+from app.core.oauth_login_guard import start_attempt_cleanup, stop_attempt_cleanup
 from services.admin_web.accounts import (
     ensure_owner_super_admin,
     rotate_expired_super_admins,
@@ -60,11 +61,15 @@ async def lifespan(_: LudicApp):
         await seed_registry(db)
         await casbin_service.refresh(db, force=True)
     task = asyncio.create_task(_rotation_loop())
+    # 管理端也有自己的 OAuth 登录事务表（管理库，与客户端主库分开）。
+    # 它同时是失败限频的计数来源，不清理就会一直涨。
+    start_attempt_cleanup(AdminSessionLocal)
     try:
         yield
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+        await stop_attempt_cleanup()
         await dispose_admin_engine()
 
 

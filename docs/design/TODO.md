@@ -234,15 +234,25 @@ Casbin 判定、审计、Argon2 口令全部留在 Python 侧。
   与 admin 登录页按 `client_login_enabled` / `admin_login_enabled` 正确分流，新 provider
   的 authorization-code 登录成功；同时修复了 endpoint 字段无法清空和 `scopes: null`
   导致管理接口 500 的两个缺陷，并补充回归测试。
-  上线前仍需用实际 `AUTH_DEFAULT_TENANT` 对应的 IdP 完成浏览器联调，并补齐三项加固：
-  - **start/callback 限频**：`app/api/routes/auth.py` 的 `/oauth/{provider_code}/start`
-    与 `/callback` 目前没有任何限频；全仓 `rate_limit` 只命中 admin-web 的密码重置
-    （`services/admin_web/accounts.py`），用户登录链路是裸的。
-  - **过期 `oauth_login_attempt` 周期清理**：`app/main.py` 的后台维护只做 checkpoint
-    孤儿清理、审批超时过期和 tool_audit 保留期清理，attempt 表只增不删，需要补一条
-    过期行清理任务。
-  - **provider 故障监控**：失败只 redirect 一个错误码（`provider_error` /
-    `login_failed`），没有指标、告警或失败率观测。
+  上线前仍需用实际 `AUTH_DEFAULT_TENANT` 对应的 IdP 完成浏览器联调。
+  三项加固中的**两项已完成**（V4.10）：
+  - [x] **start/callback 限频**（已完成）：新增 `app/core/oauth_login_guard.py`，
+    按「客户端 IP × 供应商」计数，两道闸：start 闸限制登录事务的拉起频率
+    （超限 429），callback 闸限制失败次数（超限改用 `rate_limited` 错误码跳转）。
+    分组键是**掺了 SECRET_KEY 的 IP 哈希**，库里不存明文 IP；默认**不信任**
+    `X-Forwarded-For`（这个头由客户端自由填写，认它等于让攻击者自选分组键），
+    需要可信反代时用 `OAUTH_TRUSTED_PROXY_HEADERS=true` 打开。
+  - [x] **过期 `oauth_login_attempt` 周期清理**（已完成）：`oauth_attempt_retention_days`
+    到期的事务由后台任务批量删除（`app/main.py` 生命周期内启动/停止）。这张表
+    同时是限频的计数来源，不清理就会一直涨。
+  - [x] **provider 故障监控**（已完成基础能力）：每次失败把**稳定错误码**写回
+    那一行事务（`failure_code` / `failed_at`），后台巡检按窗口统计每个供应商的
+    失败率与主因，超阈值打 WARNING，运维从日志就能看出是哪个 IdP 在坏。
+    **仍缺**：管理后台里的一张 provider 健康面板（当前只有日志，没有界面）。
+  - [ ] **真实 IdP 浏览器联调**（未完成）：需要用实际
+    `AUTH_DEFAULT_TENANT` 对应的 IdP 走一遍 start → callback → 会话，并验证
+    限频在真实反代后面的分组键是否正确（取决于 `OAUTH_TRUSTED_PROXY_HEADERS`
+    与反代是否覆盖 `X-Forwarded-For`）。
 
 - [ ] **P1：存量 conversation 归属迁移**
   当前 `owner_user_id` 仍允许为空，以承接无法证明真实身份的存量数据。

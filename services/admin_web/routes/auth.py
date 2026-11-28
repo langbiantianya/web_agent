@@ -34,6 +34,9 @@ from services.admin_web.db import AdminSessionLocal
 from services.admin_web.oauth_admin import (
     provider_for_admin_login, provisioning_error_code, sync_oauth_admin,
 )
+from services.admin_web.oauth_login import (
+    fail_login, guard_start, request_ip_hash,
+)
 from services.admin_web.rbac import casbin_service
 from services.admin_web.security import (
     admin_oauth_cookie_name, clear_admin_cookies, clear_oauth_binding_cookie,
@@ -148,6 +151,12 @@ def register(app: Any) -> None:
             provider = await provider_for_admin_login(db, provider_code)
             if provider is None:
                 return login_redirect("provider_not_found")
+            # start 闸：管理端登录同样是裸的——没有它，攻击者可以无限次拉起
+            # authorization-code 流程去撞库、打 IdP。分组键是 IP 哈希，不是明文 IP。
+            ip = request_ip_hash(request)
+            blocked = await guard_start(db, provider, ip)
+            if blocked is not None:
+                return blocked
             try:
                 endpoints = await resolve_provider_endpoints(provider)
             except OIDCError as exc:
@@ -170,6 +179,8 @@ def register(app: Any) -> None:
                     return_to="/admin/",
                     expires_at=utcnow()
                     + timedelta(seconds=settings.oauth_state_ttl_seconds),
+                    # 只存哈希，不存明文 IP；回调阶段用它做失败限频的分组键。
+                    client_ip_hash=ip,
                 )
             )
             await db.commit()
@@ -200,12 +211,17 @@ def register(app: Any) -> None:
         error: str | None = None,
     ):
         """验证 OAuth、同步 Casbin role 并建立管理员 Session。"""
-        if not state:
-            return login_redirect("state_missing")
         async with AdminSessionLocal() as db:
             provider = await provider_for_admin_login(db, provider_code)
             if provider is None:
                 return login_redirect("provider_not_found")
+
+            async def fail(error_code: str, attempt=None) -> RedirectResponse:
+                """记一次登录失败，必要时按失败次数限频（实现见 oauth_login）。"""
+                return await fail_login(db, request, provider, attempt, error_code)
+
+            if not state:
+                return await fail("state_missing")
             attempt = await db.scalar(
                 sa.select(OAuthLoginAttempt).where(
                     OAuthLoginAttempt.state_hash == token_hash(state),
@@ -213,12 +229,12 @@ def register(app: Any) -> None:
                 )
             )
             if attempt is None:
-                return login_redirect("state_invalid")
+                return await fail("state_invalid")
             binding = request.cookies.get(admin_oauth_cookie_name(), "")
             if not binding or token_hash(binding) != attempt.browser_binding_hash:
-                return login_redirect("login_csrf")
+                return await fail("login_csrf", attempt)
             if attempt.consumed_at is not None or attempt.expires_at <= utcnow():
-                return login_redirect("state_expired")
+                return await fail("state_expired", attempt)
             consumed = await db.execute(
                 sa.update(OAuthLoginAttempt)
                 .where(
@@ -230,11 +246,11 @@ def register(app: Any) -> None:
             )
             await db.commit()
             if not consumed.rowcount:
-                return login_redirect("state_replayed")
+                return await fail("state_replayed", attempt)
             if error:
-                return login_redirect("provider_error")
+                return await fail("provider_error", attempt)
             if not code:
-                return login_redirect("code_missing")
+                return await fail("code_missing", attempt)
             try:
                 endpoints = await resolve_provider_endpoints(provider)
                 id_token = await exchange_code(
@@ -252,7 +268,7 @@ def register(app: Any) -> None:
                 )
                 admin = await sync_oauth_admin(db, provider, claims)
                 if admin is None:
-                    return login_redirect("admin_role_required")
+                    return await fail("admin_role_required", attempt)
                 roles = [
                     row.role
                     for row in await casbin_service.role_rows(
@@ -282,7 +298,7 @@ def register(app: Any) -> None:
                 await db.commit()
             except Exception as exc:  # noqa: BLE001
                 logger.warning("OAuth admin login failed: %s", type(exc).__name__)
-                return login_redirect(provisioning_error_code(exc))
+                return await fail(provisioning_error_code(exc), attempt)
         response = RedirectResponse("/admin/", status_code=303)
         clear_oauth_binding_cookie(response)
         clear_super_admin_cookies(response)

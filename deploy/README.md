@@ -62,6 +62,11 @@ docker compose -f deploy/docker-compose.admin.yml up -d --build
   输出随机密码。需要通知渠道时可在首次启动前手工运行
   `python -m scripts.bootstrap_superadmin`；
 - 配置 `ADMIN_PUBLIC_BASE_URL`、OAuth callback、邮件和短信环境变量；
+- OAuth 登录限频按「客户端 IP × 供应商」计数。**如果前面有反向代理**，
+  务必确认它会覆盖 `X-Forwarded-For`，再把 `OAUTH_TRUSTED_PROXY_HEADERS=true`
+  打开；不打开时服务端只认连接层 IP——同一批用户会被算成同一个 IP 而被误限，
+  打开了但代理不覆盖该头则更糟（攻击者可以自己伪造分组键）。详见
+  [V4.6 的「登录限频、失败记账与 provider 故障监控」](../app/design/v4.6-user-oauth-conversation.md)；
 - 使用 HTTPS 并保持 `ADMIN_SESSION_COOKIE_SECURE=true`；
 - 为 admin 与客户端配置独立数据库账号，限制客户端读取超级管理员密码摘要；
 - 不在客户端镜像中安装 Ludic、Argon2 管理页或短信 SDK。

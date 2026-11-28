@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import secrets
 from datetime import timedelta
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
@@ -16,12 +17,19 @@ from fastapi.responses import RedirectResponse
 from app.api.deps import CurrentUserDep, DbSession
 from app.config.settings import settings
 from app.core.crypto import decrypt, encrypt
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError, TooManyRequestsError
 from app.core.oidc import (
     OIDCError,
     exchange_code,
     resolve_provider_endpoints,
     verify_id_token,
+)
+from app.core.oauth_login_guard import (
+    check_callback_failure_limit,
+    check_start_rate_limit,
+    client_ip,
+    ip_hash,
+    record_failure,
 )
 from app.core.ticket import issue_ticket
 from app.core.user_accounts import UserProvisionError, provision_oidc_user
@@ -49,6 +57,8 @@ from app.schemas.auth import (
     SSETicketOut,
     UserOut,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -134,6 +144,10 @@ async def start_oauth(
     """创建一次性登录事务并返回 OIDC authorization URL。"""
     provider = await _enabled_provider(db, provider_code)
     return_to = _safe_return_to(payload.return_to)
+    # start 闸：限制单个 IP 拉起登录事务的频率。放在解析端点**之前**——限频是
+    # 为了挡住「反复打 IdP 的 discovery / token 端点」，先解析等于先挨打。
+    ip = ip_hash(client_ip(request))
+    await check_start_rate_limit(db, provider.id, ip)
     try:
         endpoints = await resolve_provider_endpoints(provider)
     except OIDCError as exc:
@@ -159,6 +173,8 @@ async def start_oauth(
             return_to=return_to,
             expires_at=utcnow()
             + timedelta(seconds=settings.oauth_state_ttl_seconds),
+            # 只存哈希，不存明文 IP。回调阶段也用它做失败限频的分组键。
+            client_ip_hash=ip,
         )
     )
     await db.commit()
@@ -181,6 +197,39 @@ async def start_oauth(
     return OAuthStartOut(authorization_url=authorization_url)
 
 
+async def _fail_login(
+    db,
+    request: Request,
+    provider,
+    attempt: OAuthLoginAttempt | None,
+    code: str,
+    return_to: str,
+) -> RedirectResponse:
+    """记一次登录失败，必要时按失败次数限频。
+
+    **能记账的才记账**：``state_invalid`` 这类失败压根没有对应的事务行（伪造的
+    state），记不到任何一行上，因此不计入失败限频——它的防线是 start 闸（伪造
+    state 也得先拉起一笔真事务）。记不上的失败只原样跳转，不改变错误码。
+    """
+    ip = ip_hash(client_ip(request))
+    if attempt is not None:
+        try:
+            await record_failure(db, attempt, code, ip=ip)
+        except Exception:
+            # 记账失败不能把一次「登录失败」变成「服务器错误」——浏览器只该看到
+            # 稳定错误码。记账是 best-effort，漏记只是让限频少算一次。
+            logger.exception("记录 OAuth 登录失败明细失败")
+            try:
+                await db.rollback()
+            except Exception:
+                logger.exception("回滚登录失败记账的会话失败")
+    try:
+        await check_callback_failure_limit(db, provider.id, ip)
+    except TooManyRequestsError:
+        return _login_error_redirect(return_to, "rate_limited")
+    return _login_error_redirect(return_to, code)
+
+
 @router.get("/oauth/{provider_code}/callback")
 async def oauth_callback(
     provider_code: str,
@@ -193,7 +242,7 @@ async def oauth_callback(
     """验证 state/binding/PKCE/ID Token，建立本地用户会话。"""
     provider = await _enabled_provider(db, provider_code)
     if not state:
-        return _login_error_redirect("/", "state_missing")
+        return await _fail_login(db, request, provider, None, "state_missing", "/")
 
     attempt = await db.scalar(
         sa.select(OAuthLoginAttempt).where(
@@ -202,20 +251,30 @@ async def oauth_callback(
         )
     )
     if attempt is None:
-        return _login_error_redirect("/", "state_invalid")
+        return await _fail_login(
+            db, request, provider, None, "state_invalid", "/"
+        )
     return_to = _safe_return_to(str(attempt.return_to))
     if error:
-        return _login_error_redirect(return_to, "provider_error")
+        return await _fail_login(
+            db, request, provider, attempt, "provider_error", return_to
+        )
     if not code:
-        return _login_error_redirect(return_to, "code_missing")
+        return await _fail_login(
+            db, request, provider, attempt, "code_missing", return_to
+        )
 
     binding = request.cookies.get(oauth_state_cookie_name(), "")
     if not binding or not hmac.compare_digest(
         token_hash(binding), attempt.browser_binding_hash
     ):
-        return _login_error_redirect(return_to, "login_csrf")
+        return await _fail_login(
+            db, request, provider, attempt, "login_csrf", return_to
+        )
     if attempt.consumed_at is not None or attempt.expires_at <= utcnow():
-        return _login_error_redirect(return_to, "state_expired")
+        return await _fail_login(
+            db, request, provider, attempt, "state_expired", return_to
+        )
 
     # 条件消费必须在任何网络调用之前完成：并发重放只能有一个请求成功。
     consumed = await db.execute(
@@ -229,7 +288,9 @@ async def oauth_callback(
     )
     await db.commit()
     if not consumed.rowcount:
-        return _login_error_redirect(return_to, "state_replayed")
+        return await _fail_login(
+            db, request, provider, attempt, "state_replayed", return_to
+        )
 
     try:
         endpoints = await resolve_provider_endpoints(provider)
@@ -252,10 +313,14 @@ async def oauth_callback(
         token, csrf_token = await create_user_session(db, provisioned.user.id)
         await db.commit()
     except (OIDCError, UserProvisionError, ValueError) as exc:
-        return _login_error_redirect(return_to, str(exc) or "login_failed")
+        return await _fail_login(
+            db, request, provider, attempt, str(exc) or "login_failed", return_to
+        )
     except Exception:
         # 不把 token endpoint 正文、SQL 或 stack 写到浏览器。
-        return _login_error_redirect(return_to, "login_failed")
+        return await _fail_login(
+            db, request, provider, attempt, "login_failed", return_to
+        )
 
     response = RedirectResponse(return_to, status_code=303)
     clear_oauth_state_cookie(response)

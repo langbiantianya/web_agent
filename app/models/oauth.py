@@ -90,10 +90,25 @@ class OAuthLoginAttempt(Base):
     return_to: Mapped[str] = mapped_column(sa.String(512), nullable=False, default="/")
     expires_at: Mapped[object] = mapped_column(DATETIME3, nullable=False)
     consumed_at: Mapped[object | None] = mapped_column(DATETIME3, nullable=True)
+    # 客户端 IP 的**哈希**（不是明文）：限频要按 IP 分组，但不能把 IP 存下来。
+    # 哈希里掺了 SECRET_KEY，所以即使库被拖走也反推不出原地址。
+    client_ip_hash: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    # 这次登录事务最终怎么失败的（provider_error / login_failed / state_expired …）。
+    # 空表示成功或还没走完。它既是 provider 故障监控的原始数据，也是失败限频的
+    # 计数来源。
+    failure_code: Mapped[str | None] = mapped_column(sa.String(32), nullable=True)
+    failed_at: Mapped[object | None] = mapped_column(DATETIME3, nullable=True)
     created_at: Mapped[object] = mapped_column(
         DATETIME3, server_default=sa.func.now(), nullable=False
     )
 
     __table_args__ = (
         sa.Index("idx_oauth_attempt_provider_expiry", "provider_id", "expires_at"),
+        # 限频查询的主路径：按 provider + IP 哈希取窗口内的行。
+        sa.Index(
+            "idx_oauth_attempt_provider_ip",
+            "provider_id",
+            "client_ip_hash",
+            "created_at",
+        ),
     )
