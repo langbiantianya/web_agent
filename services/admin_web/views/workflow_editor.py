@@ -2,6 +2,17 @@
 
 从 ``workflows.py`` 拆出来：画布页本身要渲染节点面板、属性面板、JSON
 视图与保存表单，和列表页挤在一个文件里会突破单文件行数上限。
+
+**两种渲染模式**：
+
+- 默认：完整的 Ludic 页面（导航 + 画布）。这是**回退路径**——SvelteKit
+  的 ``admin-ui`` 容器关掉后，管理端仍旧可用。
+- ``embed=True``：只给画布的**片段页**，供 SvelteKit 阶段 D 以 iframe 的
+  方式承载这个 island。外壳（导航、顶栏、主题切换）由 SvelteKit 那一层
+  负责，画布本身一行代码都没有改。
+
+两种模式共用同一份画布 DOM 与同一份脚本，差别只有外壳——所以阶段 D 的
+「只换外壳」不是靠复制一份画布代码实现的。
 """
 
 from __future__ import annotations
@@ -34,6 +45,12 @@ from app.models.admin_control import AdminPageDefinition
 from services.admin_web.accounts import AdminPrincipal
 from services.admin_web.views.components import _csrf
 from services.admin_web.views.shell import shell
+from services.admin_web.views.workflow_editor_embed import (
+    WORKFLOW_EDITOR_CORE_SCRIPT,
+    WORKFLOW_EDITOR_SCRIPT,
+    WORKFLOW_EDITOR_STYLESHEET,
+    embed_document,
+)
 
 
 def workflow_editor_page(
@@ -49,8 +66,12 @@ def workflow_editor_page(
     can_write: bool,
     flash: str | None = None,
     flash_kind: str = "info",
+    embed: bool = False,
 ) -> Any:
-    """渲染 Workflow 画布编排页。"""
+    """渲染 Workflow 画布编排页。
+
+    ``embed=True`` 时只返回画布片段（见模块文档的「两种渲染模式」）。
+    """
     import json as _json
 
     state = {
@@ -107,7 +128,14 @@ def workflow_editor_page(
         class_="surface workflow-editor-inspector-panel",
     )
     toolbar = div(
-        a("Back to list", href="/admin/workflows", class_="btn btn-secondary"),
+        a(
+            "Back to list",
+            href="/admin/workflows",
+            class_="btn btn-secondary",
+            # island 模式下这一条要跳出 iframe：画布在 iframe 里，
+            # 点「返回列表」若只在 iframe 内跳转，用户会以为点了没反应。
+            attrs={"target": "_top"} if embed else None,
+        ),
         h1(workflow.name),
         small(workflow.code, class_="block-muted"),
         span(
@@ -153,6 +181,13 @@ def workflow_editor_page(
         ),
         class_="workflow-editor-toolbar",
     )
+    # 保存后的落点：island 模式下留在片段页，否则 iframe 里会跳到整页
+    # （整页会被 SvelteKit 的同名路由接管，画布就套进了自己）。
+    next_path = (
+        f"/admin/workflows/{workflow.code}/canvas"
+        if embed
+        else f"/admin/workflows/{workflow.code}"
+    )
     save_form = (
         form(
             _csrf(csrf),
@@ -183,7 +218,8 @@ def workflow_editor_page(
             input_(
                 type="hidden",
                 name="next",
-                value=f"/admin/workflows/{workflow.code}",
+                id="workflow-editor-next",
+                value=next_path,
             ),
             button(
                 "Save workflow",
@@ -225,6 +261,30 @@ def workflow_editor_page(
         id="workflow-editor-errorbar",
         hidden=True,
     )
+    content = div(
+        section(toolbar, class_="surface"),
+        div(
+            palette,
+            canvas,
+            inspector,
+            class_="workflow-editor-layout",
+        ),
+        error_bar,
+        json_view,
+        state_block,
+        save_form,
+        class_="stack",
+    )
+    if embed:
+        return embed_document(
+            title_text=f"{workflow.name} · Workflow editor",
+            content=content,
+            flash=flash,
+            flash_kind=flash_kind,
+            theme=theme,
+            color_mode=color_mode,
+            density=density,
+        )
     return shell(
         title_text=f"{workflow.name} · Workflow editor",
         principal=principal,
@@ -235,23 +295,10 @@ def workflow_editor_page(
         pages=pages,
         flash=flash,
         flash_kind=flash_kind,
-        content=div(
-            section(toolbar, class_="surface"),
-            div(
-                palette,
-                canvas,
-                inspector,
-                class_="workflow-editor-layout",
-            ),
-            error_bar,
-            json_view,
-            state_block,
-            save_form,
-            class_="stack",
-        ),
-        extra_styles=["/admin/static/workflow-editor.css?v=workflow-i18n-20261110-1"],
+        content=content,
+        extra_styles=[WORKFLOW_EDITOR_STYLESHEET],
         extra_scripts=[
-            "/admin/static/workflow-editor-core.js",
-            "/admin/static/workflow-editor.js?v=workflow-entry-20261111-1",
+            WORKFLOW_EDITOR_CORE_SCRIPT,
+            WORKFLOW_EDITOR_SCRIPT,
         ],
     )

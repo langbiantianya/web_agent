@@ -150,7 +150,9 @@ export type MessageKey =
 	| 'mcp.sort.name'
 	| 'mcp.sort.code'
 	| 'mcp.sort.created'
+	| 'common.back'
 	| 'workflows.title'
+	| 'workflows.canvas.title'
 	| 'workflows.description'
 	| 'workflows.column.nodes'
 	| 'workflows.field.code'
@@ -352,7 +354,9 @@ const EN: Record<MessageKey, string> = {
 	'mcp.sort.name': 'Name',
 	'mcp.sort.code': 'Code',
 	'mcp.sort.created': 'Newest',
+	'common.back': 'Back',
 	'workflows.title': 'Workflows',
+	'workflows.canvas.title': 'Workflow canvas',
 	'workflows.description': 'Workflow graphs are edited on the canvas; this page manages their metadata.',
 	'workflows.column.nodes': 'Nodes',
 	'workflows.field.code': 'Code',
@@ -597,7 +601,9 @@ const ZH_CN: Record<MessageKey, string> = {
 	'mcp.sort.name': '名称',
 	'mcp.sort.code': '编码',
 	'mcp.sort.created': '最新',
+	'common.back': '返回',
 	'workflows.title': '工作流',
+	'workflows.canvas.title': '工作流画布',
 	'workflows.description': '工作流图在画布上编排；这一页只管理它的元信息。',
 	'workflows.column.nodes': '节点数',
 	'workflows.field.code': '编码',

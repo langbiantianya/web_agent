@@ -8,10 +8,11 @@
 截至 V4.10 设计，OAuth/OIDC 主链路、独立 admin-web 业务页、workflow 可视化编排器
 和 Agent JSON 输出契约已经落地，旧管理员 API Key 管理栈已退役；后台前端正在
 迁移到 SvelteKit：阶段 A（骨架 + 概览页）、阶段 B（五个资源页）、阶段 C
-（七个访问控制页）与端到端联调均已完成，画布 island 化与部署接线仍待推进。
-尚未完成的 **P1** 共三项：真实 IdP 联调（含登录限频、过期 attempt 清理、
-provider 故障监控）、存量会话归属处理，以及 SvelteKit 迁移的部署接线；
-其余 13 项均为 P2，涵盖成本账本、容器预热、MCP 能力边界与构建依赖。
+（七个访问控制页）、阶段 D（画布 island 化）、部署接线与端到端联调均已完成，
+只剩阶段 E（下线 Ludic 视图层）待推进。
+尚未完成的 **P1** 共两项：真实 IdP 联调（含登录限频、过期 attempt 清理、
+provider 故障监控）与存量会话归属处理；
+其余均为 P2，涵盖成本账本、容器预热、MCP 能力边界与构建依赖。
 
 ## 后台前端迁移（SvelteKit）
 
@@ -128,10 +129,26 @@ Casbin 判定、审计、Argon2 口令全部留在 Python 侧。
   白名单）完全正常。现在新增 `GET /admin/api/origin-policy` 让网关知道
   当前模式：白名单模式原样转发浏览器 Origin，Host 模式才改写成内部地址。
 
-- [ ] **P2：阶段 D —— workflow 画布 island 化**
+- [x] **P2：阶段 D —— workflow 画布 island 化**
   现有 `workflow-editor.js`（66 KB）+ `workflow-editor-core.js`（11 KB）作为
   island 保留，只把外壳换成 SvelteKit。**本阶段不重写画布**——重写是一次
   需要独立验收的大工程，与「换前端框架」必须分开。
+
+  **已完成**：Python 侧新增 `GET /admin/workflows/{code}/canvas`——只返回
+  画布的**片段页**（画布 DOM + `workflow-editor.css` + 两份画布脚本 +
+  `admin.css`，**没有**导航外壳）；SvelteKit 侧新增 `/admin/workflows/{code}`
+  页面，用 `<iframe>` 承载这段片段，画布外面的标题、状态、返回链接归
+  SvelteKit。画布的校验（`POST /admin/workflows/validate`）与保存
+  （`POST /admin/workflows/{code}/update`）请求仍然同源，经网关转发给
+  Python；保存后的落点回到片段页，画布不会跳进整页。
+
+  用 `iframe` 而不是把片段拼进 DOM：画布脚本会遍历自己的 DOM、依赖
+  `admin.css` 里那 283 个 CSS 变量，而 SvelteKit 侧是 Tailwind 令牌体系，
+  iframe 给画布一个**隔离的文档**，两套样式不会互相污染。
+
+  整页画布 `/admin/workflows/{code}` 保留着——它是**回退路径**：关掉
+  `admin-ui` 容器后管理端照样能用。新增用例 `tests/test_admin_canvas_island.py`
+  锁住「片段页无外壳、画布 DOM 与写路径不变、整页仍有外壳」三条。
 
 - [ ] **P2：阶段 E —— 下线 Ludic 视图层**
   删除 `services/admin_web/views/` 的页面渲染与 `admin-ui.js`，`admin-web`

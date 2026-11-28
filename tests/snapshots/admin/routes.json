@@ -75,6 +75,14 @@
   },
   {
     "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "workflow_canvas_get",
+    "path": "/admin/workflows/{code}/canvas"
+  },
+  {
+    "methods": [
       "POST"
     ],
     "name": "workflows_validate",

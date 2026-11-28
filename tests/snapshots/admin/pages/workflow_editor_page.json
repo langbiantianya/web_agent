@@ -730,6 +730,7 @@
                         },
                         {
                           "attrs": {
+                            "id": "workflow-editor-next",
                             "name": "next",
                             "type": "hidden",
                             "value": "/admin/workflows/snapshot-workflow"

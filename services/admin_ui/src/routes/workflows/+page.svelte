@@ -3,7 +3,7 @@
 	import Field from '../../lib/components/Field.svelte';
 	import Panel from '../../lib/components/Panel.svelte';
 	import Toolbar from '../../lib/components/Toolbar.svelte';
-	import { pythonPath } from '#lib/paths';
+	import { appPath } from '#lib/paths';
 	import { t, type Locale } from '#lib/i18n';
 	import type { PageProps } from './$types';
 
@@ -92,7 +92,7 @@
 									<div class="flex items-center gap-2">
 										<a
 											class="rounded-card border border-line px-2 py-1 text-xs"
-											href={pythonPath(`/workflows/${encodeURIComponent(item.code)}`)}
+											href={appPath(`/workflows/${encodeURIComponent(item.code)}`)}
 										>
 											{t(locale, 'common.edit')}
 										</a>

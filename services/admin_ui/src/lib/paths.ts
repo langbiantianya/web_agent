@@ -15,3 +15,14 @@ export const ADMIN_BASE = '/admin';
 export function pythonPath(path: string): string {
 	return `${ADMIN_BASE}${path.startsWith('/') ? path : `/${path}`}`;
 }
+
+/**
+ * 指向 SvelteKit 自己的路由。
+ *
+ * 与 {@link pythonPath} 分开，是为了让「这条链接归谁处理」在代码里一眼
+ * 看得出：Python 独占的页面（登录、OAuth 供应商、旧画布）走前者，
+ * 已经迁过来的页面走后者。
+ */
+export function appPath(path: string): string {
+	return `${ADMIN_BASE}${path.startsWith('/') ? path : `/${path}`}`;
+}

@@ -42,7 +42,7 @@ services/admin_web/
   app.py          应用装配：创建 app、lifespan、中间件、静态挂载、注册路由
   common.py       跨业务域共用的请求处理辅助（21 个公开名）
   routes/         12 个业务域的路由模块 + 8 个管理面 API 模块（31 个文件），每个暴露 register(app)
-  views/          16 个模块：13 个业务域页面 + shell / components / fields
+  views/          17 个模块：13 个业务域页面 + shell / components / fields / 画布片段页
 ```
 
 `routes/` 的文件比业务域多两个：工作流域的写操作在 `workflows_write.py`、
@@ -78,6 +78,12 @@ services/admin_web/
 `endpoint_in_use` / `in_use`），前端据此决定提示、重试还是跳登录页，
 **不去解析文案**。
 
+**画布的 island 片段页**：`GET /admin/workflows/{code}/canvas` 返回的是
+**不带外壳**的画布片段（画布 DOM + `workflow-editor.css` + 两份画布脚本 +
+`admin.css`），供 SvelteKit 阶段 D 用 `<iframe>` 承载。整页版本
+`/admin/workflows/{code}` 保留着——它是**回退路径**：SvelteKit 容器关掉后
+管理端照样能用。画布的校验与保存请求仍然同源，经网关转发到本服务。
+
 **删除是硬删除，但可以撤销。** Agent、LLM 端点、MCP 服务器、工作流与平台
 超级管理员在删除前会留快照，删除响应带回 `undoId`；`POST /admin/api/undo/
 {entry_id}` 按**资源类型**判定写权限后原样恢复——撤销一个 LLM 端点不该要求
@@ -85,7 +91,7 @@ Agent 编辑权。
 
 **路由注册顺序是行为的一部分。** Starlette 首个匹配 path 的路由胜出，所以
 顺序固化在 `routes/__init__.py` 的 `register_all` 里，并由
-`tests/snapshots/admin/routes.json`（116 条路由条目 / 86 个唯一路径，含 `/admin/static` 挂载）保序比对。
+`tests/snapshots/admin/routes.json`（118 条路由条目 / 88 个唯一路径，含 `/admin/static` 挂载）保序比对。
 往 `register_all` 里加域时，插在正确的位置比追加到末尾更重要。
 
 **回归保护有两层：**

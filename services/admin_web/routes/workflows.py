@@ -134,3 +134,53 @@ def register(app: Any) -> None:
             )
         finally:
             await db.close()
+
+    @app.get("/admin/workflows/{code}/canvas")
+    async def workflow_canvas_get(code: str, request: Request):
+        """Render the canvas **without** the admin shell (阶段 D 的 island)。
+
+        SvelteKit 的工作流页用 ``<iframe>`` 承载这一段：导航、顶栏、主题
+        由 SvelteKit 负责，画布与它的脚本一行不改地留在这里。画布自己
+        发的请求（校验、保存）仍然是同源的普通请求，由网关转发给本服务。
+
+        画布页本身保留着（``/admin/workflows/{code}``）：它是**回退路径**，
+        SvelteKit 容器关掉后管理端照样能用。
+        """
+        values = await with_auth(request)
+        if values is None:
+            return unauthorized()
+        db, principal, pref, csrf = values
+        try:
+            if not await can_access_page(db, principal, "workflows"):
+                return not_found()
+            row = await workflow_repo.get_by_code(db, code)
+            if row is None:
+                return not_found()
+            agents = await agent_repo.list(
+                db,
+                only_enabled=True,
+                limit=500,
+                tenant_id=tenant_id_of(principal),
+            )
+            flash, flash_kind = flash_from_query(request)
+            return workflow_editor_page(
+                principal=principal,
+                csrf=csrf,
+                pages=await visible_pages(db, principal),
+                workflow=row,
+                agents=agents,
+                theme=pref.theme,
+                color_mode=pref.color_mode,
+                density=pref.density,
+                can_write=await can_edit_resource(
+                    db,
+                    principal,
+                    page_code="workflows",
+                    component_code="workflow_editor",
+                ),
+                flash=flash,
+                flash_kind=flash_kind,
+                embed=True,
+            )
+        finally:
+            await db.close()

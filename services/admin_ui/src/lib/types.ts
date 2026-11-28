@@ -217,6 +217,16 @@ export interface AdminWorkflow {
 	updatedAt: string | null;
 }
 
+/**
+ * 单个工作流详情（含图定义）。
+ *
+ * 图定义只在**读取**时带回：写路径只有画布一条，前端拿到定义是为了显示，
+ * 不是为了从别处改它。
+ */
+export interface AdminWorkflowDetail extends AdminWorkflow {
+	definition: Record<string, unknown>;
+}
+
 /** 工作流列表响应。 */
 export interface WorkflowListPayload {
 	items: AdminWorkflow[];

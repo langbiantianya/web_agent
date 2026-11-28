@@ -21,6 +21,7 @@ import type {
 	AdminSession,
 	AdminSkill,
 	AdminWorkflow,
+	AdminWorkflowDetail,
 	AgentInput,
 	AgentListPayload,
 	AuditItem,
@@ -505,6 +506,23 @@ export async function loadWorkflows(
 	return await adminFetch<WorkflowListPayload>(`/admin/api/workflows${listQuery(query)}`, {
 		cookie
 	});
+}
+
+/**
+ * 取单个工作流（含图定义）。
+ *
+ * 画布 island 自己会读图定义（它在 iframe 里向 Python 直接请求），这里的
+ * 详情只用来渲染外壳上的名称、状态与节点数。
+ */
+export async function loadWorkflowDetail(
+	cookie: string,
+	code: string
+): Promise<AdminWorkflowDetail> {
+	const result = await adminFetch<{ item: AdminWorkflowDetail }>(
+		`/admin/api/workflows/${encodeURIComponent(code)}`,
+		{ cookie }
+	);
+	return result.item;
 }
 
 /** 新建工作流。 */
