@@ -150,6 +150,13 @@ Casbin 判定、审计、Argon2 口令全部留在 Python 侧。
   `admin-ui` 容器后管理端照样能用。新增用例 `tests/test_admin_canvas_island.py`
   锁住「片段页无外壳、画布 DOM 与写路径不变、整页仍有外壳」三条。
 
+  生产实测又暴露了三个坑，都已修掉：画布片段页必须允许**同源** iframe
+  嵌入（`admin-web` 默认的 `X-Frame-Options: DENY` 会让浏览器拒绝渲染这一帧）；
+  `/admin/workflows/validate` 必须显式留在 Python 独占清单里（否则被
+  SvelteKit 的 `/admin/workflows/[code]` 吃掉，实时校验静默失败）；网关必须
+  转发 `Accept` 头（否则 Python 返回 303 而不是 JSON，画布把成功的保存报成
+  「保存失败」）。
+
 - [ ] **P2：阶段 E —— 下线 Ludic 视图层**
   删除 `services/admin_web/views/` 的页面渲染与 `admin-ui.js`，`admin-web`
   收敛为纯 JSON API + 登录页。删除前打 tag；对应的 Python 页面快照基线
